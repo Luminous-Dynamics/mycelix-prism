@@ -1,0 +1,10 @@
+[package]
+name = "prism-kernel-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Inter-process wire protocol and IPC frame definitions for Prism broker <-> kernel service"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }

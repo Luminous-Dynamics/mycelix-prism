@@ -1,0 +1,50 @@
+[package]
+name = "prism-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Prism — Leptos 0.8 CSR frontend with epistemic search"
+
+[dependencies]
+# Prism engine crates
+prism-common = { path = "../prism-common" }
+prism-dom = { path = "../prism-dom" }
+prism-reflex = { path = "../prism-reflex" }
+prism-privacy = { path = "../prism-privacy" }
+prism-search = { path = "../prism-search" }
+prism-ingest = { path = "../prism-ingest" }
+prism-knowledge-bridge = { path = "../prism-knowledge-bridge", features = ["dht"] }
+
+# Mycelix Holochain client for DHT bridge
+prism-epistemic-types = { path = "../prism-epistemic-types" }
+mycelix-leptos-client = "0.1.0"
+
+# Symthaea consciousness kernel (WASM-safe, no default features)
+symthaea-spore = { git = "https://github.com/Luminous-Dynamics/symthaea", rev = "77b872fd116c7b6f44fedd82bb8c6100240caa73", default-features = false }
+
+# Leptos
+leptos = { workspace = true }
+
+# HTML sanitization
+ammonia = { workspace = true }
+
+# WASM
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = "0.3"
+web-sys = { workspace = true, features = [
+    "Window", "Document", "Element", "HtmlElement", "CssStyleDeclaration",
+    "HtmlInputElement", "Event",
+    "KeyboardEvent", "MouseEvent", "FocusEvent",
+    "Storage",
+] }
+gloo-net = { workspace = true }
+gloo-timers = { version = "0.3", features = ["futures"] }
+
+# Utilities
+serde = { workspace = true }
+serde_json = { workspace = true }
+url = { workspace = true }
+log = { workspace = true }
+console_log = { workspace = true }
+console_error_panic_hook = { workspace = true }

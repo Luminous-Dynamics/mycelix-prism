@@ -1,0 +1,10 @@
+[package]
+name = "prism-epistemic-types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Client-side epistemic validation and attestation data types for Prism"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }

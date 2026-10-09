@@ -1,0 +1,36 @@
+[package]
+name = "prism-attestation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Prism release-promotion attestation and incident-policy history (scaffold — ceremony/incident_policy modules are minimal stubs; full implementation is planned)"
+autobins = false
+
+[[bin]]
+name = "assemble_incident_policy_history"
+path = "src/bin/assemble_incident_policy_history.rs"
+
+[[bin]]
+name = "admit_release_promotion"
+path = "src/bin/admit_release_promotion.rs"
+
+[[bin]]
+name = "audit_release_promotions"
+path = "src/bin/audit_release_promotions.rs"
+
+[[bin]]
+name = "prepare_release_health"
+path = "src/bin/prepare_release_health.rs"
+
+[[bin]]
+name = "verify_release_health"
+path = "src/bin/verify_release_health.rs"
+
+[[bin]]
+name = "verify_release_promotion"
+path = "src/bin/verify_release_promotion.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }

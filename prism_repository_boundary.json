@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "mycelix-prism",
+  "version": "1.0.0",
+  "canonical_repository": "Luminous-Dynamics/mycelix-prism",
+  "license": "AGPL-3.0-or-later",
+  "stage": "Stage 1 (Migration Active)",
+  "crates": [
+    { "name": "prism-common", "path": "prism-common", "public": true, "layer": "domain-core" },
+    { "name": "prism-dom", "path": "prism-dom", "public": true, "layer": "ui-engine" },
+    { "name": "prism-ingest", "path": "prism-ingest", "public": true, "layer": "pipeline" },
+    { "name": "prism-knowledge-bridge", "path": "prism-knowledge-bridge", "public": true, "layer": "bridge" },
+    { "name": "prism-layout", "path": "prism-layout", "public": true, "layer": "ui-engine" },
+    { "name": "prism-net", "path": "prism-net", "public": true, "layer": "network-authority" },
+    { "name": "prism-node", "path": "prism-node", "public": true, "layer": "runtime" },
+    { "name": "prism-privacy", "path": "prism-privacy", "public": true, "layer": "security" },
+    { "name": "prism-proxy", "path": "prism-proxy", "public": true, "layer": "sandbox-proxy" },
+    { "name": "prism-reflex", "path": "prism-reflex", "public": true, "layer": "event-bus" },
+    { "name": "prism-search", "path": "prism-search", "public": true, "layer": "indexer" },
+    { "name": "prism-security-tests", "path": "prism-security-tests", "public": true, "layer": "qualification" },
+    { "name": "prism-serve", "path": "prism-serve", "public": true, "layer": "ipc-service" },
+    { "name": "prism-shell", "path": "prism-shell", "public": true, "layer": "broker-authority" },
+    { "name": "prism-tauri", "path": "prism-tauri", "public": true, "layer": "renderer-authority" },
+    { "name": "prism-ui", "path": "prism-ui", "public": true, "layer": "frontend-assets" },
+    { "name": "prism-zkp", "path": "prism-zkp", "public": true, "layer": "evidence-receipts" },
+    { "name": "prism-attestation", "path": "prism-attestation", "public": true, "layer": "evidence-receipts" },
+    { "name": "prism-kernel-protocol", "path": "prism-kernel-protocol", "public": false, "layer": "security-ipc" },
+    { "name": "prism-epistemic-types", "path": "prism-epistemic-types", "public": false, "layer": "protocol-types" }
+  ],
+  "allowed_upstream_dependencies": [
+    "mycelix-core-types",
+    "mycelix-zkp-core"
+  ],
+  "forbidden_upstream_dependencies": [
+    "holochain_types",
+    "holochain_conductor_api",
+    "symthaea-core-monolithic"
+  ],
+  "security_authorities": {
+    "broker_lifecycle": "prism-shell",
+    "renderer_authority": "prism-tauri",
+    "sandbox_adapters": ["landlock-linux", "seccomp-bpf"],
+    "network_proxy": "prism-proxy"
+  },
+  "cutover_criteria": {
+    "nextest_pass": true,
+    "security_tests_pass": true,
+    "boundary_validation_pass": true,
+    "desktop_ci_artifacts": true
+  }
+}

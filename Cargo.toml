@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = [
+    "prism-attestation",
+    "prism-common",
+    "prism-dom",
+    "prism-epistemic-types",
+    "prism-ingest",
+    "prism-kernel-protocol",
+    "prism-knowledge-bridge",
+    "prism-layout",
+    "prism-net",
+    "prism-node",
+    "prism-privacy",
+    "prism-proxy",
+    "prism-reflex",
+    "prism-search",
+    "prism-security-tests",
+    "prism-serve",
+    "prism-shell",
+    "prism-tauri",
+    "prism-ui",
+    "prism-zkp",
+]
+exclude = [
+    "prism-dom/fuzz",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+authors = ["Tristan Stoltz / Luminous Dynamics"]
+repository = "https://github.com/Luminous-Dynamics/mycelix-prism"
+
+[workspace.dependencies]
+aho-corasick = "1.1"
+ammonia = "4.0"
+bincode = "1.3"
+blake3 = "1.5"
+console_error_panic_hook = "0.1"
+console_log = "1.0"
+env_logger = "0.11"
+getrandom = { version = "0.2", features = ["js"] }
+gloo-net = "0.6"
+html5ever = "0.39.0"
+leptos = "0.8.19"
+log = "0.4"
+markup5ever = "0.39.0"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+rmp-serde = "1.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+skrifa = "0.40.0"
+taffy = "0.7.7"
+thiserror = "2.0"
+tokio = { version = "1.0", features = ["full"] }
+url = "2.5"
+vello = "0.8.0"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = "0.3"
+winit = "0.30.13"

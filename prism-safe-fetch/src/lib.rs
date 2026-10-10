@@ -324,12 +324,22 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = vec![0; 4096];
-            let count = tokio::time::timeout(Duration::from_secs(2), socket.read(&mut request))
-                .await
-                .expect("client must connect through the pin")
-                .unwrap();
-            let request = String::from_utf8_lossy(&request[..count]);
+            let request = tokio::time::timeout(Duration::from_secs(2), async {
+                let mut request = Vec::new();
+                let mut chunk = [0; 512];
+                loop {
+                    let count = socket.read(&mut chunk).await.unwrap();
+                    assert_ne!(count, 0, "client closed before sending full headers");
+                    request.extend_from_slice(&chunk[..count]);
+                    assert!(request.len() <= 4096, "request headers exceeded test bound");
+                    if request.windows(4).any(|window| window == b"\\r\\n\\r\\n") {
+                        break request;
+                    }
+                }
+            })
+            .await
+            .expect("client must connect through the pin");
+            let request = String::from_utf8_lossy(&request);
             assert!(request.starts_with("GET /pinned HTTP/1.1"));
             assert!(request.lines().any(|line| {
                 line.eq_ignore_ascii_case(&format!("host: example.com:{}", address.port()))

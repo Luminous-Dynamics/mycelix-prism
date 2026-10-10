@@ -47,13 +47,26 @@ impl SearchEngine {
         }
     }
 
-    /// Load a pre-computed index from bytes (bincode format).
-    /// Falls back to an empty engine if deserialization fails.
+    /// Deserialize a pre-computed index, preserving corruption as an explicit error.
+    ///
+    /// Prefer this API for release artifacts and untrusted index files. Falling
+    /// back to an empty index can make corruption look like a successful search
+    /// with zero results, so callers should handle the error visibly.
+    pub fn try_from_precomputed(
+        bytes: &[u8],
+    ) -> Result<Self, Box<bincode::ErrorKind>> {
+        bincode::deserialize(bytes)
+    }
+
+    /// Compatibility wrapper that logs a failure and returns an empty engine.
+    ///
+    /// New callers should prefer try_from_precomputed() and handle the error
+    /// explicitly; this wrapper remains to avoid breaking existing integrations.
     pub fn from_precomputed(bytes: &[u8]) -> Self {
-        match bincode::deserialize(bytes) {
+        match Self::try_from_precomputed(bytes) {
             Ok(engine) => engine,
             Err(e) => {
-                log::error!("Failed to deserialize precomputed index: {}", e);
+                log::error!("Failed to deserialize precomputed index; returning empty index: {}", e);
                 Self::new()
             }
         }
@@ -68,7 +81,9 @@ impl SearchEngine {
         {
             let bytes = include_bytes!("../prism-index.bin");
             log::info!("Loading precomputed index ({} bytes)", bytes.len());
-            return Self::from_precomputed(bytes);
+            return Self::try_from_precomputed(bytes).unwrap_or_else(|e| {
+                panic!("embedded Prism search index failed validation: {e}");
+            });
         }
 
         #[cfg(not(feature = "precomputed-index"))]
@@ -606,6 +621,11 @@ mod tests {
         assert!(!html.contains("<img"));
         assert!(html.contains("&lt;script&gt;claim()&lt;/script&gt;"));
         assert!(html.contains("&lt;/h2&gt;&lt;script&gt;query()&lt;/script&gt;"));
+    }
+
+    #[test]
+    fn corrupt_precomputed_index_returns_explicit_error() {
+        assert!(SearchEngine::try_from_precomputed(b"not a valid bincode index").is_err());
     }
 
     #[test]

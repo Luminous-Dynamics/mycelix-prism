@@ -36,7 +36,7 @@ jobs:
           restore-keys: nix-${{ runner.os }}-
 
       - name: Check Rust formatting
-        run: nix develop --command cargo fmt --all -- --check
+        run: nix develop .#fmt --command cargo fmt --all -- --check
 
   check:
     name: cargo check (Rust 1.99.0 · nix develop)

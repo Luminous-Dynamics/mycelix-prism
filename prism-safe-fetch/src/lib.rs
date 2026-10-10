@@ -116,6 +116,27 @@ async fn client_for_url(
         .map_err(|_| SafeFetchError::Request("HTTP client initialization failed".into()))
 }
 
+/// Canonicalize domain spelling before both resolution and Reqwest's DNS override.
+/// In particular, removing a trailing root dot avoids a mismatch between the
+/// hostname key used for pinning and the hostname key used by a resolver.
+fn normalize_domain_host(mut url: Url) -> Result<Url, SafeFetchError> {
+    let domain = match url.host() {
+        Some(Host::Domain(host)) => Some(host.to_string()),
+        _ => None,
+    };
+    if let Some(domain) = domain {
+        let canonical = domain.trim_end_matches('.').to_ascii_lowercase();
+        if canonical.is_empty() {
+            return Err(SafeFetchError::Policy("URL has an empty hostname".into()));
+        }
+        if canonical != domain {
+            url.set_host(Some(&canonical))
+                .map_err(|_| SafeFetchError::Policy("invalid hostname".into()))?;
+        }
+    }
+    Ok(url)
+}
+
 /// Resolve a Location header relative to its current URL and apply the URL
 /// policy before any connection is attempted.
 pub fn validate_redirect_target(current: &Url, location: &str) -> Result<Url, SafeFetchError> {
@@ -124,6 +145,7 @@ pub fn validate_redirect_target(current: &Url, location: &str) -> Result<Url, Sa
         .map_err(|_| SafeFetchError::Policy("invalid redirect target".into()))?;
     let next = validate_proxy_url(joined.as_str())
         .map_err(|reason| SafeFetchError::Policy(reason.to_string()))?;
+    let next = normalize_domain_host(next)?;
 
     if current.scheme() == "https" && next.scheme() == "http" {
         return Err(SafeFetchError::Policy(
@@ -201,8 +223,9 @@ pub async fn fetch_public_get(
     max_bytes: usize,
     max_redirects: usize,
 ) -> Result<FetchedResponse, SafeFetchError> {
-    let mut current = validate_proxy_url(initial_url.as_str())
+    let validated = validate_proxy_url(initial_url.as_str())
         .map_err(|reason| SafeFetchError::Policy(reason.to_string()))?;
+    let mut current = normalize_domain_host(validated)?;
 
     for hop in 0..=max_redirects {
         let client = client_for_url(&current, user_agent, timeout).await?;
@@ -316,6 +339,13 @@ mod tests {
         let pinned = pinned_addrs_from_ips(answers).unwrap();
         assert_eq!(pinned.len(), 2);
         assert!(pinned.iter().all(|address| address.port() == 0));
+    }
+
+    #[test]
+    fn canonicalizes_trailing_dot_before_pinning() {
+        let url = Url::parse("https://Example.com./path").unwrap();
+        let canonical = normalize_domain_host(url).unwrap();
+        assert_eq!(canonical.host_str(), Some("example.com"));
     }
 
     #[test]

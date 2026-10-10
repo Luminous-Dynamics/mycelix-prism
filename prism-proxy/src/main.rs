@@ -210,9 +210,17 @@ async fn perplexity_handler(
         .await
     {
         Ok(resp) => {
+            if resp.status().is_redirection() {
+                return (StatusCode::BAD_GATEWAY, "Unexpected provider redirect blocked").into_response();
+            }
             let status = resp.status().as_u16();
-            let body = resp.bytes().await.unwrap_or_default();
-            json_response(status, body).into_response()
+            match read_limited_body(resp, MAX_RESPONSE_SIZE).await {
+                Ok(body) => json_response(status, axum::body::Bytes::from(body)).into_response(),
+                Err(SafeFetchError::TooLarge) => {
+                    (StatusCode::PAYLOAD_TOO_LARGE, "Provider response too large").into_response()
+                }
+                Err(_) => (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response(),
+            }
         }
         Err(e) => (
             StatusCode::BAD_GATEWAY,

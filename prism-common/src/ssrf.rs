@@ -89,8 +89,10 @@ pub fn validate_proxy_url(raw: &str) -> Result<url::Url, &'static str> {
 
     let host_str = parsed.host_str().unwrap_or("");
     let normalized_host = host_str.trim_end_matches('.').to_ascii_lowercase();
+    let is_domain = matches!(parsed.host(), Some(url::Host::Domain(_)));
 
     if normalized_host.is_empty()
+        || (is_domain && !normalized_host.contains('.'))
         || normalized_host == "localhost"
         || normalized_host.ends_with(".localhost")
         || normalized_host.ends_with(".local")
@@ -181,6 +183,8 @@ mod tests {
             "http://database.internal/",
             "http://testhost.test/",
             "http://fixture.example/",
+            "http://database/",
+            "http://metadata/",
         ] {
             assert!(validate_proxy_url(url).is_err(), "must reject {url}");
         }

@@ -332,7 +332,7 @@ mod tests {
                     assert_ne!(count, 0, "client closed before sending full headers");
                     request.extend_from_slice(&chunk[..count]);
                     assert!(request.len() <= 4096, "request headers exceeded test bound");
-                    if request.windows(4).any(|window| window == b"\\r\\n\\r\\n") {
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
                         break request;
                     }
                 }

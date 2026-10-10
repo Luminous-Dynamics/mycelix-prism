@@ -286,6 +286,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_large_html_survives_repeated_arena_growth() {
+        let mut html = String::from("<html><body>");
+        for i in 0..4096 {
+            html.push_str("<section><p>item ");
+            html.push_str(&i.to_string());
+            html.push_str("</p></section>");
+        }
+        html.push_str("</body></html>");
+
+        let tree = parse_html(&html);
+        assert_eq!(tree.find_by_tag("section").len(), 4096);
+        assert!(tree.extract_visible_text().contains("item 4095"));
+    }
+
+    #[test]
+    fn parse_deeply_nested_html_keeps_element_names_valid() {
+        let depth = 256;
+        let mut html = "<div>".repeat(depth);
+        html.push_str("nested content");
+        html.push_str(&"</div>".repeat(depth));
+
+        let tree = parse_html(&html);
+        assert_eq!(tree.find_by_tag("div").len(), depth);
+        assert!(tree.extract_visible_text().contains("nested content"));
+    }
+
+    #[test]
     fn parse_with_attributes() {
         let tree = parse_html(
             r#"<div id="main" class="container wide"><a href="https://example.com">Link</a></div>"#,

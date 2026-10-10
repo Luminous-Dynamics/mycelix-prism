@@ -151,22 +151,18 @@ impl SearchEngine {
 
     /// Merge another engine's claims into this one (for lazy-loading).
     pub fn merge(&mut self, other: Self) {
+        // Claim identity must not be inferred from a truncated prefix: two
+        // distinct claims can share the same first 80 characters. Normalize
+        // case and whitespace, then compare the full content.
+        let mut content_keys: std::collections::HashSet<String> = self
+            .claims
+            .iter()
+            .map(|claim| normalize_claim_content(&claim.content))
+            .collect();
+
         for claim in other.claims {
-            let prefix: String = claim
-                .content
-                .chars()
-                .take(80)
-                .collect::<String>()
-                .to_lowercase();
-            let is_dup = self.claims.iter().any(|c| {
-                c.content
-                    .chars()
-                    .take(80)
-                    .collect::<String>()
-                    .to_lowercase()
-                    == prefix
-            });
-            if !is_dup {
+            let key = normalize_claim_content(&claim.content);
+            if content_keys.insert(key) {
                 self.claims.push(claim);
             }
         }
@@ -523,6 +519,15 @@ fn is_stop_word(word: &str) -> bool {
     )
 }
 
+/// Normalize content for conservative duplicate detection.
+fn normalize_claim_content(content: &str) -> String {
+    content
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
 /// Deterministic hash of a word to a u64 seed for BinaryHV::random().
 fn hash_word(word: &str) -> u64 {
     // FNV-1a hash
@@ -739,6 +744,24 @@ mod tests {
         assert_eq!(engine.word_df.get("sharedterm"), Some(&2));
         assert_eq!(engine.vectors.len(), engine.claims.len());
         assert!(!engine.search("climate", 2).is_empty());
+    }
+
+    #[test]
+    fn merge_does_not_drop_distinct_claims_with_shared_prefixes() {
+        let shared_prefix = "this claim deliberately shares a long common prefix ".repeat(3);
+        let first = format!("{shared_prefix}alpha");
+        let second = format!("{shared_prefix}beta");
+
+        let mut left = SearchEngine::new();
+        left.add_claim(&first, EmpiricalLevel::E1, &[], &[]);
+        let mut right = SearchEngine::new();
+        right.add_claim(&second, EmpiricalLevel::E2, &[], &[]);
+
+        left.merge(right);
+
+        assert_eq!(left.claim_count(), 2);
+        assert!(left.claims.iter().any(|claim| claim.content == first));
+        assert!(left.claims.iter().any(|claim| claim.content == second));
     }
 
     #[test]

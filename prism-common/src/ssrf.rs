@@ -22,6 +22,10 @@
 /// This is deliberately conservative and rejects special-purpose, private,
 /// shared, documentation, benchmarking, multicast, reserved, loopback, and
 /// unspecified ranges. It does not rely on nightly-only `Ipv4Addr::is_global`.
+///
+/// Range references: [IANA IPv4 Special-Purpose Address Space](https://www.iana.org/assignments/iana-ipv4-special-registry).
+/// Re-audit this table when the registry changes; this is a proxy-denial policy,
+/// not a claim that every non-public-purpose range is fully enumerated.
 pub fn is_private_ipv4(ip: &std::net::Ipv4Addr) -> bool {
     let [a, b, c, _d] = ip.octets();
 
@@ -47,6 +51,9 @@ pub fn is_private_ipv4(ip: &std::net::Ipv4Addr) -> bool {
 /// IETF special-purpose, 6to4 and documentation ranges. This policy is more
 /// conservative than merely testing loopback/private/link-local because some
 /// translated and transition addresses can encode an IPv4 destination.
+///
+/// Range references: [IANA IPv6 Global Unicast Address Space](https://www.iana.org/assignments/ipv6-unicast-address-assignments)
+/// and [IANA IPv6 Special-Purpose Address Space](https://www.iana.org/assignments/iana-ipv6-special-registry).
 pub fn is_non_public_ip(ip: std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(ip) => is_private_ipv4(&ip),

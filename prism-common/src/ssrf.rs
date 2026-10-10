@@ -90,7 +90,23 @@ pub fn validate_proxy_url(raw: &str) -> Result<url::Url, &'static str> {
         _ => return Err("Only http and https URLs are allowed"),
     }
 
-    if !parsed.username().is_empty() || parsed.password().is_some() {
+    // The accessors catch non-empty username/password values. Also inspect
+    // the serialized authority so an empty userinfo delimiter ("https://@host")
+    // cannot slip through simply because both accessors appear empty.
+    let serialized = parsed.as_str();
+    let authority_remainder = serialized
+        .split_once("://")
+        .map(|(_, remainder)| remainder)
+        .unwrap_or("");
+    let authority_end = authority_remainder
+        .find(|ch| matches!(ch, '/' | '?' | '#'))
+        .unwrap_or(authority_remainder.len());
+    let has_userinfo_delimiter = authority_remainder[..authority_end].contains('@');
+
+    if !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || has_userinfo_delimiter
+    {
         return Err("URLs containing user credentials are forbidden");
     }
 
@@ -185,6 +201,9 @@ mod tests {
     fn rejects_credentials_and_reserved_hostname_suffixes() {
         for url in [
             "https://user:password@example.com/",
+            "https://@example.com/",
+            "http://LOCALHOST./",
+            "http://metadata.google.internal./",
             "http://service.local/",
             "http://printer.localhost/",
             "http://database.internal/",
@@ -194,6 +213,29 @@ mod tests {
             "http://metadata/",
         ] {
             assert!(validate_proxy_url(url).is_err(), "must reject {url}");
+        }
+    }
+
+    #[test]
+    fn rejects_noncanonical_ipv4_literal_spellings() {
+        // WHATWG URL parsing accepts legacy shorthand, integer, hexadecimal,
+        // and octal IPv4 forms. Ensure they are normalized to literal IPs and
+        // then pass through the same destination policy as dotted-decimal IPs.
+        for raw in [
+            "http://127.1/",
+            "http://2130706433/",
+            "http://0x7f000001/",
+            "http://0177.0.0.1/",
+        ] {
+            let parsed = url::Url::parse(raw).expect("URL fixture must parse");
+            assert!(
+                matches!(parsed.host(), Some(url::Host::Ipv4(_))),
+                "fixture must parse as an IPv4 literal: {raw} -> {parsed}"
+            );
+            assert!(
+                validate_proxy_url(raw).is_err(),
+                "must reject noncanonical private IPv4 spelling {raw}"
+            );
         }
     }
 

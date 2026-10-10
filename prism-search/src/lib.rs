@@ -306,35 +306,36 @@ impl SearchEngine {
         // a defensible locality-sensitive hash and could not justify a recall claim.
         // Keep the exhaustive scan until a real LSH/ANN implementation is backed
         // by a pinned relevance set, measured recall@k, and latency benchmarks.
-        let candidates: Vec<usize> = (0..self.vectors.len()).collect();
-
-        // Exact similarity on candidates only
-        let baseline = 0.50_f32; // True baseline for 16,384-bit BinaryHV
-        let mut scored: Vec<(usize, f32)> = candidates
-            .iter()
-            .map(|&i| {
+        // Exact exhaustive scoring is the correctness baseline until an
+        // approximate index demonstrates recall and latency on a pinned corpus.
+        let baseline = 0.50_f32; // Expected similarity for independent BinaryHV vectors
+        let mut scored: Vec<(usize, f32, f32)> = (0..self.vectors.len())
+            .map(|i| {
                 let sim = query_hv.similarity(&self.vectors[i]);
                 let claim = &self.claims[i];
                 let epistemic = claim.empirical_level.as_f32();
                 let norm_sim = ((sim - baseline) / (1.0 - baseline)).clamp(0.0, 1.0);
-                // Keep ordering identical to SearchResult::rank_score(), which is
-                // also the score exposed to callers and rendered in the UI.
+                // These metadata values remain legacy placeholders until their
+                // provenance is modeled explicitly in SearchResult.
                 let freshness = 1.0 / (1.0 + 1.0 / 365.0);
                 let composite =
                     0.4 * norm_sim + 0.3 * epistemic + 0.2 * 0.9 + 0.1 * freshness;
-                (i, composite)
+                (i, composite, norm_sim)
             })
             .collect();
 
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // Stable and deterministic ordering for exact score ties.
+        scored.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
         scored.truncate(top_k);
 
         scored
             .into_iter()
-            .map(|(i, _)| {
+            .map(|(i, _composite, norm_sim)| {
                 let claim = &self.claims[i];
-                let sim = query_hv.similarity(&self.vectors[i]);
-                let norm_sim = ((sim - baseline) / (1.0 - baseline)).clamp(0.0, 1.0);
                 SearchResult {
                     content: claim.content.clone(),
                     sources: claim.sources.clone(),
@@ -738,6 +739,27 @@ mod tests {
             "Top result should be relevant: {}",
             top.content
         );
+    }
+
+
+    #[test]
+    fn returned_results_are_sorted_by_exposed_rank_score() {
+        let mut engine = SearchEngine::new();
+        engine.add_claim("ocean acidification lowers seawater pH", EmpiricalLevel::E2, &[], &[]);
+        engine.add_claim("ocean acidification threatens shell forming organisms", EmpiricalLevel::E3, &[], &[]);
+        engine.add_claim("quantum entanglement and phase coherence", EmpiricalLevel::E1, &[], &[]);
+        engine.add_claim("carbon dioxide changes ocean carbonate chemistry", EmpiricalLevel::E4, &[], &[]);
+
+        let results = engine.search("ocean acidification carbonate chemistry", 4);
+        assert!(results.len() >= 2);
+        for pair in results.windows(2) {
+            assert!(
+                pair[0].rank_score() >= pair[1].rank_score(),
+                "results must be sorted by exposed score: {} < {}",
+                pair[0].rank_score(),
+                pair[1].rank_score()
+            );
+        }
     }
 
     #[test]

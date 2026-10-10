@@ -1,112 +1,52 @@
-# Prism — Feature Parity Comparison
+# Prism capability inventory — not a feature-parity claim
 
-Compared against Brave 1.76, Chrome 134, Firefox 137, Safari 18.
+**Status: evidence-based snapshot, updated 2026-10-10.** This document supersedes the earlier feature-parity matrix, whose claims about browser security, memory safety, privacy enforcement, feature coverage, and binary size were not backed by comparable measurements.
 
-## Rendering Engine
+This is an implementation inventory, not a runtime benchmark. A crate, enum, test, or dependency is not proof that a complete browser feature is integrated or safe. No WPT report, independent security assessment, or matched performance study has been published for the exact Prism revision described here.
 
-| Feature | Brave (Blink) | Chrome (Blink) | Firefox (Gecko) | Safari (WebKit) | Prism (html5ever) |
-|---------|:---:|:---:|:---:|:---:|:---:|
-| HTML5 parsing | Full | Full | Full | Full | Full (spec-compliant) |
-| Malformed HTML recovery | Yes | Yes | Yes | Yes | **Yes** (8 tests) |
-| Unicode text | Full | Full | Full | Full | **Yes** (tested) |
-| CSS cascade | Full | Full | Full | Full | No (reader mode) |
-| Flexbox/Grid layout | Full | Full | Full | Full | Reader mode only |
-| JavaScript execution | V8 | V8 | SpiderMonkey | JSC | **None by design** |
-| WebAssembly | Yes | Yes | Yes | Yes | No |
-| Images (raster) | Full | Full | Full | Full | Via innerHTML |
-| SVG | Full | Full | Full | Full | Via innerHTML |
-| Video/Audio | Full | Full | Full | Full | No |
-| WebGL/WebGPU | Full | Full | Full | Full | No |
+## Browser engine comparison
 
-**Prism advantage**: Zero JS = zero JIT attack surface. Reader mode renders semantic content only.
+| Area | Ladybird (public project evidence) | Prism (source evidence / current limit) |
+|---|---|---|
+| Project scope | Independent browser engine with dedicated HTML/CSS/DOM, JavaScript and WebAssembly implementations | Experimental Rust-first browser/platform workspace with separate DOM, layout, UI, networking, shell and search crates |
+| HTML | Integrated engine with ongoing standards and real-site compatibility work | Uses html5ever 0.39 and a custom DOM adapter; this does not establish end-to-end browser compatibility or complete Web Platform Test coverage |
+| CSS and layout | Dedicated style, layout, paint and rendering pipeline; implementation is still actively evolving | prism-layout and Taffy are present, but full CSS cascade, layout, painting and web API compatibility have not been established |
+| JavaScript | LibJS is integrated into Ladybird's browser engine | No page JavaScript engine is integrated in the current Prism architecture. This limits compatibility with most interactive sites; it should not be marketed as a full web browser equivalent |
+| WebAssembly | Dedicated LibWasm implementation in the browser engine | A wasm32 component target exists in the development environment; this is not evidence of page-level WebAssembly runtime parity |
+| Process isolation | Ladybird documents separate web-content and helper processes, with sandboxing; its process-boundary work is ongoing | Prism has modular crates and broker-oriented design goals, but its end-to-end renderer/site isolation and hostile-renderer containment are not independently demonstrated |
+| Parser safety | Ladybird publishes ongoing security work and external review findings | Open issue #2 records a potential unsafe lifetime concern in prism-dom's parser. It is not a confirmed exploit, but it is an explicit blocker for security-hardening claims |
+| Networking | Browser-specific request, cookie, cache, permission and process boundaries are actively developed | reqwest and an SSRF guard are present. Full browser networking semantics, origin isolation, cookie policy, CSP and conformance have not been evidenced as a complete system |
+| Media and graphics | Dedicated media and graphics pipelines with current work on hardware decoding and compositor performance | Workspace dependencies include graphics/UI components, but they do not demonstrate parity for browser media, GPU isolation, WebGL/WebGPU or accessibility |
+| Standards evidence | Ladybird publishes ongoing Web Platform Test progress and real-site compatibility work | No pinned WPT baseline or independently reproducible real-site compatibility report is currently published |
+| Performance | Monthly, revision-specific browser benchmark updates are published | No matched browser benchmark report is published. Performance superiority must not be claimed without comparable hardware, workloads and raw results |
 
-## Security
+## Prism-specific areas worth differentiating
 
-| Feature | Brave | Chrome | Firefox | Safari | Prism |
-|---------|:---:|:---:|:---:|:---:|:---:|
-| HTTPS enforcement | Yes | Yes | Yes | Yes | Via fetch |
-| Safe Browsing | Yes (partial) | Google SB | Google SB | Apple | **Reflex arc** (custom) |
-| Phishing detection | URL list | URL list | URL list | URL list | **Aho-Corasick DOM scan** |
-| XSS prevention | CSP | CSP | CSP | CSP | **ammonia sanitization** |
-| Script blocking | Shields | Extensions | Extensions | Content blockers | **No scripts exist** |
-| Tracker blocking | Shields | Extensions | ETP | ITP | **No JS = no trackers** |
-| Fingerprint protection | Yes | No | Yes | Yes | **No JS = no fingerprinting** |
-| Prompt injection detection | No | No | No | No | **Yes (35 phrases)** |
-| Credential harvesting detection | No | No | No | No | **Yes (10 phrases)** |
-| Epistemic threat scoring | No | No | No | No | **Yes (cumulative severity)** |
-| Content zone classification | No | No | No | No | **Yes (Private/Local/Public)** |
+### Local-first knowledge search
 
-**Prism advantage**: 6 security features that no major browser has. No JS engine = no JIT vulnerabilities, no prototype pollution, no supply chain attacks through npm.
+Prism's search crate encodes text into 16,384-bit BinaryHV vectors and combines semantic similarity with corpus statistics and an empirical evidence level. That is an interesting inspectable approach, but it is not yet evidence of competitive web-search quality.
 
-## Privacy
+The current search corpus is claim-oriented rather than a demonstrated full-web index. The project still needs an explicit source manifest, exact corpus counts, duplicate policy, retrieval timestamps and content hashes; a pinned query set with human- or rule-labeled relevance; Recall@k, MRR and nDCG measurements; and a strong lexical baseline such as BM25. Until those exist, describe the engine as experimental epistemic/claim search, not a replacement for web-scale search engines.
 
-| Feature | Brave | Chrome | Firefox | Safari | Prism |
-|---------|:---:|:---:|:---:|:---:|:---:|
-| Tracker blocking | Yes | No | Yes | Yes | **N/A (no JS)** |
-| Cookie control | Yes | Yes | Yes | Yes | No cookies sent |
-| Private browsing | Yes | Yes | Yes | Yes | **Default (Local zone)** |
-| Tor integration | Yes | No | No | No | Planned (Iroh P2P) |
-| Content never leaves device | No | No | No | No | **Yes (Local zone default)** |
-| Explicit consent for sharing | No | No | No | No | **Yes (ConsentStore)** |
-| Three-zone privacy model | No | No | No | No | **Yes (Private/Local/Public)** |
-| Non-bypassable encoding gate | No | No | No | No | **Yes** |
+### User sovereignty and privacy
 
-**Prism advantage**: Privacy is structural, not a setting. Content defaults to LOCAL — never broadcast without explicit E3+/E4 classification or user consent.
+Prism defines Private, Local and Public content zones and defaults the enum to Local. This is a useful policy vocabulary, but a type definition alone does not prove that sensitive content cannot cross a network boundary. The product needs end-to-end data-flow tests, explicit origin permissions, inspectable data export/deletion, consent receipts, and a fail-closed boundary between local content and any peer network.
 
-## Search
+Threat heuristics and epistemic labels can help users inspect claims. They should be presented as decision support, not as proof of truth, comprehensive prompt-injection defense, or calibrated confidence. Unknown provenance must remain unknown instead of becoming a synthetic trust score.
 
-| Feature | Brave Search | Google | DuckDuckGo | Prism Search |
-|---------|:---:|:---:|:---:|:---:|
-| Index type | Centralized | Centralized | Proxy (Bing) | **HDC 16,384-bit** |
-| Ranking model | Proprietary | PageRank + ML | Bing's | **BinaryHV similarity + IDF** |
-| Result count | Billions | Billions | Billions | 200+ claims (growing) |
-| Evidence classification | No | No | No | **Yes (E0-E4)** |
-| Source transparency | Partial | No | No | **Yes (per-result)** |
-| Trust scoring | No | No | No | **Yes (K-vector)** |
-| Anti-manipulation | Proprietary | Proprietary | N/A | **Anti-Sybil (10 layers)** |
-| Decentralized | No | No | No | **Planned (Holochain DHT)** |
-| Semantic encoding | Embeddings (opaque) | Embeddings (opaque) | N/A | **Open (BinaryHV, inspectable)** |
-| Works offline | No | No | No | **Yes (embedded claims)** |
+### Portability
 
-**Prism advantage**: Every result is epistemically classified. Users know the evidence level, source, and trust score. The encoding is open and inspectable — not an opaque ML model.
+WebAssembly is valuable for portable, capability-limited components. It does not eliminate OS-specific work for rendering, GPU drivers, media codecs, key storage, accessibility, networking, window management or sandboxing. Support should be reported per target using an actual build and runtime test matrix; desktop Linux evidence does not establish Windows, macOS, Android, iOS, TV or embedded support.
 
-## Reader Mode
+## Evidence required before stronger claims
 
-| Feature | Brave | Chrome | Firefox | Safari | Prism |
-|---------|:---:|:---:|:---:|:---:|:---:|
-| Reader mode | Via extension | Via extension | **Built-in** | **Built-in** | **Default** |
-| Content width | Varies | Varies | ~680px | ~680px | **680px** |
-| Line height | Varies | Varies | ~1.6 | ~1.6 | **1.7** |
-| Font control | Varies | Varies | Yes | Yes | CSS variables |
-| Dark mode | Via extension | Via extension | Yes | Yes | Planned |
-| Stripping of non-content | Heuristic | Heuristic | Readability | Readability | **ammonia + html5ever** |
+1. **Reproducible build:** commit Cargo.lock from the exact source tree, pin dependency inputs, and pass locked CI on one SHA.
+2. **Memory safety:** resolve issue #2 with a defensible safe representation or a narrowly justified unsafe contract, plus stress and dynamic-analysis evidence where practical.
+3. **Standards coverage:** pin a WPT revision, publish per-area pass/fail/timeout/unsupported counts, and prevent unexplained regressions.
+4. **Security boundary:** verify renderer compromise assumptions, IPC input validation, network brokering, site isolation, permissions and local/private data non-egress.
+5. **Search quality:** publish a pinned corpus and query set, a deterministic evaluator, a lexical baseline, and confidence intervals or repeated-run variance where relevant.
+6. **Usability and performance:** measure keyboard/accessibility behavior, crash recovery, memory, CPU, energy, cold/warm load and interaction latency against named baselines.
 
-**Prism advantage**: Reader mode is the default, not an afterthought. Content is always rendered at comfortable reading width with proper typography.
+## Bottom line
 
-## Architecture
-
-| Property | Brave | Chrome | Firefox | Safari | Prism |
-|----------|:---:|:---:|:---:|:---:|:---:|
-| Language | C++ | C++ | C++/Rust | C++/Swift | **Pure Rust** |
-| C/C++ code | Millions LOC | Millions LOC | Millions LOC | Millions LOC | **0 lines** |
-| Memory safety | Partial | Partial | Partial (Rust parts) | Partial | **Total** |
-| Binary size | ~200MB | ~200MB | ~200MB | ~100MB | **2.1MB WASM** |
-| Attack surface | Enormous | Enormous | Large | Large | **Minimal** |
-| JS engine CVEs (2024) | 15+ (V8) | 15+ (V8) | 10+ (SM) | 8+ (JSC) | **0 (no JS)** |
-| Can be served from IPFS | No | No | No | No | **Yes** |
-| Open source | Yes | Chromium | Yes | WebKit | **Yes** |
-
-## Test Coverage (Prism)
-
-| Category | Tests | Status |
-|----------|-------|--------|
-| HTML parsing | 8 | All pass |
-| Security (reflex arc) | 7 | All pass |
-| Privacy (3-zone) | 2 | All pass |
-| Search quality | 7 | All pass (top result on-topic) |
-| Search mechanics | 4 | All pass |
-| Reader mode | 2 | All pass |
-| Data ingestion | 3 | All pass |
-| Ammonia sanitization | 1 | All pass |
-| **Total feature parity** | **27** | **All pass** |
-| **Full workspace** | **167** | **All pass** |
+Ladybird is currently the stronger reference for independent browser-engine implementation, standards conformance and process isolation, with public evidence of continuing work in each area. Prism's most defensible differentiation is local-first epistemic search, explicit user-controlled data flows, and optional Mycelix/Symthaea integrations. The winning strategy is not to claim more features; it is to make fewer, more useful claims and attach reproducible evidence to each one.

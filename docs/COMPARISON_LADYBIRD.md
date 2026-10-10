@@ -8,6 +8,16 @@ Ladybird's central objective is an independent, standards-driven web browser eng
 
 Prism's plausible differentiation is broader than rendering: a Rust-first modular platform, privacy/security policy surfaces, portable WASM components, and optional integrations with Mycelix and Symthaea for knowledge workflows. Those integrations can make Prism distinctive, but they do not replace the need for a correct HTML/CSS engine, JavaScript, networking, media, accessibility, and process isolation.
 
+## Recommended relationship: reference first, integrate only by evidence
+
+**Working decision:** Ladybird is Prism's primary external engine reference and comparative baseline, not a required runtime dependency at this stage. The full decision, options, licensing/security gates, and revisit criteria are recorded in [ADR-0001](adr/0001-ladybird-reference-strategy.md).
+
+This distinction matters because Ladybird's public README still describes the project as pre-alpha and developer-only; its process-architecture document explicitly says some described architecture is aspirational and implementation is underway. Ladybird's Rust port is incremental while the main engine continues to develop in C++, and the project asks contributors to coordinate Rust-porting work with its core team. The reviewed public docs do not establish a stable supported embeddable-engine API.
+
+Use Ladybird to compare standards behavior, selected real-site rendering, security boundaries, IPC, performance methodology, and developer diagnostics. Use WPT/specifications as the normative authority: do not reproduce a Ladybird bug merely to match its output. Contribute fixes upstream where appropriate rather than maintaining a private fork.
+
+Do not make Ladybird a bundled/mandatory dependency until a prototype proves a stable interface, security isolation, packaging and update strategy, platform coverage, license/dependency compatibility, upstream alignment, and a measured maintenance-cost advantage. Prism's search, provenance, privacy policy, Mycelix integration, and data export should remain useful without any browser-engine dependency.
+
 ## Evidence-based comparison
 
 | Dimension | Ladybird | Prism today / evidence needed |

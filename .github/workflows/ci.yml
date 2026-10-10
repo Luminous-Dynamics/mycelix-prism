@@ -92,4 +92,4 @@ jobs:
           restore-keys: nix-msrv-${{ runner.os }}-
 
       - name: cargo check --workspace (compat shell)
-        run: nix develop .#compat --command cargo check --workspace --locked
+        run: nix develop .#msrv --command cargo check --workspace --locked

@@ -52,10 +52,33 @@ impl SearchEngine {
     /// Prefer this API for release artifacts and untrusted index files. Falling
     /// back to an empty index can make corruption look like a successful search
     /// with zero results, so callers should handle the error visibly.
-    pub fn try_from_precomputed(
-        bytes: &[u8],
-    ) -> Result<Self, Box<bincode::ErrorKind>> {
-        bincode::deserialize(bytes)
+    pub fn try_from_precomputed(bytes: &[u8]) -> Result<Self, String> {
+        let mut engine: Self =
+            bincode::deserialize(bytes).map_err(|error| error.to_string())?;
+
+        if engine.claims.len() != engine.vectors.len() {
+            return Err(format!(
+                "precomputed index has {} claims but {} vectors",
+                engine.claims.len(),
+                engine.vectors.len()
+            ));
+        }
+
+        // Word frequencies and vectors are derived state. Recompute them from
+        // the claims and reject stale/mismatched serialized artifacts rather
+        // than trusting internally inconsistent ranking data.
+        let stored_word_df = engine.word_df.clone();
+        let stored_vectors = engine.vectors.clone();
+        engine.rebuild_index();
+
+        if engine.word_df != stored_word_df {
+            return Err("precomputed index document frequencies do not match its claims".into());
+        }
+        if engine.vectors != stored_vectors {
+            return Err("precomputed index vectors do not match its claims and corpus statistics".into());
+        }
+
+        Ok(engine)
     }
 
     /// Compatibility wrapper that logs a failure and returns an empty engine.
@@ -626,6 +649,41 @@ mod tests {
     #[test]
     fn corrupt_precomputed_index_returns_explicit_error() {
         assert!(SearchEngine::try_from_precomputed(b"not a valid bincode index").is_err());
+    }
+
+    #[test]
+    fn precomputed_index_round_trip_checks_derived_state() {
+        let mut engine = SearchEngine::new();
+        engine.add_claim("ocean acidification", EmpiricalLevel::E2, &[], &[]);
+        engine.add_claim("quantum entanglement", EmpiricalLevel::E3, &[], &[]);
+
+        let bytes = bincode::serialize(&engine).expect("serialize valid index");
+        let loaded = SearchEngine::try_from_precomputed(&bytes)
+            .expect("valid derived state should round-trip");
+
+        assert_eq!(loaded.claim_count(), 2);
+        assert_eq!(loaded.vectors.len(), loaded.claims.len());
+        assert_eq!(loaded.word_df.get("ocean"), Some(&1));
+    }
+
+    #[test]
+    fn precomputed_index_rejects_mismatched_vector_count() {
+        let mut engine = SearchEngine::new();
+        engine.add_claim("ocean acidification", EmpiricalLevel::E2, &[], &[]);
+        engine.vectors.pop();
+
+        let bytes = bincode::serialize(&engine).expect("serialize malformed index");
+        assert!(SearchEngine::try_from_precomputed(&bytes).is_err());
+    }
+
+    #[test]
+    fn precomputed_index_rejects_stale_document_frequencies() {
+        let mut engine = SearchEngine::new();
+        engine.add_claim("ocean acidification", EmpiricalLevel::E2, &[], &[]);
+        engine.word_df.insert("forged-frequency".into(), 42);
+
+        let bytes = bincode::serialize(&engine).expect("serialize malformed index");
+        assert!(SearchEngine::try_from_precomputed(&bytes).is_err());
     }
 
     #[test]

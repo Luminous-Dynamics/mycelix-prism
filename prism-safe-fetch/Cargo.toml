@@ -1,0 +1,12 @@
+[package]
+name = "prism-safe-fetch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pinned-DNS, redirect-validated, bounded HTTP fetches for Prism server-side proxy routes"
+
+[dependencies]
+prism-common = { path = "../prism-common" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli"] }
+tokio = { workspace = true }
+url = { workspace = true }

@@ -21,8 +21,8 @@ const MIN_LOCAL_RESULTS: usize = 3;
 
 /// Query the Knowledge DHT for claims matching a tag or keyword.
 ///
-/// Returns SearchResults with DHT-sourced claims, scored at 0.0 similarity
-/// (caller should re-rank with their own scoring).
+/// Returns DHT-sourced claims with similarity, reputation, and age left unknown
+/// until those properties are actually measured or verified.
 #[cfg(feature = "dht")]
 pub async fn query_dht_claims(tag: &str) -> Vec<SearchResult> {
     let transport = mycelix_leptos_client::BrowserWsTransport::new();
@@ -110,7 +110,7 @@ pub async fn query_dht_claims(_tag: &str) -> Vec<SearchResult> {
 /// Unified search: local HDC results + DHT fallback.
 ///
 /// If local results are fewer than MIN_LOCAL_RESULTS, queries the DHT
-/// for additional claims and merges them (deduped by content prefix).
+/// for additional claims and merges them by normalized full content.
 pub async fn unified_search(local_results: Vec<SearchResult>, query: &str) -> Vec<SearchResult> {
     if local_results.len() >= MIN_LOCAL_RESULTS {
         return local_results;
@@ -134,25 +134,84 @@ pub async fn unified_search(local_results: Vec<SearchResult>, query: &str) -> Ve
         dht_results.len()
     );
 
-    // Merge and deduplicate by content prefix (first 50 chars)
-    let mut merged = local_results;
-    let existing_prefixes: std::collections::HashSet<String> = merged
+    merge_unique_results(local_results, dht_results)
+}
+
+/// Merge claims using their full normalized text as identity.
+///
+/// A prefix is not a sound identity: distinct claims can share arbitrarily long
+/// introductions. Updating the seen-set after insertion also prevents duplicate
+/// items within the incoming DHT batch from being appended more than once.
+fn merge_unique_results(
+    mut merged: Vec<SearchResult>,
+    dht_results: Vec<SearchResult>,
+) -> Vec<SearchResult> {
+    let mut seen: std::collections::HashSet<String> = merged
         .iter()
-        .map(|r| r.content.chars().take(50).collect())
+        .map(|result| normalize_claim_content(&result.content))
         .collect();
 
     for result in dht_results {
-        let prefix: String = result.content.chars().take(50).collect();
-        if !existing_prefixes.contains(&prefix) {
+        if seen.insert(normalize_claim_content(&result.content)) {
             merged.push(result);
         }
     }
 
-    // Re-rank by composite score
+    // Re-rank by composite score.
     merged.sort_by(|a, b| {
         b.rank_score()
             .partial_cmp(&a.rank_score())
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     merged
+}
+
+/// Normalize whitespace and case while preserving the full claim.
+fn normalize_claim_content(content: &str) -> String {
+    content
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prism_common::{EmpiricalLevel, MaterialityLevel, NormativeLevel};
+
+    fn result(content: &str) -> SearchResult {
+        SearchResult {
+            content: content.to_string(),
+            sources: Vec::new(),
+            empirical_level: EmpiricalLevel::E2,
+            normative_level: NormativeLevel::N2,
+            materiality_level: MaterialityLevel::M2,
+            query_similarity: Some(0.5),
+            author_reputation: None,
+            age_days: None,
+            tags: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn merge_uses_full_normalized_content_and_deduplicates_incoming_batch() {
+        let shared_prefix = "this claim has a shared introduction that is intentionally longer than fifty characters ".repeat(2);
+        let first = format!("{shared_prefix}alpha");
+        let second = format!("{shared_prefix}beta");
+        let first_with_different_case_and_spacing = first.to_uppercase().replace(' ', "   ");
+
+        let merged = merge_unique_results(
+            vec![result(&first)],
+            vec![
+                result(&second),
+                result(&first_with_different_case_and_spacing),
+                result(&second),
+            ],
+        );
+
+        assert_eq!(merged.len(), 2);
+        assert!(merged.iter().any(|claim| claim.content == first));
+        assert!(merged.iter().any(|claim| claim.content == second));
+    }
 }

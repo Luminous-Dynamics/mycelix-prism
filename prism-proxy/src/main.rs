@@ -113,7 +113,17 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
 
     let client = build_client("Prism/0.2 (ddg-proxy)", 10);
 
-    match client\n        .get(url)\n        .query(&[("q", params.q.as_str()), ("format", "json"), ("no_html", "1"), ("skip_disambig", "1")])\n        .send()\n        .await\n    {
+    match client
+        .get(url)
+        .query(&[
+            ("q", params.q.as_str()),
+            ("format", "json"),
+            ("no_html", "1"),
+            ("skip_disambig", "1"),
+        ])
+        .send()
+        .await
+    {
         Ok(resp) => {
             if resp.status().is_redirection() {
                 return (StatusCode::BAD_GATEWAY, "Unexpected provider redirect blocked").into_response();

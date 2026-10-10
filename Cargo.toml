@@ -10,6 +10,7 @@ members = [
     "prism-knowledge-bridge",
     "prism-layout",
     "prism-net",
+    "prism-safe-fetch",
     "prism-node",
     "prism-privacy",
     "prism-proxy",

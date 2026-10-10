@@ -1,0 +1,317 @@
+// Copyright (C) 2024-2026 Tristan Stoltz / Luminous Dynamics
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Commercial licensing: see COMMERCIAL_LICENSE.md at repository root
+//! Fail-closed HTTP GET for Prism's server-side proxy boundary.
+//!
+//! Every hop is checked independently. Domain answers are validated as a set,
+//! then pinned into a no-proxy Reqwest client with redirects disabled. Body
+//! limits are enforced as chunks arrive, not after buffering the whole body.
+//! This crate is native-only by workspace membership and must not be added to
+//! wasm32 targets.
+
+use prism_common::ssrf::{is_non_public_ip, validate_proxy_url};
+use reqwest::header::LOCATION;
+use reqwest::{Client, StatusCode};
+use std::collections::HashSet;
+use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
+use url::{Host, Url};
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Debug)]
+pub enum SafeFetchError {
+    Policy(String),
+    Request(String),
+    TooLarge,
+}
+
+impl std::fmt::Display for SafeFetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Policy(message) | Self::Request(message) => f.write_str(message),
+            Self::TooLarge => f.write_str("response exceeds configured byte limit"),
+        }
+    }
+}
+
+impl std::error::Error for SafeFetchError {}
+
+#[derive(Debug)]
+pub struct FetchedResponse {
+    pub status: u16,
+    pub content_type: String,
+    pub body: Vec<u8>,
+    pub final_url: Url,
+}
+
+/// Validate a set of DNS answers and return pinned socket addresses.
+///
+/// Empty sets and mixed public/private sets fail closed. Port zero is
+/// intentional: Reqwest's resolve_to_addrs API lets the URL's explicit port,
+/// or the scheme's default port, remain authoritative.
+pub fn pinned_addrs_from_ips<I>(addresses: I) -> Result<Vec<SocketAddr>, SafeFetchError>
+where
+    I: IntoIterator<Item = IpAddr>,
+{
+    let mut unique = HashSet::new();
+    let mut pinned = Vec::new();
+
+    for ip in addresses {
+        if is_non_public_ip(ip) {
+            return Err(SafeFetchError::Policy(
+                "hostname resolved to a non-public address".into(),
+            ));
+        }
+        if unique.insert(ip) {
+            pinned.push(SocketAddr::new(ip, 0));
+        }
+    }
+
+    if pinned.is_empty() {
+        return Err(SafeFetchError::Policy(
+            "hostname did not resolve to any addresses".into(),
+        ));
+    }
+
+    Ok(pinned)
+}
+
+/// Resolve a hostname once and return only a fully public, pinned address set.
+async fn resolve_public_host(host: &str, port: u16) -> Result<Vec<SocketAddr>, SafeFetchError> {
+    let resolved = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|_| SafeFetchError::Policy("hostname resolution failed".into()))?;
+
+    pinned_addrs_from_ips(resolved.map(|address| address.ip()))
+}
+
+/// Create a fresh no-proxy client and pin domain resolution to the validated
+/// answers. Callers intentionally build a client per hop so a redirect cannot
+/// reuse an earlier host's resolution policy.
+async fn client_for_url(
+    url: &Url,
+    user_agent: &str,
+    timeout: Duration,
+) -> Result<Client, SafeFetchError> {
+    let mut builder = Client::builder()
+        .user_agent(user_agent)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
+        // Never let environment proxy settings route around the validated
+        // origin-to-address pinning.
+        .no_proxy();
+
+    if let Some(Host::Domain(host)) = url.host() {
+        let port = url
+            .port_or_known_default()
+            .ok_or_else(|| SafeFetchError::Policy("URL has no usable port".into()))?;
+        let pinned = resolve_public_host(host, port).await?;
+        builder = builder.resolve_to_addrs(host, &pinned);
+    }
+
+    builder
+        .build()
+        .map_err(|_| SafeFetchError::Request("HTTP client initialization failed".into()))
+}
+
+/// Resolve a Location header relative to its current URL and apply the URL
+/// policy before any connection is attempted.
+pub fn validate_redirect_target(current: &Url, location: &str) -> Result<Url, SafeFetchError> {
+    let joined = current
+        .join(location)
+        .map_err(|_| SafeFetchError::Policy("invalid redirect target".into()))?;
+    let next = validate_proxy_url(joined.as_str())
+        .map_err(|reason| SafeFetchError::Policy(reason.to_string()))?;
+
+    if current.scheme() == "https" && next.scheme() == "http" {
+        return Err(SafeFetchError::Policy(
+            "HTTPS-to-HTTP redirect downgrade is forbidden".into(),
+        ));
+    }
+
+    Ok(next)
+}
+
+fn is_redirect(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::MOVED_PERMANENTLY
+            | StatusCode::FOUND
+            | StatusCode::SEE_OTHER
+            | StatusCode::TEMPORARY_REDIRECT
+            | StatusCode::PERMANENT_REDIRECT
+    )
+}
+
+/// Read a response under a strict cap, checking declared length first and
+/// enforcing the same limit on every chunk for chunked/decompressed bodies.
+pub async fn read_limited_body(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, SafeFetchError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes as u64)
+    {
+        return Err(SafeFetchError::TooLarge);
+    }
+
+    let initial_capacity = response
+        .content_length()
+        .map(|length| length.min(max_bytes as u64) as usize)
+        .unwrap_or(0);
+    let mut body = Vec::with_capacity(initial_capacity);
+
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| SafeFetchError::Request("failed while reading response body".into()))?
+    {
+        if body.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(SafeFetchError::TooLarge);
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    Ok(body)
+}
+
+/// Fetch a public HTTP(S) resource with validated DNS, pinned destinations,
+/// manual redirect checks, and bounded memory use.
+pub async fn fetch_public_get(
+    initial_url: Url,
+    user_agent: &str,
+    timeout: Duration,
+    max_bytes: usize,
+    max_redirects: usize,
+) -> Result<FetchedResponse, SafeFetchError> {
+    let mut current = validate_proxy_url(initial_url.as_str())
+        .map_err(|reason| SafeFetchError::Policy(reason.to_string()))?;
+
+    for hop in 0..=max_redirects {
+        let client = client_for_url(&current, user_agent, timeout).await?;
+        let response = client
+            .get(current.clone())
+            .send()
+            .await
+            .map_err(|_| SafeFetchError::Request("upstream request failed".into()))?;
+
+        if is_redirect(response.status()) {
+            if hop == max_redirects {
+                return Err(SafeFetchError::Policy(
+                    "redirect hop limit exceeded".into(),
+                ));
+            }
+            let location = response
+                .headers()
+                .get(LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| {
+                    SafeFetchError::Policy("redirect response lacked a valid Location".into())
+                })?
+                .to_string();
+            current = validate_redirect_target(&current, &location)?;
+            // Drop this response without reading its body; the next hop gets
+            // a newly resolved and pinned client before any outbound request.
+            drop(response);
+            continue;
+        }
+
+        let status = response.status().as_u16();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let body = read_limited_body(response, max_bytes).await?;
+
+        return Ok(FetchedResponse {
+            status,
+            content_type,
+            body,
+            final_url: current,
+        });
+    }
+
+    Err(SafeFetchError::Policy(
+        "redirect hop limit exceeded".into(),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_empty_dns_answers() {
+        assert!(matches!(
+            pinned_addrs_from_ips(Vec::<IpAddr>::new()),
+            Err(SafeFetchError::Policy(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_mixed_public_and_private_dns_answers() {
+        let answers = vec![
+            "1.1.1.1".parse().unwrap(),
+            "127.0.0.1".parse().unwrap(),
+        ];
+        assert!(matches!(
+            pinned_addrs_from_ips(answers),
+            Err(SafeFetchError::Policy(_))
+        ));
+    }
+
+    #[test]
+    fn pins_unique_public_answers_only() {
+        let answers = vec![
+            "1.1.1.1".parse().unwrap(),
+            "2606:4700:4700::1111".parse().unwrap(),
+            "1.1.1.1".parse().unwrap(),
+        ];
+        let pinned = pinned_addrs_from_ips(answers).unwrap();
+        assert_eq!(pinned.len(), 2);
+        assert!(pinned.iter().all(|address| address.port() == 0));
+    }
+
+    #[test]
+    fn redirect_target_resolves_relative_locations() {
+        let current = Url::parse("https://example.com/a/b").unwrap();
+        let next = validate_redirect_target(&current, "../c").unwrap();
+        assert_eq!(next.as_str(), "https://example.com/c");
+    }
+
+    #[test]
+    fn redirect_target_rejects_private_ip_literals() {
+        let current = Url::parse("https://example.com/start").unwrap();
+        for location in [
+            "http://127.0.0.1/admin",
+            "http://[::1]/",
+            "http://169.254.169.254/latest/meta-data",
+            "http://service.internal/",
+        ] {
+            assert!(
+                validate_redirect_target(&current, location).is_err(),
+                "must reject {location}"
+            );
+        }
+    }
+
+    #[test]
+    fn redirect_target_rejects_https_downgrade() {
+        let current = Url::parse("https://example.com/start").unwrap();
+        assert!(matches!(
+            validate_redirect_target(&current, "http://example.com/next"),
+            Err(SafeFetchError::Policy(_))
+        ));
+    }
+
+    #[test]
+    fn redirect_target_rejects_userinfo() {
+        let current = Url::parse("https://example.com/start").unwrap();
+        assert!(validate_redirect_target(&current, "https://user:pass@other.example/path").is_err());
+    }
+}

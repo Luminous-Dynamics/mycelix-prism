@@ -259,49 +259,16 @@ impl SearchEngine {
             encode_text_idf(query, &self.word_df, self.claims.len() as f32)
         };
 
-        // LSH pre-filter: bit-sampling with 64 hash functions.
-        // Each hash samples 3 bit positions. A candidate must match at least 12/64 hashes.
-        // For random vectors (~50% sim): expected matches = 32, threshold 12 passes ~all.
-        // For relevant vectors (~55% sim): expected matches = ~35, passes easily.
-        // For irrelevant vectors (~49% sim): expected matches = ~30, many filtered.
-        const NUM_HASHES: usize = 64;
-        const MATCH_THRESHOLD: usize = 16;
-
-        // Pre-compute query hash values (each hash = XOR of 3 sampled bytes)
-        let query_hashes: [u8; NUM_HASHES] = std::array::from_fn(|h| {
-            // Deterministic byte positions from hash index
-            let p0 = (h * 31 + 7) % 2048;
-            let p1 = (h * 67 + 13) % 2048;
-            let p2 = (h * 97 + 29) % 2048;
-            query_hv.0[p0] ^ query_hv.0[p1] ^ query_hv.0[p2]
-        });
-
-        let candidates: Vec<usize> = if self.vectors.len() > 200 {
-            self.vectors
-                .iter()
-                .enumerate()
-                .filter_map(|(i, v)| {
-                    let mut matches = 0u32;
-                    for h in 0..NUM_HASHES {
-                        let p0 = (h * 31 + 7) % 2048;
-                        let p1 = (h * 67 + 13) % 2048;
-                        let p2 = (h * 97 + 29) % 2048;
-                        let vh = v.0[p0] ^ v.0[p1] ^ v.0[p2];
-                        // Count matching bits between query hash and candidate hash
-                        matches += (!(query_hashes[h] ^ vh)).count_ones();
-                    }
-                    // 64 hashes × 8 bits = 512 possible matching bits
-                    // Threshold: require above random expectation (256)
-                    if matches > (MATCH_THRESHOLD as u32 * 8) {
-                        Some(i)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        } else {
-            (0..self.vectors.len()).collect()
-        };
+        // Correctness-first exhaustive retrieval: score every indexed claim.
+        //
+        // The previous prefilter XORed three sampled bytes and counted bit matches.
+        // For near-random binary hypervectors, XOR parity largely destroys the
+        // modest similarity signal the index is meant to preserve. Its 128/512
+        // threshold was also below the 256/512 random expectation, so it was not
+        // a defensible locality-sensitive hash and could not justify a recall claim.
+        // Keep the exhaustive scan until a real LSH/ANN implementation is backed
+        // by a pinned relevance set, measured recall@k, and latency benchmarks.
+        let candidates: Vec<usize> = (0..self.vectors.len()).collect();
 
         // Exact similarity on candidates only
         let baseline = 0.50_f32; // True baseline for 16,384-bit BinaryHV
@@ -693,6 +660,26 @@ mod tests {
             "Top result should be relevant: {}",
             top.content
         );
+    }
+
+    #[test]
+    fn exact_scan_ranks_matching_claim_after_more_than_200_documents() {
+        let mut engine = SearchEngine::new();
+        for i in 0..250 {
+            engine.add_claim(
+                &format!("unrelated gardening topic number {i}"),
+                EmpiricalLevel::E1,
+                &[],
+                &[],
+            );
+        }
+
+        let target = "quantum entanglement preserves phase coherence in a controlled experiment";
+        engine.add_claim(target, EmpiricalLevel::E3, &["https://example.test/quantum"], &[]);
+
+        let results = engine.search(target, 5);
+        assert!(!results.is_empty());
+        assert_eq!(results[0].content, target);
     }
 
     #[test]

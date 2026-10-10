@@ -390,7 +390,7 @@ mod tests {
     async fn read_fixture_headers(socket: &mut tokio::net::TcpStream) -> String {
         use tokio::io::AsyncReadExt;
 
-        tokio::time::timeout(Duration::from_secs(2), async {
+        let request = tokio::time::timeout(Duration::from_secs(2), async {
             let mut request = Vec::new();
             let mut chunk = [0; 512];
             loop {
@@ -398,14 +398,14 @@ mod tests {
                 assert_ne!(count, 0, "client closed before sending full headers");
                 request.extend_from_slice(&chunk[..count]);
                 assert!(request.len() <= 4096, "request headers exceeded test bound");
-                if request.windows(4).any(|window| window == b"\\r\\n\\r\\n") {
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
                     break request;
                 }
             }
         })
         .await
-        .expect("request headers must arrive within the test bound")
-        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .expect("request headers must arrive within the test bound");
+        String::from_utf8_lossy(&request).into_owned()
     }
 
     fn loopback_pin() -> SocketAddr {
@@ -492,7 +492,7 @@ mod tests {
             assert!(request.starts_with("GET /start HTTP/1.1"));
             socket.write_all(
                 format!(
-                    "HTTP/1.1 302 Found\\r\\nLocation: http://target.example.com:{}/final\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n",
+                    "HTTP/1.1 302 Found\r\nLocation: http://target.example.com:{}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
                     target_addr.port()
                 ).as_bytes()
             ).await.unwrap();
@@ -512,7 +512,7 @@ mod tests {
                 line.eq_ignore_ascii_case(&format!("host: target.example.com:{}", target_addr.port()))
             }));
             socket.write_all(
-                b"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok"
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
             ).await.unwrap();
         });
 
@@ -559,7 +559,7 @@ mod tests {
             let (mut socket, _) = listener.accept().await.unwrap();
             let _request = read_fixture_headers(&mut socket).await;
             socket.write_all(
-                b"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nConnection: close\\r\\n\\r\\n3\\r\\nabc\\r\\n3\\r\\ndef\\r\\n0\\r\\n\\r\\n"
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n"
             ).await.unwrap();
         });
         let resolver = FixtureResolver::new(HashMap::from([(

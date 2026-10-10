@@ -151,7 +151,7 @@ impl SearchEngine {
 
     /// Merge another engine's claims into this one (for lazy-loading).
     pub fn merge(&mut self, other: Self) {
-        for (claim, vector) in other.claims.into_iter().zip(other.vectors) {
+        for claim in other.claims {
             let prefix: String = claim
                 .content
                 .chars()
@@ -168,13 +168,43 @@ impl SearchEngine {
             });
             if !is_dup {
                 self.claims.push(claim);
-                self.vectors.push(vector);
             }
         }
-        // Merge word_df
-        for (word, count) in other.word_df {
-            *self.word_df.entry(word).or_insert(0) += count;
+
+        // Recompute corpus statistics and every vector together. Merging vectors
+        // encoded against different IDF statistics would make similarity scores
+        // incomparable and leave query encoding inconsistent with document vectors.
+        self.rebuild_index();
+    }
+
+    /// Rebuild corpus statistics and document vectors as one consistent snapshot.
+    ///
+    /// IDF depends on the entire indexed corpus. Any mutation that changes the
+    /// corpus must therefore update both the word frequencies and all document vectors.
+    fn rebuild_index(&mut self) {
+        let mut word_df = std::collections::HashMap::new();
+
+        for claim in &self.claims {
+            let lowered = claim.content.to_lowercase();
+            let words: std::collections::HashSet<&str> = lowered
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| w.len() >= 2 && !is_stop_word(w))
+                .collect();
+
+            for word in words {
+                *word_df.entry(word.to_string()).or_insert(0) += 1;
+            }
         }
+
+        let n_docs = self.claims.len() as f32;
+        let vectors = self
+            .claims
+            .iter()
+            .map(|claim| encode_text_idf(&claim.content, &word_df, n_docs))
+            .collect();
+
+        self.word_df = word_df;
+        self.vectors = vectors;
     }
 
     /// Add a claim to the index.
@@ -185,7 +215,6 @@ impl SearchEngine {
         sources: &[&str],
         tags: &[&str],
     ) {
-        let hv = encode_text(content);
         self.claims.push(ClaimEntry {
             content: content.to_string(),
             sources: sources.iter().map(|s| s.to_string()).collect(),
@@ -194,7 +223,7 @@ impl SearchEngine {
             materiality_level: MaterialityLevel::M2,
             tags: tags.iter().map(|s| s.to_string()).collect(),
         });
-        self.vectors.push(hv);
+        self.rebuild_index();
     }
 
     /// Search for claims matching a query. Returns top-k results ranked by composite score.
@@ -268,7 +297,11 @@ impl SearchEngine {
                 let claim = &self.claims[i];
                 let epistemic = claim.empirical_level.as_f32();
                 let norm_sim = ((sim - baseline) / (1.0 - baseline)).clamp(0.0, 1.0);
-                let composite = 0.7 * norm_sim + 0.2 * epistemic + 0.1 * 0.9;
+                // Keep ordering identical to SearchResult::rank_score(), which is
+                // also the score exposed to callers and rendered in the UI.
+                let freshness = 1.0 / (1.0 + 1.0 / 365.0);
+                let composite =
+                    0.4 * norm_sim + 0.3 * epistemic + 0.2 * 0.9 + 0.1 * freshness;
                 (i, composite)
             })
             .collect();
@@ -543,14 +576,13 @@ pub fn render_search_results_html(query: &str, results: &[SearchResult]) -> Stri
 <body>
     <h1>Prism Search</h1>
     <h2>Results for &quot;{query}&quot;</h2>
-    <p>{count} results from {total} indexed claims</p>
+    <p>{count} results returned</p>
     <hr>
     {results_html}
 </body>
 </html>"#,
         query = query,
         count = results.len(),
-        total = "seed",
         results_html = results_html,
     )
 }
@@ -669,11 +701,51 @@ mod tests {
     }
 
     #[test]
+    fn add_claim_rebuilds_document_frequencies_and_vectors() {
+        let mut engine = SearchEngine::new();
+        engine.add_claim(
+            "sharedterm ocean",
+            EmpiricalLevel::E1,
+            &["https://example.test/ocean"],
+            &[],
+        );
+        engine.add_claim(
+            "sharedterm climate",
+            EmpiricalLevel::E2,
+            &["https://example.test/climate"],
+            &[],
+        );
+
+        assert_eq!(engine.claim_count(), 2);
+        assert_eq!(engine.word_df.get("sharedterm"), Some(&2));
+        assert_eq!(engine.vectors.len(), engine.claims.len());
+        assert!(!engine.search("climate", 2).is_empty());
+    }
+
+    #[test]
+    fn merge_rebuilds_document_frequencies_and_vectors() {
+        let mut left = SearchEngine::new();
+        left.add_claim("sharedterm ocean", EmpiricalLevel::E1, &[], &[]);
+
+        let mut right = SearchEngine::new();
+        right.add_claim("sharedterm climate", EmpiricalLevel::E2, &[], &[]);
+
+        left.merge(right);
+
+        assert_eq!(left.claim_count(), 2);
+        assert_eq!(left.word_df.get("sharedterm"), Some(&2));
+        assert_eq!(left.vectors.len(), left.claims.len());
+        assert!(!left.search("climate", 2).is_empty());
+    }
+
+    #[test]
     fn render_results_html_valid() {
         let engine = SearchEngine::with_seed_claims();
         let results = engine.search("rust programming", 3);
         let html = render_search_results_html("rust programming", &results);
         assert!(html.contains("Prism Search"));
         assert!(html.contains("rust programming"));
+        assert!(html.contains("results returned"));
+        assert!(!html.contains("seed indexed claims"));
     }
 }

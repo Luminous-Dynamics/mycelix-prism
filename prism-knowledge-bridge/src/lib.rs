@@ -92,9 +92,9 @@ pub async fn query_dht_claims(tag: &str) -> Vec<SearchResult> {
                 } else {
                     MaterialityLevel::M0
                 },
-                query_similarity: 0.5,   // DHT results get base relevance
-                author_reputation: 0.85, // DHT-verified = decent trust
-                age_days: 30,            // Assume moderate age for DHT claims
+                query_similarity: None, // Similarity has not been computed locally.
+                author_reputation: None, // DHT availability alone is not reputation evidence.
+                age_days: None, // Source creation/retrieval timestamp is not verified here.
                 tags,
             })
         })

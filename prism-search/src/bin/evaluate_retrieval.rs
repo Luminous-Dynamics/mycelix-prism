@@ -82,11 +82,92 @@ struct EvaluationReport {
     interpretation: &'static str,
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let fixture: Fixture = serde_json::from_str(FIXTURE)?;
+/// Validate the committed fixture before using it to compute metrics.
+/// Fail closed on schema drift, ambiguous document identity, unknown relevance
+/// labels, or unsupported grades; otherwise the resulting metrics can look valid
+/// while silently measuring a different corpus than the author intended.
+fn validate_fixture(fixture: &Fixture) -> Result<(), String> {
+    const EXPECTED_SCHEMA: &str = "prism-search-eval-v1";
+    const EXPECTED_KIND: &str = "synthetic-bootstrap-not-public-web-evidence";
+
+    if fixture.schema_version != EXPECTED_SCHEMA {
+        return Err(format!(
+            "unsupported fixture schema version {:?}; expected {:?}",
+            fixture.schema_version, EXPECTED_SCHEMA
+        ));
+    }
+    if fixture.fixture_kind != EXPECTED_KIND {
+        return Err(format!(
+            "unsupported fixture kind {:?}; this evaluator only accepts the synthetic smoke fixture",
+            fixture.fixture_kind
+        ));
+    }
     if fixture.documents.is_empty() || fixture.queries.is_empty() {
         return Err("evaluation fixture must contain documents and queries".into());
     }
+
+    let mut document_ids = HashSet::new();
+    let mut normalized_contents = HashSet::new();
+    for document in &fixture.documents {
+        if document.id.trim().is_empty() || document.content.trim().is_empty() {
+            return Err("document IDs and contents must be non-empty".into());
+        }
+        if !document_ids.insert(document.id.as_str()) {
+            return Err(format!("duplicate document ID {:?}", document.id));
+        }
+        let normalized = document
+            .content
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        if !normalized_contents.insert(normalized) {
+            return Err(format!(
+                "duplicate normalized document content for ID {:?}",
+                document.id
+            ));
+        }
+    }
+
+    let mut query_ids = HashSet::new();
+    for query in &fixture.queries {
+        if query.id.trim().is_empty() || query.text.trim().is_empty() {
+            return Err("query IDs and text must be non-empty".into());
+        }
+        if !query_ids.insert(query.id.as_str()) {
+            return Err(format!("duplicate query ID {:?}", query.id));
+        }
+        if query.relevance.is_empty() {
+            return Err(format!("query {:?} has no relevance labels", query.id));
+        }
+
+        let mut has_relevant_document = false;
+        for (document_id, grade) in &query.relevance {
+            if !document_ids.contains(document_id.as_str()) {
+                return Err(format!(
+                    "query {:?} references unknown document ID {:?}",
+                    query.id, document_id
+                ));
+            }
+            if !(1..=3).contains(grade) {
+                return Err(format!(
+                    "query {:?} has unsupported relevance grade {}; expected 1, 2, or 3",
+                    query.id, grade
+                ));
+            }
+            has_relevant_document = true;
+        }
+        if !has_relevant_document {
+            return Err(format!("query {:?} has no relevant documents", query.id));
+        }
+    }
+
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let fixture: Fixture = serde_json::from_str(FIXTURE)?;
+    validate_fixture(&fixture).map_err(|error| format!("invalid retrieval fixture: {error}"))?;
 
     let mut engine = SearchEngine::new();
     let claims = fixture
@@ -232,7 +313,13 @@ fn evaluate_ranking(
     let mut hits = 0usize;
     let mut dcg = 0.0;
 
+    let mut seen_ids = HashSet::new();
     for (index, id) in ranked_ids.iter().take(cutoff).enumerate() {
+        // A duplicate document occupies its rank position but must not count
+        // twice toward hits/DCG or inflate Recall@k above the unique-item limit.
+        if !seen_ids.insert(id.as_str()) {
+            continue;
+        }
         let grade = *relevance.get(id).unwrap_or(&0);
         if grade > 0 {
             hits += 1;
@@ -284,6 +371,95 @@ fn summarize(metrics: &[Metrics]) -> MetricSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn valid_fixture() -> Fixture {
+        Fixture {
+            schema_version: "prism-search-eval-v1".into(),
+            fixture_kind: "synthetic-bootstrap-not-public-web-evidence".into(),
+            documents: vec![
+                Document {
+                    id: "doc-1".into(),
+                    content: "A unique document about ocean chemistry".into(),
+                },
+                Document {
+                    id: "doc-2".into(),
+                    content: "A separate document about quantum states".into(),
+                },
+            ],
+            queries: vec![EvaluationQuery {
+                id: "query-1".into(),
+                text: "ocean chemistry".into(),
+                relevance: HashMap::from([("doc-1".into(), 3)]),
+            }],
+        }
+    }
+
+    #[test]
+    fn fixture_validation_accepts_the_expected_schema() {
+        assert!(validate_fixture(&valid_fixture()).is_ok());
+    }
+
+    #[test]
+    fn fixture_validation_rejects_unknown_relevance_document_ids() {
+        let mut fixture = valid_fixture();
+        fixture.queries[0].relevance.insert("missing-doc".into(), 2);
+        assert!(validate_fixture(&fixture)
+            .unwrap_err()
+            .contains("unknown document ID"));
+    }
+
+    #[test]
+    fn fixture_validation_rejects_duplicate_document_ids() {
+        let mut fixture = valid_fixture();
+        fixture.documents[1].id = fixture.documents[0].id.clone();
+        assert!(validate_fixture(&fixture)
+            .unwrap_err()
+            .contains("duplicate document ID"));
+    }
+
+    #[test]
+    fn fixture_validation_rejects_duplicate_normalized_content() {
+        let mut fixture = valid_fixture();
+        fixture.documents[1].content = "  A UNIQUE DOCUMENT about OCEAN chemistry  ".into();
+        assert!(validate_fixture(&fixture)
+            .unwrap_err()
+            .contains("duplicate normalized document content"));
+    }
+
+    #[test]
+    fn fixture_validation_rejects_out_of_range_grades() {
+        let mut fixture = valid_fixture();
+        fixture.queries[0].relevance.insert("doc-1".into(), 4);
+        assert!(validate_fixture(&fixture)
+            .unwrap_err()
+            .contains("expected 1, 2, or 3"));
+    }
+
+    #[test]
+    fn fixture_validation_rejects_schema_drift() {
+        let mut fixture = valid_fixture();
+        fixture.schema_version = "prism-search-eval-v2".into();
+        assert!(validate_fixture(&fixture)
+            .unwrap_err()
+            .contains("unsupported fixture schema version"));
+    }
+
+    #[test]
+    fn duplicate_ranked_ids_do_not_inflate_recall() {
+        let relevance = HashMap::from([
+            ("relevant".to_string(), 3_u8),
+            ("another-relevant".to_string(), 2_u8),
+        ]);
+        let ranking = vec![
+            "relevant".to_string(),
+            "relevant".to_string(),
+            "irrelevant".to_string(),
+        ];
+        let metrics = evaluate_ranking(&ranking, &relevance, 5);
+
+        assert_eq!(metrics.recall_at_k, 0.5);
+        assert_eq!(metrics.reciprocal_rank, 1.0);
+    }
 
     #[test]
     fn metrics_reward_relevant_documents_at_the_top() {

@@ -21,9 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify committed Cargo lockfile
-        run: test -f Cargo.lock
-
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:

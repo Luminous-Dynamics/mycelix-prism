@@ -36,6 +36,9 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
+      - name: Verify committed Cargo lockfile
+        run: test -f Cargo.lock
+
       - name: cargo check --workspace
         run: nix develop --command cargo check --workspace --locked
 
@@ -68,11 +71,14 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
-      - name: cargo nextest run --workspace --locked
+      - name: Verify committed Cargo lockfile
+        run: test -f Cargo.lock
+
+      - name: cargo nextest run --workspace
         run: nix develop --command cargo nextest run --workspace --locked
 
   msrv:
-    name: MSRV check (Rust 1.96.1 compat shell)
+    name: MSRV check (Rust 1.96.1 · nix develop .#msrv)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -91,5 +97,8 @@ jobs:
           key: nix-msrv-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-keys: nix-msrv-${{ runner.os }}-
 
-      - name: cargo check --workspace (compat shell)
-        run: nix develop .#compat --command cargo check --workspace --locked
+      - name: Verify committed Cargo lockfile
+        run: test -f Cargo.lock
+
+      - name: cargo check --workspace (MSRV shell)
+        run: nix develop .#msrv --command cargo check --workspace --locked

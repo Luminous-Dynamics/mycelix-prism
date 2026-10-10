@@ -11,11 +11,19 @@
 //!
 //! WASM app requests: GET /proxy?url=https://example.com
 
-use axum::{Router, extract::Query, http::StatusCode, response::IntoResponse, routing::get};
+use axum::{
+    Router,
+    extract::{DefaultBodyLimit, Query},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::get,
+};
 use prism_common::ssrf::validate_proxy_url;
+use prism_safe_fetch::{fetch_public_get, read_limited_body, SafeFetchError};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
-const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10MB
+const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
+const MAX_PROVIDER_REQUEST_SIZE: usize = 1024 * 1024; // 1 MiB
 
 // SSRF validation (`validate_proxy_url` / `is_private_ipv4`) lives in
 // `prism_common::ssrf` so `prism-proxy` and `prism-serve` share a single
@@ -24,7 +32,7 @@ const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10MB
 fn build_client(user_agent: &str, timeout_secs: u64) -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(user_agent)
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .expect("HTTP client TLS init failed")
@@ -54,52 +62,41 @@ struct ProxyParams {
 
 async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
     let validated = match validate_proxy_url(&params.url) {
-        Ok(u) => u,
+        Ok(url) => url,
         Err(reason) => {
-            log::warn!("Blocked proxy request to {}: {}", params.url, reason);
+            log::warn!("Blocked proxy destination: {}", reason);
             return (StatusCode::FORBIDDEN, reason.to_string()).into_response();
         }
     };
+    let host = validated.host_str().unwrap_or("<unknown>");
+    log::info!("Proxy request for host {}", host);
 
-    log::info!("Proxying: {}", validated);
-
-    let client = build_client("Prism/0.1 (proxy; +https://luminousdynamics.org)", 15);
-
-    match client.get(validated.as_str()).send().await {
-        Ok(resp) => {
-            let status = resp.status().as_u16();
-            let content_type = resp
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("text/html")
-                .to_string();
-
-            match resp.bytes().await {
-                Ok(body) => {
-                    if body.len() > MAX_RESPONSE_SIZE {
-                        return (
-                            StatusCode::PAYLOAD_TOO_LARGE,
-                            "Response too large".to_string(),
-                        )
-                            .into_response();
-                    }
-                    axum::response::Response::builder()
-                        .status(status)
-                        .header("content-type", content_type)
-                        .header("x-prism-proxied", "true")
-                        .body(axum::body::Body::from(body))
-                        .unwrap_or_else(|_| internal_error_response())
-                        .into_response()
-                }
-                Err(e) => (
-                    StatusCode::BAD_GATEWAY,
-                    format!("Failed to read response body: {}", e),
-                )
-                    .into_response(),
-            }
+    match fetch_public_get(
+        validated,
+        "Prism/0.1 (proxy; +https://luminousdynamics.org)",
+        std::time::Duration::from_secs(15),
+        MAX_RESPONSE_SIZE,
+        5,
+    )
+    .await
+    {
+        Ok(fetched) => axum::response::Response::builder()
+            .status(fetched.status)
+            .header("content-type", fetched.content_type)
+            .header("x-prism-proxied", "true")
+            .body(axum::body::Body::from(fetched.body))
+            .unwrap_or_else(|_| internal_error_response())
+            .into_response(),
+        Err(SafeFetchError::TooLarge) => {
+            (StatusCode::PAYLOAD_TOO_LARGE, "Response too large").into_response()
         }
-        Err(e) => (StatusCode::BAD_GATEWAY, format!("Fetch failed: {}", e)).into_response(),
+        Err(SafeFetchError::Policy(reason)) => {
+            log::warn!("Blocked proxy destination or redirect: {}", reason);
+            (StatusCode::FORBIDDEN, reason).into_response()
+        }
+        Err(SafeFetchError::Request(reason)) => {
+            (StatusCode::BAD_GATEWAY, reason).into_response()
+        }
     }
 }
 
@@ -120,8 +117,14 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
 
     match client.get(&url).send().await {
         Ok(resp) => {
-            let body = resp.bytes().await.unwrap_or_default();
-            json_response(200, body).into_response()
+            if resp.status().is_redirection() {
+                return (StatusCode::BAD_GATEWAY, "Unexpected provider redirect blocked").into_response();
+            }
+            match read_limited_body(resp, MAX_RESPONSE_SIZE).await {
+                Ok(body) => json_response(200, axum::body::Bytes::from(body)).into_response(),
+                Err(SafeFetchError::TooLarge) => (StatusCode::PAYLOAD_TOO_LARGE, "Provider response too large").into_response(),
+                Err(_) => (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response(),
+            }
         }
         Err(e) => (StatusCode::BAD_GATEWAY, format!("DDG fetch failed: {}", e)).into_response(),
     }
@@ -163,8 +166,14 @@ async fn brave_handler(
     {
         Ok(resp) => {
             let status = resp.status().as_u16();
-            let body = resp.bytes().await.unwrap_or_default();
-            json_response(status, body).into_response()
+            if resp.status().is_redirection() {
+                return (StatusCode::BAD_GATEWAY, "Unexpected provider redirect blocked").into_response();
+            }
+            match read_limited_body(resp, MAX_RESPONSE_SIZE).await {
+                Ok(body) => json_response(status, axum::body::Bytes::from(body)).into_response(),
+                Err(SafeFetchError::TooLarge) => (StatusCode::PAYLOAD_TOO_LARGE, "Provider response too large").into_response(),
+                Err(_) => (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response(),
+            }
         }
         Err(e) => (
             StatusCode::BAD_GATEWAY,
@@ -248,6 +257,7 @@ async fn main() {
         .route("/api/perplexity", axum::routing::post(perplexity_handler))
         .route("/health", get(health))
         .layer(cors)
+        .layer(DefaultBodyLimit::max(MAX_PROVIDER_REQUEST_SIZE))
         .layer(tower::limit::ConcurrencyLimitLayer::new(50));
 
     let addr = "127.0.0.1:8131";

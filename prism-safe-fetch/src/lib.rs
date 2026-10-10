@@ -584,6 +584,73 @@ mod tests {
         server.await.unwrap();
     }
 
+    #[tokio::test]
+    async fn fetch_blocks_loopback_redirect_before_connecting() {
+        use tokio::io::AsyncWriteExt;
+
+        let origin_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let origin_addr = origin_listener.local_addr().unwrap();
+        let private_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let private_addr = private_listener.local_addr().unwrap();
+
+        let origin_server = tokio::spawn(async move {
+            let (mut socket, _) = tokio::time::timeout(
+                Duration::from_secs(2),
+                origin_listener.accept(),
+            )
+            .await
+            .expect("origin request must arrive")
+            .unwrap();
+            let request = read_fixture_headers(&mut socket).await;
+            assert!(request.starts_with("GET /start HTTP/1.1"));
+            socket.write_all(
+                format!(
+                    "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{}/metadata\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    private_addr.port()
+                )
+                .as_bytes(),
+            ).await.unwrap();
+        });
+
+        let resolver = FixtureResolver::new(HashMap::from([(
+            "origin.example.com".to_string(),
+            vec![loopback_pin()],
+        )]));
+        let initial = Url::parse(&format!(
+            "http://origin.example.com:{}/start",
+            origin_addr.port()
+        )).unwrap();
+        let result = fetch_public_get_with_resolver(
+            initial,
+            "prism-safe-fetch-test",
+            Duration::from_secs(2),
+            32,
+            2,
+            &resolver,
+        ).await;
+
+        assert!(
+            matches!(result, Err(SafeFetchError::Policy(_))),
+            "a public origin must not redirect the proxy to loopback"
+        );
+        assert_eq!(
+            resolver.seen(),
+            vec![("origin.example.com".to_string(), origin_addr.port())],
+            "the blocked loopback target must not be resolved as a follow-up hop"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(250), private_listener.accept())
+                .await
+                .is_err(),
+            "the private redirect target must receive no connection"
+        );
+        origin_server.await.unwrap();
+    }
+
     #[test]
     fn domain_client_requires_a_nonempty_pin_set() {
         let url = Url::parse("http://example.com/").unwrap();

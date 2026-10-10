@@ -48,6 +48,61 @@ struct SearchResultJson {
     rank_score: f32,
 }
 
+/// Maximum decompressed response body accepted by the desktop fetch command.
+///
+/// This cap is checked against Content-Length when provided and against every
+/// streamed chunk, so chunked or misleading-length responses cannot grow the
+/// body buffer without bound. It is intentionally independent of the parser's
+/// visible-text overload threshold, which runs only after the HTML is parsed.
+const MAX_FETCH_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+
+/// Append a response chunk only when it stays within the configured byte limit.
+fn append_limited_chunk(
+    body: &mut Vec<u8>,
+    chunk: &[u8],
+    max_bytes: usize,
+) -> Result<(), &'static str> {
+    if body.len().saturating_add(chunk.len()) > max_bytes {
+        return Err("response exceeds configured byte limit");
+    }
+    body.extend_from_slice(chunk);
+    Ok(())
+}
+
+/// Read an HTTP response with a hard body-size cap.
+///
+/// Checking Content-Length alone is insufficient because it can be missing or
+/// incorrect. The chunk-by-chunk guard is the authoritative limit.
+async fn read_limited_response(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<String, String> {
+    if let Some(content_length) = response.content_length() {
+        if content_length > max_bytes as u64 {
+            return Err(format!(
+                "Response exceeds the {max_bytes}-byte fetch limit"
+            ));
+        }
+    }
+
+    let initial_capacity = response
+        .content_length()
+        .map(|length| length.min(max_bytes as u64) as usize)
+        .unwrap_or(0);
+    let mut body = Vec::with_capacity(initial_capacity);
+
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format!("Read failed: {error}"))?
+    {
+        append_limited_chunk(&mut body, &chunk, max_bytes)
+            .map_err(|_| format!("Response exceeds the {max_bytes}-byte fetch limit"))?;
+    }
+
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
 /// Fetch a URL directly (no CORS restrictions in native Tauri).
 #[tauri::command]
 async fn fetch_url(
@@ -66,10 +121,7 @@ async fn fetch_url(
         .await
         .map_err(|e| format!("Fetch failed: {}", e))?;
 
-    let html = response
-        .text()
-        .await
-        .map_err(|e| format!("Read failed: {}", e))?;
+    let html = read_limited_response(response, MAX_FETCH_RESPONSE_BYTES).await?;
 
     // Sanitize
     let clean = ammonia::clean(&html);
@@ -126,6 +178,40 @@ fn search_claims(
 fn claim_count(state: State<'_, Mutex<PrismState>>) -> Result<usize, String> {
     let state = state.lock().map_err(|e| format!("Lock error: {}", e))?;
     Ok(state.search.claim_count())
+}
+
+#[cfg(test)]
+mod fetch_response_tests {
+    use super::*;
+
+    #[test]
+    fn bounded_body_accepts_chunks_up_to_exact_limit() {
+        let mut body = Vec::new();
+
+        assert!(append_limited_chunk(&mut body, b"abc", 5).is_ok());
+        assert!(append_limited_chunk(&mut body, b"de", 5).is_ok());
+
+        assert_eq!(body, b"abcde");
+    }
+
+    #[test]
+    fn bounded_body_rejects_over_limit_chunk_without_partial_append() {
+        let mut body = b"abcd".to_vec();
+
+        let result = append_limited_chunk(&mut body, b"ef", 5);
+
+        assert_eq!(result, Err("response exceeds configured byte limit"));
+        assert_eq!(body, b"abcd", "rejected chunks must not mutate the buffer");
+    }
+
+    #[test]
+    fn bounded_body_rejects_later_chunk_after_exact_limit() {
+        let mut body = Vec::new();
+
+        assert!(append_limited_chunk(&mut body, b"1234", 4).is_ok());
+        assert!(append_limited_chunk(&mut body, b"5", 4).is_err());
+        assert_eq!(body, b"1234");
+    }
 }
 
 fn main() {

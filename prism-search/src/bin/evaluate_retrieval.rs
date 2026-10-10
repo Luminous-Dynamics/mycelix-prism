@@ -11,7 +11,7 @@
 use prism_common::EmpiricalLevel;
 use prism_search::SearchEngine;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::error::Error;
 
 const CUTOFF: usize = 5;
@@ -54,12 +54,29 @@ struct MetricSummary {
 }
 
 #[derive(Debug, Serialize)]
+struct QueryMetrics {
+    mrr_at_5: f64,
+    recall_at_5: f64,
+    ndcg_at_5: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct QueryEvaluation {
+    query_id: String,
+    hdc_ranked_ids: Vec<String>,
+    bm25_ranked_ids: Vec<String>,
+    hdc: QueryMetrics,
+    bm25: QueryMetrics,
+}
+
+#[derive(Debug, Serialize)]
 struct EvaluationReport {
     schema_version: String,
     fixture_kind: String,
     documents: usize,
     queries: usize,
     cutoff: usize,
+    per_query: Vec<QueryEvaluation>,
     hdc: MetricSummary,
     bm25: MetricSummary,
     interpretation: &'static str,
@@ -94,6 +111,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut hdc_metrics = Vec::with_capacity(fixture.queries.len());
     let mut bm25_metrics = Vec::with_capacity(fixture.queries.len());
+    let mut per_query = Vec::with_capacity(fixture.queries.len());
 
     for query in &fixture.queries {
         let hdc_ids = engine
@@ -102,9 +120,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             .filter_map(|result| content_to_id.get(&result.content).cloned())
             .collect::<Vec<_>>();
         let bm25_ids = bm25_rank(&query.text, &fixture.documents, CUTOFF);
+        let hdc_result = evaluate_ranking(&hdc_ids, &query.relevance, CUTOFF);
+        let bm25_result = evaluate_ranking(&bm25_ids, &query.relevance, CUTOFF);
 
-        hdc_metrics.push(evaluate_ranking(&hdc_ids, &query.relevance, CUTOFF));
-        bm25_metrics.push(evaluate_ranking(&bm25_ids, &query.relevance, CUTOFF));
+        hdc_metrics.push(hdc_result);
+        bm25_metrics.push(bm25_result);
+        per_query.push(QueryEvaluation {
+            query_id: query.id.clone(),
+            hdc_ranked_ids: hdc_ids,
+            bm25_ranked_ids: bm25_ids,
+            hdc: as_query_metrics(hdc_result),
+            bm25: as_query_metrics(bm25_result),
+        });
     }
 
     let report = EvaluationReport {
@@ -113,6 +140,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         documents: fixture.documents.len(),
         queries: fixture.queries.len(),
         cutoff: CUTOFF,
+        per_query,
         hdc: summarize(&hdc_metrics),
         bm25: summarize(&bm25_metrics),
         interpretation: "synthetic smoke baseline only; not public-web relevance evidence",
@@ -136,7 +164,7 @@ fn bm25_rank(query: &str, documents: &[Document], top_k: usize) -> Vec<String> {
     const K1: f64 = 1.2;
     const B: f64 = 0.75;
 
-    let query_terms = tokenize(query).into_iter().collect::<HashSet<_>>();
+    let query_terms = tokenize(query).into_iter().collect::<BTreeSet<_>>();
     let tokenized = documents
         .iter()
         .map(|document| tokenize(&document.content))
@@ -232,6 +260,14 @@ fn evaluate_ranking(
         reciprocal_rank,
         recall_at_k: hits as f64 / relevant_count as f64,
         ndcg_at_k: if idcg > 0.0 { dcg / idcg } else { 0.0 },
+    }
+}
+
+fn as_query_metrics(metrics: Metrics) -> QueryMetrics {
+    QueryMetrics {
+        mrr_at_5: metrics.reciprocal_rank,
+        recall_at_5: metrics.recall_at_k,
+        ndcg_at_5: metrics.ndcg_at_k,
     }
 }
 

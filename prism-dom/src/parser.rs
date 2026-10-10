@@ -12,7 +12,9 @@ use std::collections::HashMap;
 
 use html5ever::tendril::*;
 use html5ever::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
-use html5ever::{Attribute, ExpandedName, QualName};
+use html5ever::{Attribute, QualName};
+use html5ever::tree_builder::ElemName;
+use markup5ever::{LocalName, Namespace};
 use html5ever::{ParseOpts, parse_document};
 
 use crate::node::{ElementData, NodeData, NodeId};
@@ -41,10 +43,32 @@ struct PrismSink {
     doc: NodeId,
 }
 
+/// An owned element name for `TreeSink::elem_name`.
+///
+/// `DomTree` stores nodes in a growable `Vec`, behind a `RefCell`. Returning
+/// references into a node after releasing that borrow is unsound: later arena
+/// growth can move the node, and any mutable tree borrow would overlap the
+/// returned reference. Cloning `QualName` clones its interned atoms and avoids
+/// exposing a borrow of the mutable arena to html5ever.
+#[derive(Debug, Clone)]
+struct OwnedElemName {
+    qual_name: QualName,
+}
+
+impl ElemName for OwnedElemName {
+    fn ns(&self) -> &Namespace {
+        &self.qual_name.ns
+    }
+
+    fn local_name(&self) -> &LocalName {
+        &self.qual_name.local
+    }
+}
+
 impl TreeSink for PrismSink {
     type Handle = NodeId;
     type Output = Self;
-    type ElemName<'a> = ExpandedName<'a>;
+    type ElemName<'a> = OwnedElemName where Self: 'a;
 
     fn finish(self) -> Self::Output {
         self
@@ -58,26 +82,13 @@ impl TreeSink for PrismSink {
         self.doc
     }
 
-    fn elem_name<'a>(&'a self, target: &'a NodeId) -> ExpandedName<'a> {
-        // This is tricky: we need to return a reference into the RefCell.
-        // Since html5ever only calls this during single-threaded parsing and
-        // the node data won't move, we borrow and leak the guard for the
-        // duration. In practice, html5ever drops the ExpandedName before
-        // any mutation occurs.
-        //
-        // A safer alternative would be to store QualName outside the RefCell,
-        // but that would require a separate arena. For now, we use a raw pointer
-        // which is safe because the DomTree arena never reallocates existing nodes.
+    fn elem_name<'a>(&'a self, target: &'a NodeId) -> Self::ElemName<'a> {
         let tree = self.tree.borrow();
         let node = tree.get(*target).expect("valid node");
         match &node.data {
-            NodeData::Element(el) => {
-                // SAFETY: The DomTree arena (Vec) may reallocate on push, but
-                // elem_name is only called on already-existing nodes. The borrow
-                // is dropped before any new nodes are created in the same call.
-                let qn: *const QualName = &el.qual_name;
-                unsafe { (*qn).expanded() }
-            }
+            NodeData::Element(el) => OwnedElemName {
+                qual_name: el.qual_name.clone(),
+            },
             _ => panic!("elem_name called on non-element"),
         }
     }
@@ -241,6 +252,37 @@ mod tests {
         assert_eq!(tree.title(), Some("Test".to_string()));
         let text = tree.extract_visible_text();
         assert!(text.contains("Hello"));
+    }
+
+    #[test]
+    fn owned_element_name_survives_arena_growth() {
+        use html5ever::ns;
+
+        let mut tree = DomTree::new();
+        let doc = tree.new_node(NodeData::Document);
+        tree.set_root(doc);
+        let element = tree.new_node(NodeData::Element(ElementData {
+            tag: "div".to_string(),
+            qual_name: QualName::new(None, ns!(html), "div".into()),
+            attributes: HashMap::new(),
+        }));
+        let sink = PrismSink {
+            tree: RefCell::new(tree),
+            doc,
+        };
+
+        let name = sink.elem_name(&element);
+
+        // Force repeated Vec growth while the name is still live. An owned
+        // ElemName must remain valid without pinning or aliasing the tree.
+        for i in 0..8192 {
+            sink.tree
+                .borrow_mut()
+                .new_node(NodeData::Text(i.to_string()));
+        }
+
+        assert_eq!(name.local_name().to_string(), "div");
+        assert_eq!(name.ns().to_string(), "http://www.w3.org/1999/xhtml");
     }
 
     #[test]

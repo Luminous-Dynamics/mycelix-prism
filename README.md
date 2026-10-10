@@ -46,6 +46,6 @@ The repository supplies a Nix flake for Rust and native desktop dependencies. Cu
 
 Before relying on these gates, commit the generated `Cargo.lock` and require successful CI on the exact commit under review. For browser correctness, add WPT-based tests and publish results separately from unit-test counts. For security claims, publish threat models, negative tests, sandbox observations, and independently checkable evidence.
 
-## License
+## License and commercial permissions
 
-AGPL-3.0-or-later. See [LICENSE](LICENSE).
+The workspace declares AGPL-3.0-or-later; the complete license text is in [LICENSE](LICENSE). A separate commercial licensing program is not documented in this repository. See [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for that status; do not assume it grants permissions beyond the AGPL.

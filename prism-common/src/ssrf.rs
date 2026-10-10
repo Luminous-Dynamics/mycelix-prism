@@ -93,8 +93,7 @@ pub fn validate_proxy_url(raw: &str) -> Result<url::Url, &'static str> {
     // The accessors catch non-empty username/password values. Also inspect
     // the serialized authority so an empty userinfo delimiter ("https://@host")
     // cannot slip through simply because both accessors appear empty.
-    let serialized = parsed.as_str();
-    let authority_remainder = serialized
+    let authority_remainder = raw
         .split_once("://")
         .map(|(_, remainder)| remainder)
         .unwrap_or("");

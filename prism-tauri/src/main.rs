@@ -69,6 +69,18 @@ fn append_limited_chunk(
     Ok(())
 }
 
+/// Reject a declared response length that already exceeds the fetch cap.
+/// A missing length is allowed here because the streamed chunk guard remains authoritative.
+fn validate_declared_response_length(
+    content_length: Option<u64>,
+    max_bytes: usize,
+) -> Result<(), &'static str> {
+    if content_length.is_some_and(|length| length > max_bytes as u64) {
+        return Err("response exceeds configured byte limit");
+    }
+    Ok(())
+}
+
 /// Read an HTTP response with a hard body-size cap.
 ///
 /// Checking Content-Length alone is insufficient because it can be missing or
@@ -77,13 +89,8 @@ async fn read_limited_response(
     mut response: reqwest::Response,
     max_bytes: usize,
 ) -> Result<String, String> {
-    if let Some(content_length) = response.content_length() {
-        if content_length > max_bytes as u64 {
-            return Err(format!(
-                "Response exceeds the {max_bytes}-byte fetch limit"
-            ));
-        }
-    }
+    validate_declared_response_length(response.content_length(), max_bytes)
+        .map_err(|_| format!("Response exceeds the {max_bytes}-byte fetch limit"))?;
 
     let initial_capacity = response
         .content_length()
@@ -183,6 +190,24 @@ fn claim_count(state: State<'_, Mutex<PrismState>>) -> Result<usize, String> {
 #[cfg(test)]
 mod fetch_response_tests {
     use super::*;
+
+    #[test]
+    fn declared_length_at_limit_is_allowed() {
+        assert!(validate_declared_response_length(Some(16), 16).is_ok());
+    }
+
+    #[test]
+    fn declared_length_above_limit_is_rejected() {
+        assert_eq!(
+            validate_declared_response_length(Some(17), 16),
+            Err("response exceeds configured byte limit")
+        );
+    }
+
+    #[test]
+    fn missing_declared_length_defers_to_streamed_limit() {
+        assert!(validate_declared_response_length(None, 16).is_ok());
+    }
 
     #[test]
     fn bounded_body_accepts_chunks_up_to_exact_limit() {

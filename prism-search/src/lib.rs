@@ -665,14 +665,17 @@ mod tests {
     #[test]
     fn exact_scan_ranks_matching_claim_after_more_than_200_documents() {
         let mut engine = SearchEngine::new();
-        for i in 0..250 {
-            engine.add_claim(
-                &format!("unrelated gardening topic number {i}"),
-                EmpiricalLevel::E1,
-                &[],
-                &[],
-            );
-        }
+        let distractors = (0..250)
+            .map(|i| {
+                (
+                    format!("unrelated gardening topic number {i}"),
+                    EmpiricalLevel::E1,
+                    Vec::new(),
+                    Vec::new(),
+                )
+            })
+            .collect::<Vec<_>>();
+        engine.add_claims(distractors);
 
         let target = "quantum entanglement preserves phase coherence in a controlled experiment";
         engine.add_claim(target, EmpiricalLevel::E3, &["https://example.test/quantum"], &[]);

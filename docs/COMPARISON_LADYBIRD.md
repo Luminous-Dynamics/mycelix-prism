@@ -1,0 +1,63 @@
+# Prism and Ladybird: comparison and roadmap
+
+**Status: strategy document, not a feature-parity claim.** This comparison is based on public project descriptions and the current Prism repository structure; it is not a side-by-side runtime benchmark.
+
+## The core distinction
+
+Ladybird's central objective is an independent, standards-driven web browser engine. Its documented architecture includes LibWeb (HTML/CSS/DOM and web APIs), LibJS, LibWasm, and separate processes for web content, network requests, and image decoding. Ladybird maintains browser-specific rendering and web-platform tests.
+
+Prism's plausible differentiation is broader than rendering: a Rust-first modular platform, privacy/security policy surfaces, portable WASM components, and optional integrations with Mycelix and Symthaea for knowledge workflows. Those integrations can make Prism distinctive, but they do not replace the need for a correct HTML/CSS engine, JavaScript, networking, media, accessibility, and process isolation.
+
+## Evidence-based comparison
+
+| Dimension | Ladybird | Prism today / evidence needed |
+|---|---|---|
+| HTML/CSS and DOM | Dedicated engine (LibWeb), with browser-specific tests | Prism has prism-dom, prism-layout, prism-ui, etc.; crate presence and compilation do not establish standards coverage. Build a WPT-backed capability report. |
+| JavaScript and WebAssembly | Dedicated LibJS and LibWasm implementations | Prism's Rust/WASM tooling is not equivalent to full web JavaScript or WebAssembly engine compatibility. Inventory what is implemented versus embedded or delegated. |
+| Process isolation | Documented multi-process design with sandboxed per-tab web content and out-of-process request/image services | Specify and test renderer isolation, brokered network, image/media decoding, IPC validation, sandbox policy, and crash containment. |
+| Standards conformance | Ladybird has text, layout, reference, screenshot, and Web Platform Tests workflows | Establish a pinned WPT subset, deterministic runner, expected-failure baseline, and per-commit regression delta. |
+| Security assurance | Public sandbox/process architecture and ongoing external hardening work | Audit unsafe Rust and FFI, especially parser lifetimes and shared state. Passing unit tests is not a security review. |
+| Privacy and user sovereignty | Strong independence/no-user-monetization positioning | Opportunity for explicit data minimization, local-first storage, transparent permissions, exportability, and user-owned search/knowledge controls. These need product specs and tests. |
+| AI / knowledge integration | Not its central differentiator | Prism can offer opt-in, least-privilege knowledge/search assistance via Mycelix/Symthaea. It must remain explainable, disableable, and unable to bypass browser security policy. |
+| Portability | Desktop targets and platform roadmap documented by Ladybird | WASM is useful for portable components, but a browser still needs platform-specific UI, GPU, media, sandbox, and OS integration. Prove each target separately. |
+| Performance | Active engine/style/layout optimization | No fair performance claim without matched hardware, sites, cold/warm runs, memory, energy, and responsiveness measurements. |
+| Readiness | Publicly described as actively developing; consult current release status before adoption | Experimental. Do not claim daily-driver or drop-in replacement readiness without compatibility and security evidence. |
+
+## Recommended strategy
+
+### 1. Do not rewrite everything just to be independent
+
+For a small team, the most expensive path is independently implementing all of HTML, CSS, JavaScript, WebAssembly, media, graphics, and accessibility while also building a novel product layer. Evaluate three explicit options for each subsystem:
+
+1. Implement natively in Rust where this is a meaningful differentiator and the maintenance cost is supportable.
+2. Integrate a well-isolated, permissively licensed component where that accelerates safe interoperability.
+3. Defer the feature rather than shipping an unsafe or misleading partial implementation.
+
+Do not assume Ladybird code can be copied or linked without a license and architecture review. Its repository is BSD-2-Clause, while Prism is AGPL-3.0-or-later; compatibility and distribution obligations need explicit legal review before code reuse.
+
+### 2. Build an honest compatibility dashboard
+
+Pin a Web Platform Tests revision and publish total selected tests, pass/fail/timeout/unsupported counts, per-area coverage, expected-failure baseline, regression delta, runner instructions, and exact commit/toolchain/dependency digests. Never summarize a narrow test subset as web compatible. Keep unit, integration, WPT, security, and real-site smoke tests as separate evidence classes.
+
+### 3. Establish a browser security boundary before adding AI features
+
+Define threat model and trust zones. Treat HTML, JavaScript, images, fonts, media, downloads, extensions, and remote knowledge responses as hostile. Keep privileged file access, credentials, network policy, and navigation decisions outside the content renderer. Any AI-generated suggestion must go through the same deterministic policy checks as a human-triggered action; AI must not grant itself capabilities.
+
+Prioritize review of unsafe code, FFI, parser callbacks, DOM storage lifetimes, origin/site isolation, permissions, CSP, TLS/certificate handling, and download handling. Add fuzzing and sanitizers where applicable, and publish unresolved risks.
+
+### 4. Make the product-layer difference concrete
+
+A credible first differentiated release could focus on local-first, user-controlled knowledge/search; provenance for summaries and extracted claims; explicit per-origin permissions and data-flow visibility; exportable profiles and portable user data; optional Mycelix/Symthaea integration with no security-policy bypass; and a keyboard-accessible interface with reduced-motion/high-contrast support. These should be opt-in, testable capabilities—not marketing labels.
+
+### 5. Use staged release gates
+
+- **Gate A — reproducible build:** committed Cargo.lock, locked Nix inputs, green CI on one exact SHA.
+- **Gate B — memory safety:** unsafe-code inventory, parser lifetime fix/review, fuzz corpus, sanitizers/Miri where practical, no unexplained critical findings.
+- **Gate C — standards baseline:** pinned WPT subset and published baseline; regressions block merge.
+- **Gate D — isolation and privacy:** tested process/capability boundaries, permission behavior, network restrictions, storage partitioning, and threat-model review.
+- **Gate E — usability:** accessibility, keyboard navigation, crash recovery, download safety, and real-site smoke tests.
+- **Gate F — comparative performance:** repeatable matched benchmarks against Ladybird and at least one mature browser. Publish raw data and limitations.
+
+## Bottom line
+
+Ladybird is the more appropriate reference for independent browser-engine engineering and standards conformance. Prism should differentiate in user sovereignty, privacy, verifiable knowledge workflows, and modular deployment—while adopting the discipline of standards tests, sandboxing, and evidence-driven releases. The ambition should not be 'more features than Ladybird' on paper; it should be a trustworthy browser platform whose claims are backed by reproducible measurements.

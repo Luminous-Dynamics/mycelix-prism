@@ -1,5 +1,11 @@
 name: CI
 
+# Multiple documentation/code commits can otherwise leave stale expensive Nix
+# builds queued for the same branch. Keep only the newest validation per PR/ref.
+concurrency:
+  group: prism-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
@@ -7,11 +13,42 @@ on:
     branches: [main]
 
 jobs:
+  # Formatting has no Cargo.lock prerequisite, so it remains useful while the
+  # locked dependency/build gates are explicitly blocked pending issue #3.
+  format:
+    name: cargo fmt (Rust 1.99.0 · nix develop)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify committed Cargo lockfile
+        run: test -f Cargo.lock
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Cache Nix store
+        uses: actions/cache@v4
+        with:
+          path: /nix
+          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-keys: nix-${{ runner.os }}-
+
+      - name: Check Rust formatting
+        run: nix develop --command cargo fmt --all -- --check
+
   check:
     name: cargo check (Rust 1.99.0 · nix develop)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify committed Cargo lockfile
+        run: test -f Cargo.lock
 
       - name: Install Nix
         uses: cachix/install-nix-action@v27
@@ -45,6 +82,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify committed Cargo lockfile
+        run: test -f Cargo.lock
+
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
@@ -68,14 +108,17 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
-      - name: cargo nextest run --workspace --locked
+      - name: cargo nextest run --workspace
         run: nix develop --command cargo nextest run --workspace --locked
 
   msrv:
-    name: MSRV check (Rust 1.96.1 compat shell)
+    name: MSRV check (Rust 1.96.1 · nix develop .#msrv)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify committed Cargo lockfile
+        run: test -f Cargo.lock
 
       - name: Install Nix
         uses: cachix/install-nix-action@v27
@@ -91,5 +134,5 @@ jobs:
           key: nix-msrv-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-keys: nix-msrv-${{ runner.os }}-
 
-      - name: cargo check --workspace (compat shell)
-        run: nix develop .#compat --command cargo check --workspace --locked
+      - name: cargo check --workspace (MSRV shell)
+        run: nix develop .#msrv --command cargo check --workspace --locked

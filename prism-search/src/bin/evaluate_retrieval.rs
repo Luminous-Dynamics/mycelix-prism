@@ -178,7 +178,7 @@ fn bm25_rank(query: &str, documents: &[Document], top_k: usize) -> Vec<String> {
     let mut document_frequency = HashMap::<String, usize>::new();
     for tokens in &tokenized {
         for term in tokens.iter().collect::<HashSet<_>>() {
-            *document_frequency.entry(term.clone()).or_insert(0) += 1;
+            *document_frequency.entry((*term).clone()).or_insert(0) += 1;
         }
     }
 

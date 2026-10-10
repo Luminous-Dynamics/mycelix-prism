@@ -191,7 +191,7 @@ mod fetch_response_tests {
         assert!(append_limited_chunk(&mut body, b"abc", 5).is_ok());
         assert!(append_limited_chunk(&mut body, b"de", 5).is_ok());
 
-        assert_eq!(body, b"abcde");
+        assert_eq!(body.as_slice(), b"abcde");
     }
 
     #[test]
@@ -201,7 +201,7 @@ mod fetch_response_tests {
         let result = append_limited_chunk(&mut body, b"ef", 5);
 
         assert_eq!(result, Err("response exceeds configured byte limit"));
-        assert_eq!(body, b"abcd", "rejected chunks must not mutate the buffer");
+        assert_eq!(body.as_slice(), b"abcd", "rejected chunks must not mutate the buffer");
     }
 
     #[test]
@@ -210,7 +210,7 @@ mod fetch_response_tests {
 
         assert!(append_limited_chunk(&mut body, b"1234", 4).is_ok());
         assert!(append_limited_chunk(&mut body, b"5", 4).is_err());
-        assert_eq!(body, b"1234");
+        assert_eq!(body.as_slice(), b"1234");
     }
 }
 

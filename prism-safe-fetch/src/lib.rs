@@ -88,13 +88,17 @@ async fn resolve_public_host(host: &str, port: u16) -> Result<Vec<SocketAddr>, S
     pinned_addrs_from_ips(resolved.map(|address| address.ip()))
 }
 
-/// Create a fresh no-proxy client and pin domain resolution to the validated
-/// answers. Callers intentionally build a client per hop so a redirect cannot
-/// reuse an earlier host's resolution policy.
-async fn client_for_url(
+/// Build a client with a caller-provided address pin for a domain URL.
+///
+/// This small seam lets the local-socket regression test prove that Reqwest
+/// connects through its address override rather than resolving the domain a
+/// second time. Production callers must only pass results returned by
+/// `resolve_public_host`.
+fn client_for_url_with_pinned_addrs(
     url: &Url,
     user_agent: &str,
     timeout: Duration,
+    pinned_addrs: Option<&[SocketAddr]>,
 ) -> Result<Client, SafeFetchError> {
     let mut builder = Client::builder()
         .user_agent(user_agent)
@@ -106,16 +110,39 @@ async fn client_for_url(
         .no_proxy();
 
     if let Some(Host::Domain(host)) = url.host() {
-        let port = url
-            .port_or_known_default()
-            .ok_or_else(|| SafeFetchError::Policy("URL has no usable port".into()))?;
-        let pinned = resolve_public_host(host, port).await?;
-        builder = builder.resolve_to_addrs(host, &pinned);
+        let pinned = pinned_addrs.ok_or_else(|| {
+            SafeFetchError::Policy("domain request requires validated DNS pins".into())
+        })?;
+        if pinned.is_empty() {
+            return Err(SafeFetchError::Policy(
+                "domain request cannot use an empty DNS pin set".into(),
+            ));
+        }
+        builder = builder.resolve_to_addrs(host, pinned);
     }
 
     builder
         .build()
         .map_err(|_| SafeFetchError::Request("HTTP client initialization failed".into()))
+}
+
+/// Resolve, validate, and pin the current URL's domain before building a
+/// client. A fresh client is intentionally used for every redirect hop.
+async fn client_for_url(
+    url: &Url,
+    user_agent: &str,
+    timeout: Duration,
+) -> Result<Client, SafeFetchError> {
+    let pinned = if let Some(Host::Domain(host)) = url.host() {
+        let port = url
+            .port_or_known_default()
+            .ok_or_else(|| SafeFetchError::Policy("URL has no usable port".into()))?;
+        Some(resolve_public_host(host, port).await?)
+    } else {
+        None
+    };
+
+    client_for_url_with_pinned_addrs(url, user_agent, timeout, pinned.as_deref())
 }
 
 /// Canonicalize domain spelling before both resolution and Reqwest's DNS override.
@@ -283,6 +310,78 @@ pub async fn fetch_public_get(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn request_uses_the_pinned_address_override() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // The hostname is deliberately unrelated to the loopback listener.
+        // The request can succeed only if the shared client builder pins
+        // example.com to the supplied test address instead of looking up DNS.
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = vec![0; 4096];
+            let count = tokio::time::timeout(Duration::from_secs(2), socket.read(&mut request))
+                .await
+                .expect("client must connect through the pin")
+                .unwrap();
+            let request = String::from_utf8_lossy(&request[..count]);
+            assert!(request.starts_with("GET /pinned HTTP/1.1"));
+            assert!(request.lines().any(|line| {
+                line.eq_ignore_ascii_case(&format!("host: example.com:{}", address.port()))
+            }));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                )
+                .await
+                .unwrap();
+        });
+
+        let url = Url::parse(&format!("http://example.com:{}/pinned", address.port())).unwrap();
+        let pinned = [SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0)];
+        let client = client_for_url_with_pinned_addrs(
+            &url,
+            "prism-safe-fetch-test",
+            Duration::from_secs(2),
+            Some(&pinned),
+        )
+        .unwrap();
+        let response = tokio::time::timeout(Duration::from_secs(2), client.get(url).send())
+            .await
+            .expect("request must complete through the pin")
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), "ok");
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn domain_client_requires_a_nonempty_pin_set() {
+        let url = Url::parse("http://example.com/").unwrap();
+        assert!(matches!(
+            client_for_url_with_pinned_addrs(
+                &url,
+                "prism-safe-fetch-test",
+                Duration::from_secs(1),
+                None,
+            ),
+            Err(SafeFetchError::Policy(_))
+        ));
+        assert!(matches!(
+            client_for_url_with_pinned_addrs(
+                &url,
+                "prism-safe-fetch-test",
+                Duration::from_secs(1),
+                Some(&[]),
+            ),
+            Err(SafeFetchError::Policy(_))
+        ));
+    }
 
     #[test]
     fn declared_body_length_accepts_exact_limit_and_missing_length() {

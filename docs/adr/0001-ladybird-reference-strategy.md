@@ -11,7 +11,9 @@ Prism is an experimental Rust-first browser and knowledge-platform workspace. It
 
 Ladybird is an independent, standards-oriented browser project with LibWeb, LibJS, LibWasm, and dedicated process roles for web content, network requests, and image decoding. Its public README still describes it as pre-alpha and developer-only. Its process-architecture document says parts of the described architecture are aspirational and implementation is ongoing. The current public plan targets Linux and macOS for the 2026 alpha; its FAQ describes a beta in 2027 and stable release in 2028. These dates are plans, not guarantees.
 
-Ladybird's February 2026 Rust announcement describes a deliberate, incremental port while the main engine continues to develop in C++. It explicitly asks contributors to coordinate proposed porting work with the core team. The public materials reviewed do not establish a stable, supported embeddable-engine API intended for third-party browser shells.
+Ladybird's February 2026 Rust announcement describes a deliberate, incremental port. By August, official updates reported that style/layout, CSS parsing, computed-style work and the paint pipeline had moved to Rust, while broader engine development continued. The project explicitly asks contributors to coordinate proposed porting work with the core team. The public materials reviewed do not establish a stable, supported embeddable-engine API intended for third-party browser shells.
+
+The September 2026 newsletter also reports a security-hardening week with Trail of Bits engineers. It documents identified issues and exploit-chain work, which is evidence of active scrutiny rather than a claim that all security risks are resolved. The same update says the project is still preparing for alpha testing. Its reported WPT count should be interpreted against the exact WPT revision because newly upstreamed tests contributed to the monthly change.
 
 Sources checked on 2026-10-10:
 - [Ladybird README and license](https://github.com/LadybirdBrowser/ladybird)
@@ -19,6 +21,8 @@ Sources checked on 2026-10-10:
 - [Ladybird FAQ and release roadmap](https://github.com/LadybirdBrowser/ladybird/blob/master/Documentation/FAQ.md)
 - [Ladybird adopts Rust, 2026-02-23](https://ladybird.org/posts/adopting-rust/)
 - [Ladybird project updates](https://ladybird.org/news/)
+- [Ladybird September 2026 newsletter](https://ladybird.org/newsletter/2026-09-30/)
+- [Ladybird releases page](https://github.com/LadybirdBrowser/ladybird/releases)
 - [Web Platform Tests](https://web-platform-tests.org/)
 
 ## Decision

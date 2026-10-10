@@ -215,14 +215,33 @@ impl SearchEngine {
         sources: &[&str],
         tags: &[&str],
     ) {
-        self.claims.push(ClaimEntry {
-            content: content.to_string(),
-            sources: sources.iter().map(|s| s.to_string()).collect(),
+        self.add_claims(std::iter::once((
+            content.to_string(),
             empirical_level,
-            normative_level: NormativeLevel::N2, // Default for dynamic adds
-            materiality_level: MaterialityLevel::M2,
-            tags: tags.iter().map(|s| s.to_string()).collect(),
-        });
+            sources.iter().map(|s| s.to_string()).collect(),
+            tags.iter().map(|s| s.to_string()).collect(),
+        )));
+    }
+
+    /// Add a batch of claims and rebuild shared IDF statistics only once.
+    ///
+    /// Prefer this method when importing many claims: a corpus-dependent IDF
+    /// snapshot requires rebuilding all document vectors after a mutation, so
+    /// batching avoids an O(n) rebuild for every item in a large import.
+    pub fn add_claims<I>(&mut self, claims: I)
+    where
+        I: IntoIterator<Item = (String, EmpiricalLevel, Vec<String>, Vec<String>)>,
+    {
+        for (content, empirical_level, sources, tags) in claims {
+            self.claims.push(ClaimEntry {
+                content,
+                sources,
+                empirical_level,
+                normative_level: NormativeLevel::N2, // Default for dynamic adds
+                materiality_level: MaterialityLevel::M2,
+                tags,
+            });
+        }
         self.rebuild_index();
     }
 
@@ -715,6 +734,30 @@ mod tests {
             &["https://example.test/climate"],
             &[],
         );
+
+        assert_eq!(engine.claim_count(), 2);
+        assert_eq!(engine.word_df.get("sharedterm"), Some(&2));
+        assert_eq!(engine.vectors.len(), engine.claims.len());
+        assert!(!engine.search("climate", 2).is_empty());
+    }
+
+    #[test]
+    fn batch_add_rebuilds_one_consistent_index_snapshot() {
+        let mut engine = SearchEngine::new();
+        engine.add_claims(vec![
+            (
+                "sharedterm ocean".to_string(),
+                EmpiricalLevel::E1,
+                Vec::new(),
+                Vec::new(),
+            ),
+            (
+                "sharedterm climate".to_string(),
+                EmpiricalLevel::E2,
+                Vec::new(),
+                Vec::new(),
+            ),
+        ]);
 
         assert_eq!(engine.claim_count(), 2);
         assert_eq!(engine.word_df.get("sharedterm"), Some(&2));

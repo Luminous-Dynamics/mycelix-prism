@@ -4,6 +4,8 @@
 
 > **Maturity statement:** Prism is not currently presented as a drop-in replacement for Ladybird, Firefox, Safari, or Chromium. A successful workspace compile and unit-test run are necessary engineering gates, not evidence of browser compatibility, security assurance, or daily-driver readiness.
 
+**Engine strategy:** Prism uses [Ladybird](https://github.com/LadybirdBrowser/ladybird) as its primary external browser-engine reference—not as a required runtime dependency today. Standards and Web Platform Tests remain the compatibility authority. See the [Ladybird strategy ADR](docs/adr/0001-ladybird-reference-strategy.md) and [comparison/roadmap](docs/COMPARISON_LADYBIRD.md).
+
 ## Project goals
 
 - Build a modular browser platform with clear separation between web content, privileged browser services, and user-facing UI.

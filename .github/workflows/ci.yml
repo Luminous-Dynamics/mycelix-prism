@@ -1,5 +1,11 @@
 name: CI
 
+# Multiple documentation/code commits can otherwise leave stale expensive Nix
+# builds queued for the same branch. Keep only the newest validation per PR/ref.
+concurrency:
+  group: prism-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]

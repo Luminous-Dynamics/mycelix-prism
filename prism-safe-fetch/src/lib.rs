@@ -13,7 +13,9 @@ use prism_common::ssrf::{is_non_public_ip, validate_proxy_url};
 use reqwest::header::LOCATION;
 use reqwest::{Client, StatusCode};
 use std::collections::HashSet;
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
 use std::time::Duration;
 use url::{Host, Url};
 
@@ -128,16 +130,35 @@ fn client_for_url_with_pinned_addrs(
 
 /// Resolve, validate, and pin the current URL's domain before building a
 /// client. A fresh client is intentionally used for every redirect hop.
+type ResolveFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Vec<SocketAddr>, SafeFetchError>> + Send + 'a>>;
+
+/// Resolution is injectable only inside this crate so the production path can
+/// be exercised with deterministic local fixtures. Production uses
+/// `SystemHostResolver`, which always applies the public-address policy.
+trait HostResolver: Send + Sync {
+    fn resolve<'a>(&'a self, host: &'a str, port: u16) -> ResolveFuture<'a>;
+}
+
+struct SystemHostResolver;
+
+impl HostResolver for SystemHostResolver {
+    fn resolve<'a>(&'a self, host: &'a str, port: u16) -> ResolveFuture<'a> {
+        Box::pin(resolve_public_host(host, port))
+    }
+}
+
 async fn client_for_url(
     url: &Url,
     user_agent: &str,
     timeout: Duration,
+    resolver: &dyn HostResolver,
 ) -> Result<Client, SafeFetchError> {
     let pinned = if let Some(Host::Domain(host)) = url.host() {
         let port = url
             .port_or_known_default()
             .ok_or_else(|| SafeFetchError::Policy("URL has no usable port".into()))?;
-        Some(resolve_public_host(host, port).await?)
+        Some(resolver.resolve(host, port).await?)
     } else {
         None
     };
@@ -252,12 +273,34 @@ pub async fn fetch_public_get(
     max_bytes: usize,
     max_redirects: usize,
 ) -> Result<FetchedResponse, SafeFetchError> {
+    fetch_public_get_with_resolver(
+        initial_url,
+        user_agent,
+        timeout,
+        max_bytes,
+        max_redirects,
+        &SystemHostResolver,
+    )
+    .await
+}
+
+/// Same fetch state machine as the production API, with a private resolver
+/// seam so integration-style unit tests can use local sockets and deterministic
+/// hostname-to-address mappings without contacting DNS or public hosts.
+async fn fetch_public_get_with_resolver(
+    initial_url: Url,
+    user_agent: &str,
+    timeout: Duration,
+    max_bytes: usize,
+    max_redirects: usize,
+    resolver: &dyn HostResolver,
+) -> Result<FetchedResponse, SafeFetchError> {
     let validated = validate_proxy_url(initial_url.as_str())
         .map_err(|reason| SafeFetchError::Policy(reason.to_string()))?;
     let mut current = normalize_domain_host(validated)?;
 
     for hop in 0..=max_redirects {
-        let client = client_for_url(&current, user_agent, timeout).await?;
+        let client = client_for_url(&current, user_agent, timeout, resolver).await?;
         let response = client
             .get(current.clone())
             .send()
@@ -310,6 +353,64 @@ pub async fn fetch_public_get(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct FixtureResolver {
+        pins: HashMap<String, Vec<SocketAddr>>,
+        seen: Arc<Mutex<Vec<(String, u16)>>>,
+    }
+
+    impl FixtureResolver {
+        fn new(pins: HashMap<String, Vec<SocketAddr>>) -> Self {
+            Self {
+                pins,
+                seen: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn seen(&self) -> Vec<(String, u16)> {
+            self.seen.lock().unwrap().clone()
+        }
+    }
+
+    impl HostResolver for FixtureResolver {
+        fn resolve<'a>(&'a self, host: &'a str, port: u16) -> ResolveFuture<'a> {
+            Box::pin(async move {
+                self.seen.lock().unwrap().push((host.to_owned(), port));
+                self.pins.get(host).cloned().ok_or_else(|| {
+                    SafeFetchError::Policy(format!("unexpected fixture hostname: {host}"))
+                })
+            })
+        }
+    }
+
+    async fn read_fixture_headers(socket: &mut tokio::net::TcpStream) -> String {
+        use tokio::io::AsyncReadExt;
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let mut request = Vec::new();
+            let mut chunk = [0; 512];
+            loop {
+                let count = socket.read(&mut chunk).await.unwrap();
+                assert_ne!(count, 0, "client closed before sending full headers");
+                request.extend_from_slice(&chunk[..count]);
+                assert!(request.len() <= 4096, "request headers exceeded test bound");
+                if request.windows(4).any(|window| window == b"\\r\\n\\r\\n") {
+                    break request;
+                }
+            }
+        })
+        .await
+        .expect("request headers must arrive within the test bound")
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    fn loopback_pin() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0)
+    }
 
     #[tokio::test]
     async fn request_uses_the_pinned_address_override() {
@@ -367,6 +468,119 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.text().await.unwrap(), "ok");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fetch_revalidates_and_pins_each_redirect_hop() {
+        use tokio::io::AsyncWriteExt;
+
+        let origin_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let origin_addr = origin_listener.local_addr().unwrap();
+        let target_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let target_addr = target_listener.local_addr().unwrap();
+
+        let origin_server = tokio::spawn(async move {
+            let (mut socket, _) = tokio::time::timeout(
+                Duration::from_secs(2),
+                origin_listener.accept(),
+            )
+            .await
+            .expect("origin request must arrive")
+            .unwrap();
+            let request = read_fixture_headers(&mut socket).await;
+            assert!(request.starts_with("GET /start HTTP/1.1"));
+            socket.write_all(
+                format!(
+                    "HTTP/1.1 302 Found\\r\\nLocation: http://target.example.com:{}/final\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n",
+                    target_addr.port()
+                ).as_bytes()
+            ).await.unwrap();
+        });
+
+        let target_server = tokio::spawn(async move {
+            let (mut socket, _) = tokio::time::timeout(
+                Duration::from_secs(2),
+                target_listener.accept(),
+            )
+            .await
+            .expect("redirect target request must arrive")
+            .unwrap();
+            let request = read_fixture_headers(&mut socket).await;
+            assert!(request.starts_with("GET /final HTTP/1.1"));
+            assert!(request.lines().any(|line| {
+                line.eq_ignore_ascii_case(&format!("host: target.example.com:{}", target_addr.port()))
+            }));
+            socket.write_all(
+                b"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok"
+            ).await.unwrap();
+        });
+
+        let resolver = FixtureResolver::new(HashMap::from([
+            ("origin.example.com".to_string(), vec![loopback_pin()]),
+            ("target.example.com".to_string(), vec![loopback_pin()]),
+        ]));
+        let initial = Url::parse(&format!(
+            "http://origin.example.com:{}/start",
+            origin_addr.port()
+        )).unwrap();
+        let response = fetch_public_get_with_resolver(
+            initial,
+            "prism-safe-fetch-test",
+            Duration::from_secs(2),
+            32,
+            2,
+            &resolver,
+        ).await.unwrap();
+
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, b"ok");
+        assert_eq!(response.final_url.host_str(), Some("target.example.com"));
+        let seen = resolver.seen();
+        assert_eq!(
+            seen,
+            vec![
+                ("origin.example.com".to_string(), origin_addr.port()),
+                ("target.example.com".to_string(), target_addr.port()),
+            ],
+            "each redirect hostname must be resolved and pinned independently"
+        );
+        origin_server.await.unwrap();
+        target_server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fetch_rejects_oversized_chunked_body_without_content_length() {
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let _request = read_fixture_headers(&mut socket).await;
+            socket.write_all(
+                b"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nConnection: close\\r\\n\\r\\n3\\r\\nabc\\r\\n3\\r\\ndef\\r\\n0\\r\\n\\r\\n"
+            ).await.unwrap();
+        });
+        let resolver = FixtureResolver::new(HashMap::from([(
+            "body.example.com".to_string(),
+            vec![loopback_pin()],
+        )]));
+        let initial = Url::parse(&format!(
+            "http://body.example.com:{}/body",
+            address.port()
+        )).unwrap();
+        let result = fetch_public_get_with_resolver(
+            initial,
+            "prism-safe-fetch-test",
+            Duration::from_secs(2),
+            4,
+            0,
+            &resolver,
+        ).await;
+
+        assert!(matches!(result, Err(SafeFetchError::TooLarge)));
+        assert_eq!(resolver.seen().len(), 1);
         server.await.unwrap();
     }
 

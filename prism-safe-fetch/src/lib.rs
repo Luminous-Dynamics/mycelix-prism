@@ -18,6 +18,7 @@ use std::time::Duration;
 use url::{Host, Url};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const DNS_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub enum SafeFetchError {
@@ -79,8 +80,9 @@ where
 
 /// Resolve a hostname once and return only a fully public, pinned address set.
 async fn resolve_public_host(host: &str, port: u16) -> Result<Vec<SocketAddr>, SafeFetchError> {
-    let resolved = tokio::net::lookup_host((host, port))
+    let resolved = tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host((host, port)))
         .await
+        .map_err(|_| SafeFetchError::Policy("hostname resolution timed out".into()))?
         .map_err(|_| SafeFetchError::Policy("hostname resolution failed".into()))?;
 
     pinned_addrs_from_ips(resolved.map(|address| address.ip()))

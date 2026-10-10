@@ -317,9 +317,11 @@ impl SearchEngine {
                 let norm_sim = ((sim - baseline) / (1.0 - baseline)).clamp(0.0, 1.0);
                 // These metadata values remain legacy placeholders until their
                 // provenance is modeled explicitly in SearchResult.
-                let freshness = 1.0 / (1.0 + 1.0 / 365.0);
-                let composite =
-                    0.4 * norm_sim + 0.3 * epistemic + 0.2 * 0.9 + 0.1 * freshness;
+                // Reputation and age are unknown for the current claim schema;
+                // use only measured query similarity and its explicit evidence level.
+                // Dividing by the fixed observed weight (0.7) preserves the same
+                // ordering as SearchResult::rank_score() with optional fields absent.
+                let composite = (0.4 * norm_sim + 0.3 * epistemic) / 0.7;
                 (i, composite, norm_sim)
             })
             .collect();
@@ -342,9 +344,9 @@ impl SearchEngine {
                     empirical_level: claim.empirical_level,
                     normative_level: claim.normative_level,
                     materiality_level: claim.materiality_level,
-                    query_similarity: norm_sim,
-                    author_reputation: 0.9,
-                    age_days: 1,
+                    query_similarity: Some(norm_sim),
+                    author_reputation: None,
+                    age_days: None,
                     tags: claim.tags.clone(),
                 }
             })

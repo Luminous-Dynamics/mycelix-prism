@@ -145,18 +145,35 @@ fn is_redirect(status: StatusCode) -> bool {
     )
 }
 
+fn validate_content_length(
+    content_length: Option<u64>,
+    max_bytes: usize,
+) -> Result<(), SafeFetchError> {
+    if content_length.is_some_and(|length| length > max_bytes as u64) {
+        return Err(SafeFetchError::TooLarge);
+    }
+    Ok(())
+}
+
+fn append_limited_chunk(
+    body: &mut Vec<u8>,
+    chunk: &[u8],
+    max_bytes: usize,
+) -> Result<(), SafeFetchError> {
+    if body.len().saturating_add(chunk.len()) > max_bytes {
+        return Err(SafeFetchError::TooLarge);
+    }
+    body.extend_from_slice(chunk);
+    Ok(())
+}
+
 /// Read a response under a strict cap, checking declared length first and
 /// enforcing the same limit on every chunk for chunked/decompressed bodies.
 pub async fn read_limited_body(
     mut response: reqwest::Response,
     max_bytes: usize,
 ) -> Result<Vec<u8>, SafeFetchError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > max_bytes as u64)
-    {
-        return Err(SafeFetchError::TooLarge);
-    }
+    validate_content_length(response.content_length(), max_bytes)?;
 
     let initial_capacity = response
         .content_length()
@@ -169,10 +186,7 @@ pub async fn read_limited_body(
         .await
         .map_err(|_| SafeFetchError::Request("failed while reading response body".into()))?
     {
-        if body.len().saturating_add(chunk.len()) > max_bytes {
-            return Err(SafeFetchError::TooLarge);
-        }
-        body.extend_from_slice(&chunk);
+        append_limited_chunk(&mut body, &chunk, max_bytes)?;
     }
 
     Ok(body)
@@ -244,6 +258,33 @@ pub async fn fetch_public_get(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn declared_body_length_accepts_exact_limit_and_missing_length() {
+        assert!(validate_content_length(Some(10), 10).is_ok());
+        assert!(validate_content_length(None, 10).is_ok());
+    }
+
+    #[test]
+    fn declared_body_length_rejects_oversized_body_before_reading() {
+        assert!(matches!(
+            validate_content_length(Some(11), 10),
+            Err(SafeFetchError::TooLarge)
+        ));
+    }
+
+    #[test]
+    fn streamed_body_limit_is_exact_and_fail_closed() {
+        let mut body = Vec::new();
+        append_limited_chunk(&mut body, b"123", 5).unwrap();
+        append_limited_chunk(&mut body, b"45", 5).unwrap();
+        assert_eq!(body.as_slice(), b"12345");
+        assert!(matches!(
+            append_limited_chunk(&mut body, b"6", 5),
+            Err(SafeFetchError::TooLarge)
+        ));
+        assert_eq!(body.as_slice(), b"12345");
+    }
 
     #[test]
     fn rejects_empty_dns_answers() {

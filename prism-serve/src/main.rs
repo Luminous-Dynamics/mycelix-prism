@@ -107,12 +107,20 @@ struct DdgParams {
 }
 
 async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
-    let url = format!(
-        "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
-        params.q.replace(' ', "+")
-    );
+    // Let Reqwest percent-encode query data; never splice user input into URL syntax.
+    let url = "https://api.duckduckgo.com/";
     let client = build_client("Prism/0.3 (ddg-proxy)", 10);
-    match client.get(&url).send().await {
+    match client
+        .get(url)
+        .query(&[
+            ("q", params.q.as_str()),
+            ("format", "json"),
+            ("no_html", "1"),
+            ("skip_disambig", "1"),
+        ])
+        .send()
+        .await
+    {
         Ok(resp) => {
             if resp.status().is_redirection() {
                 return (StatusCode::BAD_GATEWAY, "Unexpected provider redirect blocked").into_response();
@@ -150,13 +158,12 @@ async fn brave_handler(
     if api_key.is_empty() {
         return (StatusCode::UNAUTHORIZED, "Missing X-Brave-Key header").into_response();
     }
-    let url = format!(
-        "https://api.search.brave.com/res/v1/web/search?q={}",
-        params.q.replace(' ', "+")
-    );
+    // Query serialization prevents '&' or '#' in user input from changing URL structure.
+    let url = "https://api.search.brave.com/res/v1/web/search";
     let client = build_client("Prism/0.3 (brave-proxy)", 15);
     match client
-        .get(&url)
+        .get(url)
+        .query(&[("q", params.q.as_str())])
         .header("X-Subscription-Token", api_key)
         .header("Accept", "application/json")
         .send()

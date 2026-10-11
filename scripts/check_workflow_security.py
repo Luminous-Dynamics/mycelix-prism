@@ -15,7 +15,13 @@ SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DOCKER_DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-fA-F]{64}$")
 VERSION_COMMENT_RE = re.compile(r"#\s*v\d[^\s]*\s*$")
 JOB_RE = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
-UNSAFE_TRIGGER_RE = re.compile(r"^\s*pull_request_target\s*:")
+UNSAFE_TRIGGER_PATTERNS = (
+    re.compile(r"^\s*(?:-\s*)?['\"]?pull_request_target['\"]?\s*(?::|,|\] |$)"),
+    re.compile(
+        r"^\s*on\s*:\s*(?:['\"]?pull_request_target\b|"
+        r"\[[^\]]*\bpull_request_target\b|\{[^}]*\bpull_request_target\b)"
+    ),
+)
 KEY_VALUE_RE = re.compile(r"^\s*([a-z][a-z0-9_-]*):\s*([a-z]+)\s*(?:#.*)?$")
 
 # The one temporary writer lane is intentionally exceptional and tightly gated.
@@ -164,7 +170,7 @@ def validate_workflow_text(path_label: str, content: str) -> list[str]:
     found_actions = 0
 
     for line_number, line in enumerate(content.splitlines(), start=1):
-        if UNSAFE_TRIGGER_RE.match(line):
+        if any(pattern.match(line) for pattern in UNSAFE_TRIGGER_PATTERNS):
             errors.append(
                 f"{path_label}:{line_number}: pull_request_target trigger is forbidden; "
                 "use pull_request unless a separately reviewed privileged-event design is required"

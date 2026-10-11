@@ -17,10 +17,7 @@ VERSION_COMMENT_RE = re.compile(r"#\s*v\d[^\s]*\s*$")
 JOB_RE = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
 UNSAFE_TRIGGER_PATTERNS = (
     re.compile(r"^\s*(?:-\s*)?['\"]?pull_request_target['\"]?\s*(?::|,|\]|$)"),
-    re.compile(
-        r"^\s*on\s*:\s*(?:['\"]?pull_request_target\b|"
-        r"\[[^\]]*\bpull_request_target\b|\{[^}]*\bpull_request_target\b)"
-    ),
+    re.compile(r"^\s*on\s*:\s*.*\bpull_request_target\b"),
 )
 KEY_VALUE_RE = re.compile(r"^\s*([a-z][a-z0-9_-]*):\s*([a-z]+)\s*(?:#.*)?$")
 

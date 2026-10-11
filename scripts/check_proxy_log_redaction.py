@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Static regression guard for sensitive data in Prism proxy/bridge logs.
 
-This is deliberately stdlib-only and conservative. It recognizes balanced log
-macro invocations across lines, but it is not a Rust parser or proof that every
-possible logging path is safe.
+This is deliberately stdlib-only and conservative. It recognizes balanced
+logging/format macro invocations across lines, but it is not a Rust parser or
+proof that every possible logging path is safe.
 """
 from __future__ import annotations
 
@@ -13,15 +13,16 @@ import sys
 from pathlib import Path
 
 LOG_MACRO_RE = re.compile(r"\blog::(?:trace|debug|info|warn|error)!\s*\(")
+FORMAT_MACRO_RE = re.compile(r"\bformat!\s*\(")
 SENSITIVE_LOG_VALUE_RE = re.compile(
     r"\bparams\s*\.\s*(?:q|url)\b|\bvalidated\b|\bapi_key\b|"
     r"\bbearer_token\b|\b(?:request_)?body\b|\bmsg\b",
     re.IGNORECASE,
 )
 UPSTREAM_ERROR_ECHO_RE = re.compile(
-    r'format!\s*\([^\n]*(?:fetch failed|upstream request failed)[^\n]*'
+    r'format!\s*\(.*?(?:fetch failed|upstream request failed).*?'
     r'(?:\{\}|\{(?:e|err|error)\})',
-    re.IGNORECASE,
+    re.IGNORECASE | re.DOTALL,
 )
 
 DEFAULT_FILES = (
@@ -30,16 +31,15 @@ DEFAULT_FILES = (
 )
 
 
-def iter_log_macro_invocations(source: str):
-    """Yield (offset, source) for balanced log! invocations, including multiline ones.
+def iter_macro_invocations(source: str, macro_pattern: re.Pattern[str]):
+    """Yield (offset, source) for balanced macro invocations, including multiline ones.
 
-    The scanner accounts for nested parentheses, escaped quotes and comments,
-    which is enough for this narrow regression guard while intentionally not
-    pretending to implement the full Rust lexical grammar.
+    The scanner accounts for nested parentheses, escaped quotes and comments.
+    It is intentionally narrow and does not implement the full Rust grammar.
     """
-    for match in LOG_MACRO_RE.finditer(source):
+    for match in macro_pattern.finditer(source):
         start = match.start()
-        # LOG_MACRO_RE consumes the opening parenthesis.
+        # The selected macro pattern consumes the opening parenthesis.
         index = match.end()
         depth = 1
         in_string = False
@@ -95,15 +95,16 @@ def iter_log_macro_invocations(source: str):
 
 def find_sensitive_logging(path: str, source: str) -> list[str]:
     findings: list[str] = []
-    for offset, invocation in iter_log_macro_invocations(source):
+    for offset, invocation in iter_macro_invocations(source, LOG_MACRO_RE):
         if SENSITIVE_LOG_VALUE_RE.search(invocation):
             line_number = source.count("\n", 0, offset) + 1
             findings.append(
                 f"{path}:{line_number}: log macro interpolates a sensitive request/value field"
             )
 
-    for line_number, line in enumerate(source.splitlines(), start=1):
-        if UPSTREAM_ERROR_ECHO_RE.search(line):
+    for offset, invocation in iter_macro_invocations(source, FORMAT_MACRO_RE):
+        if UPSTREAM_ERROR_ECHO_RE.search(invocation):
+            line_number = source.count("\n", 0, offset) + 1
             findings.append(
                 f"{path}:{line_number}: upstream error detail is interpolated into a response"
             )

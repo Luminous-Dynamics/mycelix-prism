@@ -31,6 +31,14 @@ class SensitiveLogPatternTests(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertTrue(find_sensitive_logging("proxy.rs", source))
 
+    def test_rejects_generic_and_tracing_logging_macros(self) -> None:
+        for source in (
+            'log::log!(target: "proxy", log::Level::Info, "query {}", params.q);',
+            'tracing::event!(tracing::Level::INFO, "request body {}", body);',
+        ):
+            with self.subTest(source=source):
+                self.assertTrue(find_sensitive_logging("proxy.rs", source))
+
     def test_rejects_multiline_log_invocations(self) -> None:
         source = """log::info!(
             "Searching for {}",

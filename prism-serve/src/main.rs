@@ -91,10 +91,10 @@ async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
                         .unwrap_or_else(|_| internal_error_response())
                         .into_response()
                 }
-                Err(e) => (StatusCode::BAD_GATEWAY, format!("Read failed: {}", e)).into_response(),
+                Err(_) => (StatusCode::BAD_GATEWAY, "Failed to read upstream response body").into_response(),
             }
         }
-        Err(e) => (StatusCode::BAD_GATEWAY, format!("Fetch failed: {}", e)).into_response(),
+        Err(_) => (StatusCode::BAD_GATEWAY, "Upstream request failed").into_response(),
     }
 }
 

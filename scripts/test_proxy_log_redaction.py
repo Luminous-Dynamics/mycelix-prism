@@ -31,6 +31,29 @@ class SensitiveLogPatternTests(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertTrue(find_sensitive_logging("proxy.rs", source))
 
+    def test_rejects_multiline_log_invocations(self) -> None:
+        source = """log::info!(
+            "Searching for {}",
+            params
+                .q
+        );
+        log::debug!(
+            "destination {}",
+            sanitize(
+                validated
+            )
+        );
+        """
+        findings = find_sensitive_logging("proxy.rs", source)
+        self.assertEqual(len(findings), 2)
+        self.assertTrue(all("sensitive request/value field" in item for item in findings))
+
+    def test_scanner_ignores_parentheses_inside_format_strings(self) -> None:
+        source = 'log::warn!("provider body (length={})", summarize(body));'
+        findings = find_sensitive_logging("proxy.rs", source)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("sensitive request/value field", findings[0])
+
     def test_rejects_echoing_upstream_error_details(self) -> None:
         source = 'Err(e) => format!("provider fetch failed: {}", e),'
         findings = find_sensitive_logging("proxy.rs", source)
@@ -38,12 +61,19 @@ class SensitiveLogPatternTests(unittest.TestCase):
         self.assertIn("upstream error detail", findings[0])
 
     def test_accepts_redacted_operational_events(self) -> None:
-        source = '\n'.join((
+        source = '\\n'.join((
             'log::info!("DuckDuckGo proxy request");',
             'log::info!("Proxy request for host {}", host);',
             'log::warn!("Blocked proxy destination: {}", reason);',
             'log::warn!("Symthaea bridge request failed");',
         ))
+        self.assertEqual(find_sensitive_logging("proxy.rs", source), [])
+
+    def test_accepts_multiline_redacted_operational_event(self) -> None:
+        source = """log::warn!(
+            "Blocked proxy destination: {}",
+            reason
+        );"""
         self.assertEqual(find_sensitive_logging("proxy.rs", source), [])
 
     def test_current_proxy_sources_pass(self) -> None:

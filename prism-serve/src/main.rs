@@ -877,5 +877,26 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::URI_TOO_LONG);
+        assert_eq!(
+            response
+                .headers()
+                .get("x-content-type-options")
+                .and_then(|value| value.to_str().ok()),
+            Some("nosniff")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-frame-options")
+                .and_then(|value| value.to_str().ok()),
+            Some("DENY")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("referrer-policy")
+                .and_then(|value| value.to_str().ok()),
+            Some("strict-origin-when-cross-origin")
+        );
     }
 }

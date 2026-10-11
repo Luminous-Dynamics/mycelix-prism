@@ -18,12 +18,30 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use prism_common::proxy_limits::MAX_REQUEST_TARGET_BYTES;
 use prism_common::ssrf::validate_proxy_url;
 use prism_safe_fetch::{SafeFetchError, fetch_public_get, read_limited_body};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
 const MAX_PROVIDER_REQUEST_SIZE: usize = 1024 * 1024; // 1 MiB
+
+async fn reject_oversized_request_target(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let target_bytes = request
+        .uri()
+        .path_and_query()
+        .map(|path_and_query| path_and_query.as_str().len())
+        .unwrap_or(0);
+
+    if target_bytes > MAX_REQUEST_TARGET_BYTES {
+        return (StatusCode::URI_TOO_LONG, "Request target too long").into_response();
+    }
+
+    next.run(request).await
+}
 
 // SSRF validation (`validate_proxy_url` / `is_private_ipv4`) lives in
 // `prism_common::ssrf` so `prism-proxy` and `prism-serve` share a single
@@ -253,10 +271,7 @@ async fn health() -> &'static str {
     "Prism proxy OK"
 }
 
-#[tokio::main]
-async fn main() {
-    env_logger::init();
-
+fn build_app() -> Router {
     let allowed_origins = AllowOrigin::list([
         "http://localhost:8130"
             .parse()
@@ -285,7 +300,16 @@ async fn main() {
         .route("/health", get(health))
         .layer(cors)
         .layer(DefaultBodyLimit::max(MAX_PROVIDER_REQUEST_SIZE))
-        .layer(tower::limit::ConcurrencyLimitLayer::new(50));
+        .layer(tower::limit::ConcurrencyLimitLayer::new(50))
+        .layer(axum::middleware::from_fn(reject_oversized_request_target));
+
+    app
+}
+
+#[tokio::main]
+async fn main() {
+    env_logger::init();
+    let app = build_app();
 
     let addr = "127.0.0.1:8131";
     log::info!("Prism proxy listening on http://{}", addr);
@@ -356,5 +380,21 @@ mod tests {
         assert!(validate_proxy_url("https://example.com").is_ok());
         assert!(validate_proxy_url("https://api.duckduckgo.com/?q=test").is_ok());
         assert!(validate_proxy_url("http://en.wikipedia.org/wiki/Rust").is_ok());
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_request_target_before_route_handling() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let app = build_app();
+        let uri = format!("/health?q={}", "x".repeat(MAX_REQUEST_TARGET_BYTES));
+        let response = app
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::URI_TOO_LONG);
     }
 }

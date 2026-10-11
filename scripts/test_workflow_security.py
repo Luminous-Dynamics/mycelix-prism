@@ -99,6 +99,34 @@ jobs:
             any("pull_request_target trigger is forbidden" in error for error in errors)
         )
 
+    def test_rejects_pull_request_target_shorthand_forms(self) -> None:
+        trigger_forms = (
+            "on: pull_request_target",
+            "on: [push, pull_request_target]",
+            "on: { push: {}, pull_request_target: {} }",
+            "on:\\n  - push\\n  - pull_request_target",
+        )
+        for trigger in trigger_forms:
+            with self.subTest(trigger=trigger):
+                content = f"""name: test
+
+permissions:
+  contents: read
+
+{trigger}
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+"""
+                errors = validate_workflow_text("ci.yml", content)
+                self.assertTrue(
+                    any("pull_request_target trigger is forbidden" in error for error in errors),
+                    msg=f"did not reject trigger form: {trigger}",
+                )
+
     def test_rejects_missing_permissions_baseline(self) -> None:
         content = f"""name: test
 on:

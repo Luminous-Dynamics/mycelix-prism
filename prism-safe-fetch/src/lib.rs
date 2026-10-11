@@ -309,9 +309,7 @@ async fn fetch_public_get_with_resolver(
 
         if is_redirect(response.status()) {
             if hop == max_redirects {
-                return Err(SafeFetchError::Policy(
-                    "redirect hop limit exceeded".into(),
-                ));
+                return Err(SafeFetchError::Policy("redirect hop limit exceeded".into()));
             }
             let location = response
                 .headers()
@@ -345,9 +343,7 @@ async fn fetch_public_get_with_resolver(
         });
     }
 
-    Err(SafeFetchError::Policy(
-        "redirect hop limit exceeded".into(),
-    ))
+    Err(SafeFetchError::Policy("redirect hop limit exceeded".into()))
 }
 
 #[cfg(test)]
@@ -446,15 +442,16 @@ mod tests {
                 line.eq_ignore_ascii_case(&format!("host: example.com:{}", address.port()))
             }));
             socket
-                .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
-                )
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
                 .await
                 .unwrap();
         });
 
         let url = Url::parse(&format!("http://example.com:{}/pinned", address.port())).unwrap();
-        let pinned = [SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0)];
+        let pinned = [SocketAddr::new(
+            IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            0,
+        )];
         let client = client_for_url_with_pinned_addrs(
             &url,
             "prism-safe-fetch-test",
@@ -475,19 +472,21 @@ mod tests {
     async fn fetch_revalidates_and_pins_each_redirect_hop() {
         use tokio::io::AsyncWriteExt;
 
-        let origin_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let origin_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let origin_addr = origin_listener.local_addr().unwrap();
-        let target_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let target_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let target_addr = target_listener.local_addr().unwrap();
 
         let origin_server = tokio::spawn(async move {
-            let (mut socket, _) = tokio::time::timeout(
-                Duration::from_secs(2),
-                origin_listener.accept(),
-            )
-            .await
-            .expect("origin request must arrive")
-            .unwrap();
+            let (mut socket, _) =
+                tokio::time::timeout(Duration::from_secs(2), origin_listener.accept())
+                    .await
+                    .expect("origin request must arrive")
+                    .unwrap();
             let request = read_fixture_headers(&mut socket).await;
             assert!(request.starts_with("GET /start HTTP/1.1"));
             socket.write_all(
@@ -499,17 +498,18 @@ mod tests {
         });
 
         let target_server = tokio::spawn(async move {
-            let (mut socket, _) = tokio::time::timeout(
-                Duration::from_secs(2),
-                target_listener.accept(),
-            )
-            .await
-            .expect("redirect target request must arrive")
-            .unwrap();
+            let (mut socket, _) =
+                tokio::time::timeout(Duration::from_secs(2), target_listener.accept())
+                    .await
+                    .expect("redirect target request must arrive")
+                    .unwrap();
             let request = read_fixture_headers(&mut socket).await;
             assert!(request.starts_with("GET /final HTTP/1.1"));
             assert!(request.lines().any(|line| {
-                line.eq_ignore_ascii_case(&format!("host: target.example.com:{}", target_addr.port()))
+                line.eq_ignore_ascii_case(&format!(
+                    "host: target.example.com:{}",
+                    target_addr.port()
+                ))
             }));
             socket.write_all(
                 b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
@@ -523,7 +523,8 @@ mod tests {
         let initial = Url::parse(&format!(
             "http://origin.example.com:{}/start",
             origin_addr.port()
-        )).unwrap();
+        ))
+        .unwrap();
         let response = fetch_public_get_with_resolver(
             initial,
             "prism-safe-fetch-test",
@@ -531,7 +532,9 @@ mod tests {
             32,
             2,
             &resolver,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         assert_eq!(response.status, 200);
         assert_eq!(response.body, b"ok");
@@ -553,7 +556,9 @@ mod tests {
     async fn fetch_rejects_oversized_chunked_body_without_content_length() {
         use tokio::io::AsyncWriteExt;
 
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -566,10 +571,8 @@ mod tests {
             "body.example.com".to_string(),
             vec![loopback_pin()],
         )]));
-        let initial = Url::parse(&format!(
-            "http://body.example.com:{}/body",
-            address.port()
-        )).unwrap();
+        let initial =
+            Url::parse(&format!("http://body.example.com:{}/body", address.port())).unwrap();
         let result = fetch_public_get_with_resolver(
             initial,
             "prism-safe-fetch-test",
@@ -577,7 +580,8 @@ mod tests {
             4,
             0,
             &resolver,
-        ).await;
+        )
+        .await;
 
         assert!(matches!(result, Err(SafeFetchError::TooLarge)));
         assert_eq!(resolver.seen().len(), 1);
@@ -598,13 +602,11 @@ mod tests {
         let private_addr = private_listener.local_addr().unwrap();
 
         let origin_server = tokio::spawn(async move {
-            let (mut socket, _) = tokio::time::timeout(
-                Duration::from_secs(2),
-                origin_listener.accept(),
-            )
-            .await
-            .expect("origin request must arrive")
-            .unwrap();
+            let (mut socket, _) =
+                tokio::time::timeout(Duration::from_secs(2), origin_listener.accept())
+                    .await
+                    .expect("origin request must arrive")
+                    .unwrap();
             let request = read_fixture_headers(&mut socket).await;
             assert!(request.starts_with("GET /start HTTP/1.1"));
             socket.write_all(
@@ -623,7 +625,8 @@ mod tests {
         let initial = Url::parse(&format!(
             "http://origin.example.com:{}/start",
             origin_addr.port()
-        )).unwrap();
+        ))
+        .unwrap();
         let result = fetch_public_get_with_resolver(
             initial,
             "prism-safe-fetch-test",
@@ -631,7 +634,8 @@ mod tests {
             32,
             2,
             &resolver,
-        ).await;
+        )
+        .await;
 
         assert!(
             matches!(result, Err(SafeFetchError::Policy(_))),
@@ -711,10 +715,7 @@ mod tests {
 
     #[test]
     fn rejects_mixed_public_and_private_dns_answers() {
-        let answers = vec![
-            "1.1.1.1".parse().unwrap(),
-            "127.0.0.1".parse().unwrap(),
-        ];
+        let answers = vec!["1.1.1.1".parse().unwrap(), "127.0.0.1".parse().unwrap()];
         assert!(matches!(
             pinned_addrs_from_ips(answers),
             Err(SafeFetchError::Policy(_))
@@ -775,6 +776,8 @@ mod tests {
     #[test]
     fn redirect_target_rejects_userinfo() {
         let current = Url::parse("https://example.com/start").unwrap();
-        assert!(validate_redirect_target(&current, "https://user:pass@other.example/path").is_err());
+        assert!(
+            validate_redirect_target(&current, "https://user:pass@other.example/path").is_err()
+        );
     }
 }

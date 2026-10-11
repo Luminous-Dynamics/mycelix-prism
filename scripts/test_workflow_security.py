@@ -104,7 +104,7 @@ jobs:
             "on: pull_request_target",
             "on: [push, pull_request_target]",
             "on: { push: {}, pull_request_target: {} }",
-            "on:\\n  - push\\n  - pull_request_target",
+            "on:\n  - push\n  - pull_request_target",
         )
         for trigger in trigger_forms:
             with self.subTest(trigger=trigger):

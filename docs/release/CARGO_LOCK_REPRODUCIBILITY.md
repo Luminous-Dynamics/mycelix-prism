@@ -6,7 +6,7 @@ Prism is a multi-crate Cargo workspace. The root `Cargo.lock` is the reviewed re
 
 Regenerate only after intended workspace/package manifests are frozen for the change being reviewed. Do not copy a lockfile from an earlier manifest state, construct one manually, or remove `--locked` to make CI green.
 
-From a clean checkout of the exact candidate source revision:
+From a clean checkout of the exact candidate source revision. In CI, preserve the JSON output from `cargo metadata` separately from Nix shell-hook messages (for example, pipe the single-line metadata output through `tail -n 1` under `set -o pipefail` before parsing it):
 
 ```sh
 nix develop --command cargo generate-lockfile

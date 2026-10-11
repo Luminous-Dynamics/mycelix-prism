@@ -159,6 +159,28 @@ mod tests {
     }
 
     #[test]
+    fn rejects_legacy_ipv4_spellings_of_loopback() {
+        // The URL Standard parses these legacy host spellings as IPv4 before
+        // the proxy policy runs; test both canonicalization and rejection.
+        for raw in [
+            "http://127.1/",
+            "http://0177.0.0.1/",
+            "http://0x7f.1/",
+            "http://2130706433/",
+        ] {
+            let parsed = url::Url::parse(raw).expect("valid URL Standard IPv4 spelling");
+            assert!(
+                matches!(parsed.host(), Some(url::Host::Ipv4(ip)) if ip.is_loopback()),
+                "legacy spelling must canonicalize to loopback: {raw}"
+            );
+            assert!(
+                validate_proxy_url(raw).is_err(),
+                "proxy policy must reject loopback spelling: {raw}"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_cloud_metadata() {
         assert!(validate_proxy_url("http://169.254.169.254/latest/meta-data/").is_err());
         assert!(validate_proxy_url("http://metadata.google.internal").is_err());

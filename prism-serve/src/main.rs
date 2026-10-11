@@ -483,9 +483,9 @@ fn build_app(dist_path: &str, symthaea_cfg: Option<Arc<SymthaeaConfig>>) -> Rout
         .merge(symthaea_route)
         // Static files with SPA fallback
         .fallback_service(ServeDir::new(dist_path).not_found_service(fallback))
-        .layer(CompressionLayer::new())
-        .layer(DefaultBodyLimit::max(MAX_PROVIDER_REQUEST_SIZE))
         .layer(tower::limit::ConcurrencyLimitLayer::new(100))
+        .layer(DefaultBodyLimit::max(MAX_PROVIDER_REQUEST_SIZE))
+        .layer(axum::middleware::from_fn(reject_oversized_request_target))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::X_CONTENT_TYPE_OPTIONS,
             HeaderValue::from_static("nosniff"),
@@ -498,7 +498,7 @@ fn build_app(dist_path: &str, symthaea_cfg: Option<Arc<SymthaeaConfig>>) -> Rout
             axum::http::header::REFERRER_POLICY,
             HeaderValue::from_static("strict-origin-when-cross-origin"),
         ))
-        .layer(axum::middleware::from_fn(reject_oversized_request_target))
+        .layer(CompressionLayer::new())
 }
 
 #[tokio::main]

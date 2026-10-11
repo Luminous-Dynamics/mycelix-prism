@@ -30,11 +30,23 @@ async fn reject_oversized_request_target(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    let target_bytes = request
-        .uri()
+    let uri = request.uri();
+    let path_and_query_bytes = uri
         .path_and_query()
         .map(|path_and_query| path_and_query.as_str().len())
         .unwrap_or(0);
+    let authority_bytes = uri
+        .authority()
+        .map(|authority| authority.as_str().len())
+        .unwrap_or(0);
+    let prefix_bytes = if uri.scheme_str().is_some() {
+        uri.scheme_str().map(str::len).unwrap_or(0) + 3
+    } else if uri.authority().is_some() {
+        2
+    } else {
+        0
+    };
+    let target_bytes = path_and_query_bytes + authority_bytes + prefix_bytes;
 
     if target_bytes > MAX_REQUEST_TARGET_BYTES {
         return (StatusCode::URI_TOO_LONG, "Request target too long").into_response();

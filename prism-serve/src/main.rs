@@ -12,6 +12,7 @@ use axum::http::StatusCode;
 use axum::http::header::HeaderValue;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use prism_common::proxy_limits::MAX_REQUEST_TARGET_BYTES;
 use prism_common::ssrf::validate_proxy_url;
 use prism_safe_fetch::{SafeFetchError, fetch_public_get, read_limited_body};
 use std::sync::Arc;
@@ -24,6 +25,23 @@ use tower_http::set_header::SetResponseHeaderLayer;
 
 const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
 const MAX_PROVIDER_REQUEST_SIZE: usize = 1024 * 1024; // 1 MiB
+
+async fn reject_oversized_request_target(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let target_bytes = request
+        .uri()
+        .path_and_query()
+        .map(|path_and_query| path_and_query.as_str().len())
+        .unwrap_or(0);
+
+    if target_bytes > MAX_REQUEST_TARGET_BYTES {
+        return (StatusCode::URI_TOO_LONG, "Request target too long").into_response();
+    }
+
+    next.run(request).await
+}
 
 // ═══════════════════════════════════════════════════════════════
 // SSRF PROTECTION
@@ -480,6 +498,7 @@ fn build_app(dist_path: &str, symthaea_cfg: Option<Arc<SymthaeaConfig>>) -> Rout
             axum::http::header::REFERRER_POLICY,
             HeaderValue::from_static("strict-origin-when-cross-origin"),
         ))
+        .layer(axum::middleware::from_fn(reject_oversized_request_target))
 }
 
 #[tokio::main]
@@ -814,5 +833,18 @@ mod tests {
             .unwrap();
         // TimeoutLayer maps an elapsed timeout to 503 by default in tower.
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_request_target_before_route_handling() {
+        let dir = test_dist_dir();
+        let app = build_app(dir.path().to_str().unwrap(), None);
+        let uri = format!("/health?q={}", "x".repeat(MAX_REQUEST_TARGET_BYTES));
+        let response = app
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::URI_TOO_LONG);
     }
 }

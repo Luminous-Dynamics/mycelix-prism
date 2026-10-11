@@ -3,12 +3,12 @@ name: CI
 # Multiple documentation/code commits can otherwise leave stale expensive Nix
 # builds queued for the same branch. Keep only the newest validation per PR/ref.
 concurrency:
-  group: prism-ci-${{ github.event.pull_request.number || github.ref }}
+  group: prism-ci-${{ github.event.pull_request.head.ref || github.ref }}
   cancel-in-progress: true
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/proxy-dns-pinning-redirects-20261010]
   pull_request:
     branches: [main]
 
@@ -18,14 +18,14 @@ jobs:
   # lock stays in the draft PR for dependency review before merge.
   generate_lockfile:
     name: Generate reviewed workspace lockfile
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.repo.full_name == github.repository
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010') || (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
           fetch-depth: 0
 
       - name: Check whether Cargo.lock is missing
@@ -85,7 +85,7 @@ jobs:
       - name: Commit generated lockfile to draft PR branch
         if: steps.lockfile.outputs.missing == 'true'
         env:
-          BRANCH: ${{ github.event.pull_request.head.ref }}
+          BRANCH: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -128,7 +128,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.ref || github.sha }}
+          ref: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.ref) || (github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010' && github.ref_name) || github.sha }}
 
       - name: Record tested source SHA
         run: echo "Checked out source SHA: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
@@ -170,7 +170,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.ref || github.sha }}
+          ref: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.ref) || (github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010' && github.ref_name) || github.sha }}
 
       - name: Record tested source SHA
         run: echo "Checked out source SHA: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
@@ -212,7 +212,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.ref || github.sha }}
+          ref: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.ref) || (github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010' && github.ref_name) || github.sha }}
 
       - name: Record tested source SHA
         run: echo "Checked out source SHA: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"

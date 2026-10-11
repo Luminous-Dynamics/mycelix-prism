@@ -150,9 +150,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn loads_mycelix_claims() {
+    fn mycelix_claim_loader_matches_build_feature() {
         let claims = load_mycelix_claims();
-        assert!(!claims.is_empty(), "Should load mycelix claims");
+
+        #[cfg(feature = "workspace-seed-data")]
+        assert!(!claims.is_empty(), "Enabled companion seed corpus should load claims");
+
+        #[cfg(not(feature = "workspace-seed-data"))]
+        assert!(
+            claims.is_empty(),
+            "Standalone builds must not depend on an undeclared sibling checkout"
+        );
+
         // Should have filtered out coordinate-only claims
         for c in &claims {
             let low = c.content.to_lowercase();

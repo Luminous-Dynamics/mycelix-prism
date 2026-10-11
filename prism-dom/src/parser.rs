@@ -290,7 +290,7 @@ mod tests {
         assert!(text.contains("Bold"));
     }
     #[test]
-    fn parse_large_document_after_safe_elem_name_cloning() {
+    fn parse_large_document_with_guarded_elem_names() {
         use std::fmt::Write as _;
 
         // Thousands of sibling elements force repeated Vec-backed arena growth

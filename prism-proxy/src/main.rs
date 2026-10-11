@@ -395,6 +395,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn accepts_request_target_at_limit() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let app = build_app();
+        let prefix = "/health?q=";
+        let uri = format!(
+            "{}{}",
+            prefix,
+            "x".repeat(MAX_REQUEST_TARGET_BYTES - prefix.len())
+        );
+        assert_eq!(uri.len(), MAX_REQUEST_TARGET_BYTES);
+        let response = app
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn rejects_oversized_request_target_before_route_handling() {
         use axum::body::Body;
         use axum::http::Request;

@@ -15,11 +15,13 @@ VALID_SHA = "a" * 40
 
 class ActionReferenceTests(unittest.TestCase):
     def test_accepts_full_sha_and_version_comment(self) -> None:
-        errors = validate_action_reference(
-            f"actions/checkout@{VALID_SHA}",
-            f"- uses: actions/checkout@{VALID_SHA} # v7.0.1",
+        self.assertEqual(
+            validate_action_reference(
+                f"actions/checkout@{VALID_SHA}",
+                f"- uses: actions/checkout@{VALID_SHA} # v7.0.1",
+            ),
+            [],
         )
-        self.assertEqual(errors, [])
 
     def test_rejects_mutable_tag(self) -> None:
         errors = validate_action_reference(
@@ -38,7 +40,10 @@ class ActionReferenceTests(unittest.TestCase):
         self.assertIn("version comment", errors[0])
 
     def test_local_action_is_allowed(self) -> None:
-        self.assertEqual(validate_action_reference("./.github/actions/check", "- uses: ./.github/actions/check"), [])
+        self.assertEqual(
+            validate_action_reference("./.github/actions/check", "- uses: ./.github/actions/check"),
+            [],
+        )
 
     def test_docker_action_requires_digest(self) -> None:
         self.assertEqual(
@@ -100,6 +105,66 @@ jobs:
 """
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(any("top-level permissions" in error for error in errors))
+
+    def test_rejects_unapproved_job_write_permissions(self) -> None:
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  dangerous:
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+"""
+        errors = validate_workflow_text("ci.yml", content)
+        self.assertTrue(any("job-level permissions are forbidden" in error for error in errors))
+
+    def test_allows_only_exact_gated_lock_recovery_permissions(self) -> None:
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  generate_lockfile:
+    if: ${{{{ (github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010') }}}}
+    permissions:
+      contents: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+"""
+        self.assertEqual(validate_workflow_text("ci.yml", content), [])
+
+    def test_recovery_permission_without_same_repo_gate_is_rejected(self) -> None:
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  generate_lockfile:
+    if: ${{{{ github.event_name == 'pull_request' }}}}
+    permissions:
+      contents: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+"""
+        errors = validate_workflow_text("ci.yml", content)
+        self.assertTrue(any("lacks required same-repository/event/ref gates" in error for error in errors))
 
     def test_tree_scan_rejects_action_tag(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

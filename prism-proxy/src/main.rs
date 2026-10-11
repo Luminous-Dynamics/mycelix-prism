@@ -298,10 +298,10 @@ fn build_app() -> Router {
         .route("/api/brave", get(brave_handler))
         .route("/api/perplexity", axum::routing::post(perplexity_handler))
         .route("/health", get(health))
-        .layer(cors)
-        .layer(DefaultBodyLimit::max(MAX_PROVIDER_REQUEST_SIZE))
         .layer(tower::limit::ConcurrencyLimitLayer::new(50))
-        .layer(axum::middleware::from_fn(reject_oversized_request_target));
+        .layer(DefaultBodyLimit::max(MAX_PROVIDER_REQUEST_SIZE))
+        .layer(axum::middleware::from_fn(reject_oversized_request_target))
+        .layer(cors);
 
     app
 }

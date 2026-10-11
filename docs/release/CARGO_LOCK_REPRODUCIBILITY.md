@@ -27,4 +27,4 @@ Before the lock is considered accepted:
 
 ## CI behavior
 
-The formatting job is intentionally independent of `Cargo.lock`, using the lightweight `.#fmt` Nix shell. Locked build/test/MSRV jobs fail fast if the root lock is absent. The lock-recovery path in the Prism security PR is narrowly scoped to that same-repository PR branch, writes only `Cargo.lock`, and leaves the result in the draft for review. It is not a general mechanism for silently updating dependency locks in other branches.
+The formatting job is intentionally independent of `Cargo.lock`, using the lightweight `.#fmt` Nix shell. Locked build/test/MSRV jobs fail fast if the root lock is absent. The lock-recovery lane in the Prism security PR is narrowly scoped to that same-repository PR branch: it generates only when the lock is absent, verifies locked metadata, commits only `Cargo.lock`, records the exact resulting source/lock digests, and runs the locked workspace check, Nextest, and MSRV check in that job. The generated dependency diff remains in the draft PR for human review. It is not a general mechanism for silently updating dependency locks in other branches.

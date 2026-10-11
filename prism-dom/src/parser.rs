@@ -7,7 +7,7 @@
 //! Uses `RefCell` for interior mutability since `TreeSink` methods take `&self`.
 
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 
 use html5ever::tendril::*;
@@ -44,7 +44,7 @@ struct PrismSink {
 impl TreeSink for PrismSink {
     type Handle = NodeId;
     type Output = Self;
-    type ElemName<'a> = QualName;
+    type ElemName<'a> = Ref<'a, QualName>;
 
     fn finish(self) -> Self::Output {
         self
@@ -58,18 +58,17 @@ impl TreeSink for PrismSink {
         self.doc
     }
 
-    fn elem_name<'a>(&'a self, target: &'a NodeId) -> QualName {
-        // Return an owned name. The sink stores nodes in a Vec behind RefCell,
-        // so returning a borrow into a node would outlive the dynamic borrow
-        // guard and could become dangling when the arena reallocates. QualName
-        // implements html5ever's ElemName trait, so cloning avoids raw pointers
-        // and does not depend on html5ever's call ordering.
-        let tree = self.tree.borrow();
-        let node = tree.get(*target).expect("valid node");
-        match &node.data {
-            NodeData::Element(el) => el.qual_name.clone(),
-            _ => panic!("elem_name called on non-element"),
-        }
+    fn elem_name<'a>(&'a self, target: &'a NodeId) -> Ref<'a, QualName> {
+        // Keep the RefCell borrow guard alive for as long as html5ever uses the
+        // element name. This prevents mutable access (including Vec growth)
+        // while the returned name is borrowed, without raw pointers or leaks.
+        Ref::map(self.tree.borrow(), |tree| {
+            let node = tree.get(*target).expect("valid node");
+            match &node.data {
+                NodeData::Element(el) => &el.qual_name,
+                _ => panic!("elem_name called on non-element"),
+            }
+        })
     }
 
     fn create_element(

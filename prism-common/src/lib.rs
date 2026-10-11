@@ -8,6 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod proxy_limits;
 pub mod ssrf;
 
 /// Privacy zone classification for web content.

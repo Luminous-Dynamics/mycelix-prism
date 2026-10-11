@@ -154,6 +154,25 @@ jobs:
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(any("top-level permissions" in error for error in errors))
 
+    def test_accepts_explicit_read_only_job_permissions(self) -> None:
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  policy:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+"""
+        self.assertEqual(validate_workflow_text("ci.yml", content), [])
+
     def test_rejects_unapproved_job_write_permissions(self) -> None:
         content = f"""name: test
 

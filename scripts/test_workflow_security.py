@@ -79,6 +79,26 @@ jobs:
 """
         self.assertEqual(validate_workflow_text("ci.yml", content), [])
 
+    def test_rejects_pull_request_target_trigger(self) -> None:
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request_target:
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+"""
+        errors = validate_workflow_text("ci.yml", content)
+        self.assertTrue(
+            any("pull_request_target trigger is forbidden" in error for error in errors)
+        )
+
     def test_rejects_missing_permissions_baseline(self) -> None:
         content = f"""name: test
 on:

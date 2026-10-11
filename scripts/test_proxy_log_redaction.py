@@ -60,6 +60,15 @@ class SensitiveLogPatternTests(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertIn("upstream error detail", findings[0])
 
+    def test_rejects_multiline_upstream_error_echo(self) -> None:
+        source = """Err(error) => format!(
+            "upstream request failed: {}",
+            error
+        ),"""
+        findings = find_sensitive_logging("proxy.rs", source)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("upstream error detail", findings[0])
+
     def test_accepts_redacted_operational_events(self) -> None:
         source = '\n'.join((
             'log::info!("DuckDuckGo proxy request");',

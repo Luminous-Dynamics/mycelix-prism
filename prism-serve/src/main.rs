@@ -142,7 +142,7 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
                 }
             }
         }
-        Err(e) => (StatusCode::BAD_GATEWAY, format!("DDG fetch failed: {}", e)).into_response(),
+        Err(_) => (StatusCode::BAD_GATEWAY, "DuckDuckGo request failed").into_response(),
     }
 }
 
@@ -197,11 +197,7 @@ async fn brave_handler(
                 }
             }
         }
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            format!("Brave fetch failed: {}", e),
-        )
-            .into_response(),
+        Err(_) => (StatusCode::BAD_GATEWAY, "Brave request failed").into_response(),
     }
 }
 
@@ -249,11 +245,7 @@ async fn perplexity_handler(
                 }
             }
         }
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            format!("Perplexity fetch failed: {}", e),
-        )
-            .into_response(),
+        Err(_) => (StatusCode::BAD_GATEWAY, "Perplexity request failed").into_response(),
     }
 }
 
@@ -391,7 +383,7 @@ async fn symthaea_query_handler(
     let response_line = match result {
         Ok(line) => line,
         Err(e) => {
-            log::warn!("Symthaea bridge error: {}", e);
+            log::warn!("Symthaea bridge request failed");
             return (StatusCode::BAD_GATEWAY, "Symthaea unavailable").into_response();
         }
     };
@@ -406,7 +398,7 @@ async fn symthaea_query_handler(
             .get("message")
             .and_then(|m| m.as_str())
             .unwrap_or("Symthaea error");
-        log::warn!("Symthaea returned an error response: {}", msg);
+        log::warn!("Symthaea returned an error response");
         return (StatusCode::BAD_GATEWAY, "Symthaea error").into_response();
     }
 

@@ -1,7 +1,6 @@
 name: CI
 
-# Multiple documentation/code commits can otherwise leave stale expensive Nix
-# builds queued for the same branch. Keep only the newest validation per PR/ref.
+# Cancel superseded work for the same PR/ref; keep lock resolution tied to one source head.
 concurrency:
   group: prism-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -13,11 +12,11 @@ on:
     branches: [main]
 
 jobs:
-  # Temporary, narrowly scoped recovery path for the known lockfile blocker.
-  # It only writes Cargo.lock on this same-repository PR branch; the resulting
-  # lock stays in the draft PR for dependency review before merge.
+  # Narrow recovery/validation lane for PR #11. It resolves the lock from the
+  # branch's current manifests, commits only Cargo.lock, then checks that same
+  # working tree. The lock remains in a draft PR for human dependency review.
   generate_lockfile:
-    name: Generate reviewed workspace lockfile
+    name: Lockfile resolution and validation
     if: ${{ github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     permissions:
@@ -38,7 +37,6 @@ jobs:
           fi
 
       - name: Install Nix
-        if: steps.lockfile.outputs.missing == 'true'
         uses: cachix/install-nix-action@v27
         with:
           nix_path: nixpkgs=channel:nixos-unstable
@@ -46,43 +44,42 @@ jobs:
             experimental-features = nix-command flakes
 
       - name: Cache Nix store
-        if: steps.lockfile.outputs.missing == 'true'
         uses: actions/cache@v4
         with:
           path: /nix
           key: nix-lockfile-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-keys: nix-lockfile-${{ runner.os }}-
 
-      - name: Generate Cargo.lock from the frozen branch manifests
+      - name: Generate lockfile from current workspace manifests
         if: steps.lockfile.outputs.missing == 'true'
         run: nix develop --command cargo generate-lockfile
 
-      - name: Verify and summarize resolved workspace graph
-        if: steps.lockfile.outputs.missing == 'true'
+      - name: Verify metadata and summarize dependencies
         run: |
           set -euo pipefail
           nix develop --command cargo metadata --locked --format-version 1 > /tmp/prism-cargo-metadata.json
           python3 - <<'PY'
           import json, os
-          data = json.load(open('/tmp/prism-cargo-metadata.json', encoding='utf-8'))
+          with open('/tmp/prism-cargo-metadata.json', encoding='utf-8') as stream:
+              data = json.load(stream)
           packages = data['packages']
           workspace = set(data['workspace_members'])
-          git_sources = sorted({p['source'] for p in packages if p.get('source', '').startswith('git+')})
-          registry_packages = [p for p in packages if (p.get('source') or '').startswith('registry+') or (p.get('source') or '').startswith('sparse+') ]
+          git_sources = sorted({p['source'] for p in packages if (p.get('source') or '').startswith('git+')})
+          registry_packages = [p for p in packages if (p.get('source') or '').startswith(('registry+', 'sparse+'))]
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as out:
-              out.write('## Generated Cargo.lock review summary\n\n')
+              out.write('## Cargo dependency graph summary\n\n')
               out.write(f'- Workspace members: {len(workspace)}\n')
-              out.write(f'- Total resolved packages: {len(packages)}\n')
+              out.write(f'- Resolved packages including workspace members: {len(packages)}\n')
               out.write(f'- Registry packages: {len(registry_packages)}\n')
-              out.write(f'- Git source identities: {len(git_sources)}\n')
+              out.write(f'- Unique Git sources: {len(git_sources)}\n')
               for source in git_sources:
                   out.write(f'  - `{source}`\n')
-              out.write('\nThe generated lockfile is committed to the draft PR for dependency-by-dependency review; metadata resolution is not a compile/test result.\n')
-          print(f"resolved_packages={len(packages)} workspace_members={len(workspace)} git_sources={len(git_sources)}")
+              out.write('\nMetadata resolution is not a build or test result; inspect the lockfile diff before merge.\n')
+          print(f"workspace_members={len(workspace)} resolved_packages={len(packages)} registry_packages={len(registry_packages)} git_sources={len(git_sources)}")
           PY
           git diff --check -- Cargo.lock
 
-      - name: Commit generated lockfile to draft PR branch
+      - name: Commit generated lockfile to PR branch
         if: steps.lockfile.outputs.missing == 'true'
         env:
           BRANCH: ${{ github.head_ref }}
@@ -93,12 +90,46 @@ jobs:
           git add Cargo.lock
           git diff --cached --check
           git commit -m "build: lock standalone workspace dependencies"
-          echo "Generated lock commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
           git push origin "HEAD:${BRANCH}"
-  # Formatting has no Cargo.lock prerequisite, so it remains useful while the
-  # locked dependency/build gates are explicitly blocked pending issue #3.
+
+      - name: Record exact tested revision
+        run: |
+          echo "Validation source SHA: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Cargo.lock SHA-256: $(sha256sum Cargo.lock | cut -d ' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: cargo check --workspace --locked
+        id: workspace_check
+        continue-on-error: true
+        run: nix develop --command cargo check --workspace --locked
+
+      - name: cargo nextest run --workspace --locked
+        id: nextest
+        continue-on-error: true
+        run: nix develop --command cargo nextest run --workspace --locked
+
+      - name: MSRV cargo check --workspace --locked
+        id: msrv_check
+        continue-on-error: true
+        run: nix develop .#msrv --command cargo check --workspace --locked
+
+      - name: Report validation outcomes
+        if: ${{ always() }}
+        env:
+          CHECK_OUTCOME: ${{ steps.workspace_check.outcome }}
+          NEXTEST_OUTCOME: ${{ steps.nextest.outcome }}
+          MSRV_OUTCOME: ${{ steps.msrv_check.outcome }}
+        run: |
+          {
+            echo '## Locked validation outcomes'
+            echo "- cargo check: ${CHECK_OUTCOME}"
+            echo "- nextest: ${NEXTEST_OUTCOME}"
+            echo "- MSRV check: ${MSRV_OUTCOME}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          test "$CHECK_OUTCOME" = success && test "$NEXTEST_OUTCOME" = success && test "$MSRV_OUTCOME" = success
+
+  # rustfmt uses the light shell and does not require Cargo.lock.
   format:
-    name: cargo fmt (Rust 1.99.0 · nix develop)
+    name: cargo fmt (Rust 1.99.0 · nix develop .#fmt)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,42 +145,32 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /nix
-          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-          restore-keys: nix-${{ runner.os }}-
+          key: nix-fmt-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-keys: nix-fmt-${{ runner.os }}-
 
       - name: Check Rust formatting
         run: nix develop .#fmt --command cargo fmt --all -- --check
 
   check:
     name: cargo check (Rust 1.99.0 · nix develop)
-    needs: generate_lockfile
-    if: ${{ always() && (needs.generate_lockfile.result == 'success' || needs.generate_lockfile.result == 'skipped') }}
+    if: github.event.pull_request.head.ref != 'fix/proxy-dns-pinning-redirects-20261010'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.head_ref || github.sha }}
-
-      - name: Record tested source SHA
-        run: echo "Checked out source SHA: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
-
       - name: Verify committed Cargo lockfile
-        run: test -f Cargo.lock
-
+        run: test -s Cargo.lock
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
           nix_path: nixpkgs=channel:nixos-unstable
           extra_nix_config: |
             experimental-features = nix-command flakes
-
       - name: Cache Nix store
         uses: actions/cache@v4
         with:
           path: /nix
           key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-keys: nix-${{ runner.os }}-
-
       - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
@@ -158,40 +179,29 @@ jobs:
             ~/.cargo/git
           key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
-
-      - name: cargo check --workspace
+      - name: cargo check --workspace --locked
         run: nix develop --command cargo check --workspace --locked
 
   test:
     name: cargo nextest (Rust 1.99.0 · nix develop)
-    needs: generate_lockfile
-    if: ${{ always() && (needs.generate_lockfile.result == 'success' || needs.generate_lockfile.result == 'skipped') }}
+    if: github.event.pull_request.head.ref != 'fix/proxy-dns-pinning-redirects-20261010'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.head_ref || github.sha }}
-
-      - name: Record tested source SHA
-        run: echo "Checked out source SHA: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
-
       - name: Verify committed Cargo lockfile
-        run: test -f Cargo.lock
-
+        run: test -s Cargo.lock
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
           nix_path: nixpkgs=channel:nixos-unstable
           extra_nix_config: |
             experimental-features = nix-command flakes
-
       - name: Cache Nix store
         uses: actions/cache@v4
         with:
           path: /nix
           key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-keys: nix-${{ runner.os }}-
-
       - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
@@ -200,39 +210,28 @@ jobs:
             ~/.cargo/git
           key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
-
-      - name: cargo nextest run --workspace
+      - name: cargo nextest run --workspace --locked
         run: nix develop --command cargo nextest run --workspace --locked
 
   msrv:
     name: MSRV check (Rust 1.96.1 · nix develop .#msrv)
-    needs: generate_lockfile
-    if: ${{ always() && (needs.generate_lockfile.result == 'success' || needs.generate_lockfile.result == 'skipped') }}
+    if: github.event.pull_request.head.ref != 'fix/proxy-dns-pinning-redirects-20261010'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.head_ref || github.sha }}
-
-      - name: Record tested source SHA
-        run: echo "Checked out source SHA: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
-
       - name: Verify committed Cargo lockfile
-        run: test -f Cargo.lock
-
+        run: test -s Cargo.lock
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
           nix_path: nixpkgs=channel:nixos-unstable
           extra_nix_config: |
             experimental-features = nix-command flakes
-
       - name: Cache Nix store
         uses: actions/cache@v4
         with:
           path: /nix
           key: nix-msrv-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-keys: nix-msrv-${{ runner.os }}-
-
-      - name: cargo check --workspace (MSRV shell)
+      - name: cargo check --workspace --locked (MSRV)
         run: nix develop .#msrv --command cargo check --workspace --locked

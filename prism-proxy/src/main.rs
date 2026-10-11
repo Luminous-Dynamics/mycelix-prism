@@ -107,7 +107,7 @@ struct DdgParams {
 async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
     // Let Reqwest percent-encode query data; never splice user input into URL syntax.
     let url = "https://api.duckduckgo.com/";
-    log::info!("DDG proxy: {}", params.q);
+    log::info!("DuckDuckGo proxy request");
 
     let client = build_client("Prism/0.2 (ddg-proxy)", 10);
 
@@ -140,7 +140,7 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
                 }
             }
         }
-        Err(e) => (StatusCode::BAD_GATEWAY, format!("DDG fetch failed: {}", e)).into_response(),
+        Err(_) => (StatusCode::BAD_GATEWAY, "DuckDuckGo request failed").into_response(),
     }
 }
 
@@ -165,7 +165,7 @@ async fn brave_handler(
 
     // Query serialization prevents '&' or '#' in user input from changing URL structure.
     let url = "https://api.search.brave.com/res/v1/web/search";
-    log::info!("Brave proxy: {}", params.q);
+    log::info!("Brave proxy request");
 
     let client = build_client("Prism/0.2 (brave-proxy)", 15);
 
@@ -196,11 +196,7 @@ async fn brave_handler(
                 }
             }
         }
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            format!("Brave fetch failed: {}", e),
-        )
-            .into_response(),
+        Err(_) => (StatusCode::BAD_GATEWAY, "Brave request failed").into_response(),
     }
 }
 
@@ -249,11 +245,7 @@ async fn perplexity_handler(
                 }
             }
         }
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            format!("Perplexity fetch failed: {}", e),
-        )
-            .into_response(),
+        Err(_) => (StatusCode::BAD_GATEWAY, "Perplexity request failed").into_response(),
     }
 }
 

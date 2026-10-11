@@ -61,7 +61,7 @@ class SensitiveLogPatternTests(unittest.TestCase):
         self.assertIn("upstream error detail", findings[0])
 
     def test_accepts_redacted_operational_events(self) -> None:
-        source = '\\n'.join((
+        source = '\n'.join((
             'log::info!("DuckDuckGo proxy request");',
             'log::info!("Proxy request for host {}", host);',
             'log::warn!("Blocked proxy destination: {}", reason);',

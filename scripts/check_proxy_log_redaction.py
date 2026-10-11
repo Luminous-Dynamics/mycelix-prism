@@ -12,7 +12,7 @@ import re
 import sys
 from pathlib import Path
 
-LOG_MACRO_RE = re.compile(r"\blog::(?:trace|debug|info|warn|error)!\s*\(")
+LOG_MACRO_RE = re.compile(r"\b(?:log|tracing)::(?:trace|debug|info|warn|error|log|event)!\s*\(")
 FORMAT_MACRO_RE = re.compile(r"\bformat!\s*\(")
 SENSITIVE_LOG_VALUE_RE = re.compile(
     r"\bparams\s*\.\s*(?:q|url)\b|\bvalidated\b|\bapi_key\b|"

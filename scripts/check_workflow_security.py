@@ -14,6 +14,19 @@ USES_RE = re.compile(r"^\s*(?:-\s*)?uses\s*:\s*([^\s#]+)")
 SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DOCKER_DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-fA-F]{64}$")
 VERSION_COMMENT_RE = re.compile(r"#\s*v\d[^\s]*\s*$")
+JOB_RE = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
+KEY_VALUE_RE = re.compile(r"^\s*([a-z][a-z0-9_-]*):\s*([a-z]+)\s*(?:#.*)?$")
+
+# The one temporary writer lane is intentionally exceptional and tightly gated.
+LOCK_RECOVERY_JOB = "generate_lockfile"
+LOCK_RECOVERY_PERMISSIONS = {"contents": "write", "statuses": "write"}
+LOCK_RECOVERY_GATES = (
+    "github.event_name == 'pull_request'",
+    "github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010'",
+    "github.event.pull_request.head.repo.full_name == github.repository",
+    "github.event_name == 'push'",
+    "github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010'",
+)
 
 
 def validate_action_reference(reference: str, source_line: str) -> list[str]:
@@ -41,28 +54,108 @@ def validate_action_reference(reference: str, source_line: str) -> list[str]:
     return []
 
 
+def parse_permissions_mapping(lines: list[str], index: int, indent: int) -> dict[str, str] | None:
+    """Parse a simple permissions mapping at an exact YAML indentation."""
+    permissions: dict[str, str] = {}
+    child_indent = indent + 2
+
+    for child in lines[index + 1 :]:
+        if not child.strip():
+            continue
+        current_indent = len(child) - len(child.lstrip(" "))
+        if current_indent <= indent:
+            break
+        if current_indent != child_indent:
+            return None
+        match = KEY_VALUE_RE.fullmatch(child)
+        if not match:
+            return None
+        key, value = match.groups()
+        if key in permissions:
+            return None
+        permissions[key] = value
+
+    return permissions
+
+
 def parse_top_level_permissions(content: str) -> dict[str, str] | None:
-    """Read a simple top-level YAML permissions mapping without third-party deps."""
     lines = content.splitlines()
     for index, line in enumerate(lines):
-        if line != "permissions:":
+        if line == "permissions:":
+            return parse_permissions_mapping(lines, index, indent=0)
+    return None
+
+
+def iter_job_blocks(lines: list[str]) -> list[tuple[str, list[str]]]:
+    """Return simple top-level job blocks without needing a third-party YAML parser."""
+    jobs_index = next((i for i, line in enumerate(lines) if line == "jobs:"), None)
+    if jobs_index is None:
+        return []
+
+    blocks: list[tuple[str, list[str]]] = []
+    active_name: str | None = None
+    active_lines: list[str] = []
+
+    for line in lines[jobs_index + 1 :]:
+        if line.strip() and not line.startswith(" "):
+            break
+        match = JOB_RE.fullmatch(line)
+        if match:
+            if active_name is not None:
+                blocks.append((active_name, active_lines))
+            active_name = match.group(1)
+            active_lines = [line]
+        elif active_name is not None:
+            active_lines.append(line)
+
+    if active_name is not None:
+        blocks.append((active_name, active_lines))
+    return blocks
+
+
+def validate_job_permissions(path_label: str, content: str) -> list[str]:
+    lines = content.splitlines()
+    errors: list[str] = []
+
+    for job_name, block in iter_job_blocks(lines):
+        permission_indices = [
+            i for i, line in enumerate(block)
+            if re.match(r"^ {4}permissions\s*:", line)
+        ]
+        if not permission_indices:
+            continue
+        if len(permission_indices) > 1:
+            errors.append(f"{path_label}: job {job_name!r} declares permissions more than once")
             continue
 
-        permissions: dict[str, str] = {}
-        for child in lines[index + 1 :]:
-            if not child.strip():
-                continue
-            if not child.startswith(" "):
-                break
-            match = re.fullmatch(r"  ([a-z][a-z0-9_-]*):\s*([a-z]+)\s*(?:#.*)?", child)
-            if not match:
-                return None
-            key, value = match.groups()
-            if key in permissions:
-                return None
-            permissions[key] = value
-        return permissions
-    return None
+        index = permission_indices[0]
+        if block[index] != "    permissions:":
+            errors.append(f"{path_label}: inline/malformed job permissions are forbidden in {job_name!r}")
+            continue
+
+        permission_map = parse_permissions_mapping(block, index, indent=4)
+        if job_name != LOCK_RECOVERY_JOB:
+            errors.append(
+                f"{path_label}: job-level permissions are forbidden for {job_name!r}; "
+                f"only the exact lock-recovery job may request scoped write permissions"
+            )
+            continue
+
+        if permission_map != LOCK_RECOVERY_PERMISSIONS:
+            errors.append(
+                f"{path_label}: {LOCK_RECOVERY_JOB!r} permissions must be exactly "
+                f"{LOCK_RECOVERY_PERMISSIONS!r}; found {permission_map!r}"
+            )
+
+        joined_block = "\n".join(block)
+        missing_gates = [gate for gate in LOCK_RECOVERY_GATES if gate not in joined_block]
+        if missing_gates:
+            errors.append(
+                f"{path_label}: {LOCK_RECOVERY_JOB!r} lacks required same-repository/event/ref gates: "
+                + "; ".join(missing_gates)
+            )
+
+    return errors
 
 
 def validate_workflow_text(path_label: str, content: str) -> list[str]:
@@ -87,6 +180,7 @@ def validate_workflow_text(path_label: str, content: str) -> list[str]:
             f"'contents: read'; found {permissions!r}"
         )
 
+    errors.extend(validate_job_permissions(path_label, content))
     return errors
 
 
@@ -126,7 +220,7 @@ def main() -> int:
         print(f"Workflow policy failed with {len(errors)} finding(s).", file=sys.stderr)
         return 1
 
-    print("Workflow policy passed: all action references are immutable and permissions are least-privilege.")
+    print("Workflow policy passed: action refs are immutable and token permissions are constrained.")
     return 0
 
 

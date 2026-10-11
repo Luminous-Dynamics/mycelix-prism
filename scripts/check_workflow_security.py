@@ -15,7 +15,7 @@ SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DOCKER_DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-fA-F]{64}$")
 VERSION_COMMENT_RE = re.compile(r"#\s*v\d[^\s]*\s*$")
 JOB_RE = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
-UNSAFE_TRIGGER_RE = re.compile(r"^\\s*pull_request_target\\s*:")
+UNSAFE_TRIGGER_RE = re.compile(r"^\s*pull_request_target\s*:")
 KEY_VALUE_RE = re.compile(r"^\s*([a-z][a-z0-9_-]*):\s*([a-z]+)\s*(?:#.*)?$")
 
 # The one temporary writer lane is intentionally exceptional and tightly gated.

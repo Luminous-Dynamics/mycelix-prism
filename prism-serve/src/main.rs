@@ -13,7 +13,7 @@ use axum::http::header::HeaderValue;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use prism_common::ssrf::validate_proxy_url;
-use prism_safe_fetch::{fetch_public_get, read_limited_body, SafeFetchError};
+use prism_safe_fetch::{SafeFetchError, fetch_public_get, read_limited_body};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -95,9 +95,7 @@ async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
             log::warn!("Blocked proxy destination or redirect: {}", reason);
             (StatusCode::FORBIDDEN, reason).into_response()
         }
-        Err(SafeFetchError::Request(reason)) => {
-            (StatusCode::BAD_GATEWAY, reason).into_response()
-        }
+        Err(SafeFetchError::Request(reason)) => (StatusCode::BAD_GATEWAY, reason).into_response(),
     }
 }
 
@@ -123,7 +121,11 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
     {
         Ok(resp) => {
             if resp.status().is_redirection() {
-                return (StatusCode::BAD_GATEWAY, "Unexpected provider redirect blocked").into_response();
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    "Unexpected provider redirect blocked",
+                )
+                    .into_response();
             }
             match read_limited_body(resp, MAX_RESPONSE_SIZE).await {
                 Ok(body) => axum::response::Response::builder()
@@ -135,7 +137,9 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
                 Err(SafeFetchError::TooLarge) => {
                     (StatusCode::PAYLOAD_TOO_LARGE, "Provider response too large").into_response()
                 }
-                Err(_) => (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response(),
+                Err(_) => {
+                    (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response()
+                }
             }
         }
         Err(e) => (StatusCode::BAD_GATEWAY, format!("DDG fetch failed: {}", e)).into_response(),
@@ -171,7 +175,11 @@ async fn brave_handler(
     {
         Ok(resp) => {
             if resp.status().is_redirection() {
-                return (StatusCode::BAD_GATEWAY, "Unexpected provider redirect blocked").into_response();
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    "Unexpected provider redirect blocked",
+                )
+                    .into_response();
             }
             let status = resp.status().as_u16();
             match read_limited_body(resp, MAX_RESPONSE_SIZE).await {
@@ -184,7 +192,9 @@ async fn brave_handler(
                 Err(SafeFetchError::TooLarge) => {
                     (StatusCode::PAYLOAD_TOO_LARGE, "Provider response too large").into_response()
                 }
-                Err(_) => (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response(),
+                Err(_) => {
+                    (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response()
+                }
             }
         }
         Err(e) => (
@@ -217,7 +227,11 @@ async fn perplexity_handler(
     {
         Ok(resp) => {
             if resp.status().is_redirection() {
-                return (StatusCode::BAD_GATEWAY, "Unexpected provider redirect blocked").into_response();
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    "Unexpected provider redirect blocked",
+                )
+                    .into_response();
             }
             let status = resp.status().as_u16();
             match read_limited_body(resp, MAX_RESPONSE_SIZE).await {
@@ -230,7 +244,9 @@ async fn perplexity_handler(
                 Err(SafeFetchError::TooLarge) => {
                     (StatusCode::PAYLOAD_TOO_LARGE, "Provider response too large").into_response()
                 }
-                Err(_) => (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response(),
+                Err(_) => {
+                    (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response()
+                }
             }
         }
         Err(e) => (

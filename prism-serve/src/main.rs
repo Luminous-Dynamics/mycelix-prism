@@ -848,6 +848,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn accepts_request_target_at_limit() {
+        let dir = test_dist_dir();
+        let app = build_app(dir.path().to_str().unwrap(), None);
+        let prefix = "/health?q=";
+        let uri = format!(
+            "{}{}",
+            prefix,
+            "x".repeat(MAX_REQUEST_TARGET_BYTES - prefix.len())
+        );
+        assert_eq!(uri.len(), MAX_REQUEST_TARGET_BYTES);
+        let response = app
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn rejects_oversized_request_target_before_route_handling() {
         let dir = test_dist_dir();
         let app = build_app(dir.path().to_str().unwrap(), None);

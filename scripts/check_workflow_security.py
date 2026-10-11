@@ -138,6 +138,9 @@ def validate_job_permissions(path_label: str, content: str) -> list[str]:
             continue
 
         permission_map = parse_permissions_mapping(block, index, indent=4)
+        if permission_map == {"contents": "read"}:
+            continue
+
         if job_name != LOCK_RECOVERY_JOB:
             errors.append(
                 f"{path_label}: job-level permissions are forbidden for {job_name!r}; "

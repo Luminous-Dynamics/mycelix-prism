@@ -102,10 +102,7 @@ pub fn validate_proxy_url(raw: &str) -> Result<url::Url, &'static str> {
         .unwrap_or(authority_remainder.len());
     let has_userinfo_delimiter = authority_remainder[..authority_end].contains('@');
 
-    if !parsed.username().is_empty()
-        || parsed.password().is_some()
-        || has_userinfo_delimiter
-    {
+    if !parsed.username().is_empty() || parsed.password().is_some() || has_userinfo_delimiter {
         return Err("URLs containing user credentials are forbidden");
     }
 
@@ -253,7 +250,10 @@ mod tests {
             "240.0.0.1",
         ] {
             let parsed = ip.parse().unwrap();
-            assert!(is_non_public_ip(std::net::IpAddr::V4(parsed)), "must reject {ip}");
+            assert!(
+                is_non_public_ip(std::net::IpAddr::V4(parsed)),
+                "must reject {ip}"
+            );
             assert!(validate_proxy_url(&format!("http://{ip}/")).is_err());
         }
     }
@@ -261,15 +261,18 @@ mod tests {
     #[test]
     fn rejects_non_global_ipv6_special_ranges() {
         for ip in [
-            "2001:db8::1",   // documentation
-            "2001::1",       // IETF protocol assignments
-            "2002:7f00:1::", // 6to4 can encode loopback IPv4
-            "3fff::1",       // documentation
-            "ff02::1",       // multicast
+            "2001:db8::1",     // documentation
+            "2001::1",         // IETF protocol assignments
+            "2002:7f00:1::",   // 6to4 can encode loopback IPv4
+            "3fff::1",         // documentation
+            "ff02::1",         // multicast
             "64:ff9b::7f00:1", // NAT64 translated special destination
         ] {
             let parsed = ip.parse().unwrap();
-            assert!(is_non_public_ip(std::net::IpAddr::V6(parsed)), "must reject {ip}");
+            assert!(
+                is_non_public_ip(std::net::IpAddr::V6(parsed)),
+                "must reject {ip}"
+            );
             assert!(validate_proxy_url(&format!("http://[{ip}]/")).is_err());
         }
     }

@@ -12,15 +12,15 @@ import re
 import sys
 from pathlib import Path
 
-LOG_MACRO_RE = re.compile(r"\\blog::(?:trace|debug|info|warn|error)!\\s*\\(")
+LOG_MACRO_RE = re.compile(r"\blog::(?:trace|debug|info|warn|error)!\s*\(")
 SENSITIVE_LOG_VALUE_RE = re.compile(
-    r"\\bparams\\s*\\.\\s*(?:q|url)\\b|\\bvalidated\\b|\\bapi_key\\b|"
-    r"\\bbearer_token\\b|\\b(?:request_)?body\\b|\\bmsg\\b",
+    r"\bparams\s*\.\s*(?:q|url)\b|\bvalidated\b|\bapi_key\b|"
+    r"\bbearer_token\b|\b(?:request_)?body\b|\bmsg\b",
     re.IGNORECASE,
 )
 UPSTREAM_ERROR_ECHO_RE = re.compile(
-    r'format!\\s*\\([^\\n]*(?:fetch failed|upstream request failed)[^\\n]*'
-    r'(?:\\{\\}|\\{(?:e|err|error)\\})',
+    r'format!\s*\([^\n]*(?:fetch failed|upstream request failed)[^\n]*'
+    r'(?:\{\}|\{(?:e|err|error)\})',
     re.IGNORECASE,
 )
 
@@ -52,7 +52,7 @@ def iter_log_macro_invocations(source: str):
             following = source[index + 1] if index + 1 < len(source) else ""
 
             if line_comment:
-                if char == "\\n":
+                if char == "\n":
                     line_comment = False
                 index += 1
                 continue
@@ -66,7 +66,7 @@ def iter_log_macro_invocations(source: str):
             if in_string:
                 if escaped:
                     escaped = False
-                elif char == "\\\\":
+                elif char == "\\":
                     escaped = True
                 elif char == '"':
                     in_string = False
@@ -97,7 +97,7 @@ def find_sensitive_logging(path: str, source: str) -> list[str]:
     findings: list[str] = []
     for offset, invocation in iter_log_macro_invocations(source):
         if SENSITIVE_LOG_VALUE_RE.search(invocation):
-            line_number = source.count("\\n", 0, offset) + 1
+            line_number = source.count("\n", 0, offset) + 1
             findings.append(
                 f"{path}:{line_number}: log macro interpolates a sensitive request/value field"
             )

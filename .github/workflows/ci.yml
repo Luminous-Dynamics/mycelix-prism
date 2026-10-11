@@ -7,6 +7,19 @@ on:
     branches: [main]
 
 jobs:
+  security-regressions:
+    name: Proxy log-redaction regression guard (Python stdlib)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test positive and negative redaction fixtures
+        run: python3 scripts/test_proxy_log_redaction.py
+      - name: Scan proxy and bridge log call sites
+        run: python3 scripts/check_proxy_log_redaction.py
+
   check:
     name: cargo check (Rust 1.99.0 · nix develop)
     runs-on: ubuntu-latest

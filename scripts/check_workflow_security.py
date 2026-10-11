@@ -10,7 +10,7 @@ import re
 import sys
 from pathlib import Path
 
-USES_RE = re.compile(r"^\s*uses\s*:\s*([^\s#]+)")
+USES_RE = re.compile(r"^\s*(?:-\s*)?uses\s*:\s*([^\s#]+)")
 SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DOCKER_DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-fA-F]{64}$")
 VERSION_COMMENT_RE = re.compile(r"#\s*v\d[^\s]*\s*$")

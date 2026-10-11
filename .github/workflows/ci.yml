@@ -12,6 +12,21 @@ on:
     branches: [main]
 
 jobs:
+  security-regressions:
+    name: Proxy log-redaction regression guard (Python stdlib)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test redaction positive and negative fixtures
+        run: python3 scripts/test_proxy_log_redaction.py
+      - name: Scan proxy and bridge log call sites
+        run: python3 scripts/check_proxy_log_redaction.py
+
   # Narrow recovery/validation lane for PR #11. It resolves the lock from the
   # branch's current manifests, commits only Cargo.lock, then checks that same
   # working tree. The lock remains in a draft PR for human dependency review.

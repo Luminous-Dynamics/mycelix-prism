@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Static regression guard for sensitive data in Prism proxy/bridge logs.
 
-This is deliberately stdlib-only and conservative; it is not a Rust parser or
-proof that every possible logging path is safe.
+This is deliberately stdlib-only and conservative. It recognizes balanced log
+macro invocations across lines, but it is not a Rust parser or proof that every
+possible logging path is safe.
 """
 from __future__ import annotations
 
@@ -11,15 +12,15 @@ import re
 import sys
 from pathlib import Path
 
-LOG_MACRO_RE = re.compile(r"\blog::(?:trace|debug|info|warn|error)!\s*\(")
+LOG_MACRO_RE = re.compile(r"\\blog::(?:trace|debug|info|warn|error)!\\s*\\(")
 SENSITIVE_LOG_VALUE_RE = re.compile(
-    r"\bparams\s*\.\s*(?:q|url)\b|\bvalidated\b|\bapi_key\b|"
-    r"\bbearer_token\b|\b(?:request_)?body\b|\bmsg\b",
+    r"\\bparams\\s*\\.\\s*(?:q|url)\\b|\\bvalidated\\b|\\bapi_key\\b|"
+    r"\\bbearer_token\\b|\\b(?:request_)?body\\b|\\bmsg\\b",
     re.IGNORECASE,
 )
 UPSTREAM_ERROR_ECHO_RE = re.compile(
-    r'format!\s*\([^\n]*(?:fetch failed|upstream request failed)[^\n]*'
-    r'(?:\{\}|\{(?:e|err|error)\})',
+    r'format!\\s*\\([^\\n]*(?:fetch failed|upstream request failed)[^\\n]*'
+    r'(?:\\{\\}|\\{(?:e|err|error)\\})',
     re.IGNORECASE,
 )
 
@@ -29,10 +30,74 @@ DEFAULT_FILES = (
 )
 
 
+def iter_log_macro_invocations(source: str):
+    """Yield (offset, source) for balanced log! invocations, including multiline ones.
+
+    The scanner accounts for nested parentheses, escaped quotes and comments,
+    which is enough for this narrow regression guard while intentionally not
+    pretending to implement the full Rust lexical grammar.
+    """
+    for match in LOG_MACRO_RE.finditer(source):
+        start = match.start()
+        # LOG_MACRO_RE consumes the opening parenthesis.
+        index = match.end()
+        depth = 1
+        in_string = False
+        escaped = False
+        line_comment = False
+        block_comment = False
+
+        while index < len(source):
+            char = source[index]
+            following = source[index + 1] if index + 1 < len(source) else ""
+
+            if line_comment:
+                if char == "\\n":
+                    line_comment = False
+                index += 1
+                continue
+            if block_comment:
+                if char == "*" and following == "/":
+                    block_comment = False
+                    index += 2
+                else:
+                    index += 1
+                continue
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                index += 1
+                continue
+
+            if char == "/" and following == "/":
+                line_comment = True
+                index += 2
+                continue
+            if char == "/" and following == "*":
+                block_comment = True
+                index += 2
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    yield start, source[start : index + 1]
+                    break
+            index += 1
+
+
 def find_sensitive_logging(path: str, source: str) -> list[str]:
     findings: list[str] = []
-    for line_number, line in enumerate(source.splitlines(), start=1):
-        if LOG_MACRO_RE.search(line) and SENSITIVE_LOG_VALUE_RE.search(line):
+    for offset, invocation in iter_log_macro_invocations(source):
+        if SENSITIVE_LOG_VALUE_RE.search(invocation):
+            line_number = source.count("\\n", 0, offset) + 1
             findings.append(
                 f"{path}:{line_number}: log macro interpolates a sensitive request/value field"
             )

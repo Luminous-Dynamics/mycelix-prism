@@ -425,10 +425,23 @@ mod tests {
         let app = build_app();
         let uri = format!("/health?q={}", "x".repeat(MAX_REQUEST_TARGET_BYTES));
         let response = app
-            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get(uri)
+                    .header("origin", "http://localhost:8130")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::URI_TOO_LONG);
+        assert_eq!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .and_then(|value| value.to_str().ok()),
+            Some("http://localhost:8130"),
+            "CORS headers should remain present on URI-too-long responses"
+        );
     }
 }

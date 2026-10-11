@@ -2,12 +2,12 @@ name: CI
 
 # Cancel superseded work for the same PR/ref; keep lock resolution tied to one source head.
 concurrency:
-  group: prism-ci-${{ github.event.pull_request.number || github.ref }}
+  group: prism-ci-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/proxy-dns-pinning-redirects-20261010]
   pull_request:
     branches: [main]
 
@@ -17,14 +17,15 @@ jobs:
   # working tree. The lock remains in a draft PR for human dependency review.
   generate_lockfile:
     name: Lockfile resolution and validation
-    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.repo.full_name == github.repository }}
+    if: ${{ (github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      statuses: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
           fetch-depth: 0
 
       - name: Check whether Cargo.lock is missing
@@ -83,7 +84,7 @@ jobs:
       - name: Commit generated lockfile to PR branch
         if: steps.lockfile.outputs.missing == 'true'
         env:
-          BRANCH: ${{ github.head_ref }}
+          BRANCH: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -112,6 +113,30 @@ jobs:
         id: msrv_check
         continue-on-error: true
         run: nix develop .#msrv --command cargo check --workspace --locked
+
+      - name: Publish result for the exact validated commit
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHECK_OUTCOME: ${{ steps.workspace_check.outcome }}
+          NEXTEST_OUTCOME: ${{ steps.nextest.outcome }}
+          MSRV_OUTCOME: ${{ steps.msrv_check.outcome }}
+        run: |
+          set -euo pipefail
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [[ "$CHECK_OUTCOME" == success && "$NEXTEST_OUTCOME" == success && "$MSRV_OUTCOME" == success ]]; then
+            STATE=success
+            DESCRIPTION="locked check, Nextest, and MSRV passed on generated-lock commit"
+          else
+            STATE=failure
+            DESCRIPTION="locked validation failed; inspect workflow summary"
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" \
+            -f state="$STATE" \
+            -f context="prism/locked-validation" \
+            -f description="$DESCRIPTION" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          echo "Published prism/locked-validation=$STATE for $HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report validation outcomes
         if: ${{ always() }}
@@ -154,7 +179,7 @@ jobs:
 
   check:
     name: cargo check (Rust 1.99.0 · nix develop)
-    if: github.event.pull_request.head.ref != 'fix/proxy-dns-pinning-redirects-20261010'
+    if: ${{ !((github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -185,7 +210,7 @@ jobs:
 
   test:
     name: cargo nextest (Rust 1.99.0 · nix develop)
-    if: github.event.pull_request.head.ref != 'fix/proxy-dns-pinning-redirects-20261010'
+    if: ${{ !((github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -216,7 +241,7 @@ jobs:
 
   msrv:
     name: MSRV check (Rust 1.96.1 · nix develop .#msrv)
-    if: github.event.pull_request.head.ref != 'fix/proxy-dns-pinning-redirects-20261010'
+    if: ${{ !((github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

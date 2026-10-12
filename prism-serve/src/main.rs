@@ -465,6 +465,25 @@ async fn health() -> &'static str {
 // SERVER SETUP
 // ═══════════════════════════════════════════════════════════════
 
+/// Bounded route stacks shed excess work instead of letting one expensive API
+/// queue behind the entire process.
+macro_rules! route_limit_layer {
+    ($capacity:expr, $timeout:expr) => {
+        tower::ServiceBuilder::new()
+            .layer(axum::error_handling::HandleErrorLayer::new(
+                |_: axum::BoxError| async {
+                    (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Route capacity reached; retry shortly",
+                    )
+                },
+            ))
+            .load_shed()
+            .concurrency_limit($capacity)
+            .timeout($timeout)
+    };
+}
+
 /// Build the unified Prism router: API proxy routes + static file serving.
 ///
 /// `symthaea_cfg` is `None` when the bridge isn't configured (tests, or a
@@ -497,12 +516,23 @@ fn build_app_with_quota(
         // actual response instead of failing to compile.
         .layer(symthaea_rate_limit_layer!(Duration::from_secs(240)));
 
-    Router::new()
-        // Proxy API routes (same-origin, no CORS issues)
+    let generic_proxy_route = Router::new()
         .route("/proxy", get(proxy_handler))
+        .layer(route_limit_layer!(12, Duration::from_secs(20)));
+
+    let search_routes = Router::new()
         .route("/api/ddg", get(ddg_handler))
         .route("/api/brave", get(brave_handler))
+        .layer(route_limit_layer!(12, Duration::from_secs(20)));
+
+    let provider_route = Router::new()
         .route("/api/perplexity", post(perplexity_handler))
+        .layer(route_limit_layer!(3, Duration::from_secs(35)));
+
+    Router::new()
+        .merge(generic_proxy_route)
+        .merge(search_routes)
+        .merge(provider_route)
         .route("/health", get(health))
         .merge(symthaea_route)
         // Static files with SPA fallback

@@ -10,11 +10,22 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use prism_common::client_quota::{
-    ClientQuotaState, QuotaClass, QuotaRejection, MAX_PROXY_REQUEST_BODY_BYTES,
-    MAX_PROXY_RESPONSE_BODY_BYTES,
+    ClientQuotaState, QuotaClass, QuotaRejection, QuotaTicket,
+    MAX_PROXY_REQUEST_BODY_BYTES, MAX_PROXY_RESPONSE_BODY_BYTES,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
+
+struct InFlightGuard {
+    state: ClientQuotaState,
+    ticket: QuotaTicket,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.state.release_request(self.ticket);
+    }
+}
 
 /// Enforce per-client rate, ingress-byte, and response-body quotas before delivery
 /// starts. This middleware reads bodies with an explicit byte cap and deadline,
@@ -53,6 +64,11 @@ pub async fn enforce_client_quota(
     let ticket = match state.admit_request(client, class, target_bytes) {
         Ok(ticket) => ticket,
         Err(reason) => return rejection_response(reason),
+    };
+    // Drop always releases the slot, including every early return and task cancellation.
+    let _in_flight = InFlightGuard {
+        state: state.clone(),
+        ticket,
     };
 
     let (parts, body) = request.into_parts();
@@ -146,6 +162,15 @@ fn rejection_response(reason: QuotaRejection) -> Response {
                 StatusCode::TOO_MANY_REQUESTS,
                 [(axum::http::header::RETRY_AFTER, "60")],
                 "Client response byte budget exceeded",
+            )
+                .into_response()
+        }
+        QuotaRejection::InFlight => {
+            log::warn!("Proxy client quota denied: in-flight request cap");
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, "1")],
+                "Client in-flight request cap reached",
             )
                 .into_response()
         }

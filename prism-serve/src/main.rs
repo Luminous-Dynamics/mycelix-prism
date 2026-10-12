@@ -191,14 +191,27 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
                     .unwrap_or_else(|_| internal_error_response())
                     .into_response(),
                 Err(SafeFetchError::TooLarge) => {
+                    log::warn!("Provider response failed: class=search reason=response_too_large");
                     (StatusCode::PAYLOAD_TOO_LARGE, "Provider response too large").into_response()
                 }
+                Err(SafeFetchError::Timeout) => {
+                    log::warn!("Provider response failed: class=search reason=timeout");
+                    (StatusCode::GATEWAY_TIMEOUT, "Provider response timed out").into_response()
+                }
                 Err(_) => {
+                    log::warn!("Provider response failed: class=search reason=read_failure");
                     (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response()
                 }
             }
         }
-        Err(_) => (StatusCode::BAD_GATEWAY, "DuckDuckGo request failed").into_response(),
+        Err(error) if error.is_timeout() => {
+            log::warn!("Provider request failed: class=search reason=timeout");
+            (StatusCode::GATEWAY_TIMEOUT, "Provider request timed out").into_response()
+        }
+        Err(_) => {
+            log::warn!("Provider request failed: class=search reason=transport");
+            (StatusCode::BAD_GATEWAY, "DuckDuckGo request failed").into_response()
+        }
     }
 }
 
@@ -246,14 +259,27 @@ async fn brave_handler(
                     .unwrap_or_else(|_| internal_error_response())
                     .into_response(),
                 Err(SafeFetchError::TooLarge) => {
+                    log::warn!("Provider response failed: class=search reason=response_too_large");
                     (StatusCode::PAYLOAD_TOO_LARGE, "Provider response too large").into_response()
                 }
+                Err(SafeFetchError::Timeout) => {
+                    log::warn!("Provider response failed: class=search reason=timeout");
+                    (StatusCode::GATEWAY_TIMEOUT, "Provider response timed out").into_response()
+                }
                 Err(_) => {
+                    log::warn!("Provider response failed: class=search reason=read_failure");
                     (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response()
                 }
             }
         }
-        Err(_) => (StatusCode::BAD_GATEWAY, "Brave request failed").into_response(),
+        Err(error) if error.is_timeout() => {
+            log::warn!("Provider request failed: class=search reason=timeout");
+            (StatusCode::GATEWAY_TIMEOUT, "Provider request timed out").into_response()
+        }
+        Err(_) => {
+            log::warn!("Provider request failed: class=search reason=transport");
+            (StatusCode::BAD_GATEWAY, "Brave request failed").into_response()
+        }
     }
 }
 
@@ -294,14 +320,27 @@ async fn perplexity_handler(
                     .unwrap_or_else(|_| internal_error_response())
                     .into_response(),
                 Err(SafeFetchError::TooLarge) => {
+                    log::warn!("Provider response failed: class=provider reason=response_too_large");
                     (StatusCode::PAYLOAD_TOO_LARGE, "Provider response too large").into_response()
                 }
+                Err(SafeFetchError::Timeout) => {
+                    log::warn!("Provider response failed: class=provider reason=timeout");
+                    (StatusCode::GATEWAY_TIMEOUT, "Provider response timed out").into_response()
+                }
                 Err(_) => {
+                    log::warn!("Provider response failed: class=provider reason=read_failure");
                     (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response()
                 }
             }
         }
-        Err(_) => (StatusCode::BAD_GATEWAY, "Perplexity request failed").into_response(),
+        Err(error) if error.is_timeout() => {
+            log::warn!("Provider request failed: class=provider reason=timeout");
+            (StatusCode::GATEWAY_TIMEOUT, "Provider request timed out").into_response()
+        }
+        Err(_) => {
+            log::warn!("Provider request failed: class=provider reason=transport");
+            (StatusCode::BAD_GATEWAY, "Perplexity request failed").into_response()
+        }
     }
 }
 

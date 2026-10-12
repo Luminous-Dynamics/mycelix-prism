@@ -16,6 +16,33 @@ const WINDOW: Duration = Duration::from_secs(60);
 const IDLE_TTL: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_MAX_CLIENTS: usize = 4_096;
 
+/// Canonicalize IPv4-mapped IPv6 socket addresses to the equivalent IPv4 key.
+/// This prevents one client from acquiring separate quotas by reaching a
+/// dual-stack listener through different address-family representations.
+fn normalize_ip(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V4(_) => ip,
+        IpAddr::V6(address) => address
+            .to_ipv4_mapped()
+            .map(IpAddr::V4)
+            .unwrap_or(IpAddr::V6(address)),
+    }
+}
+
+/// Check trust while accepting either spelling of an IPv4-mapped address.
+/// Configuration is small in normal deployments; the two direct HashSet
+/// probes keep the common IPv4 case O(1) without a per-request allocation.
+fn is_trusted_proxy(ip: IpAddr, trusted_proxies: &HashSet<IpAddr>) -> bool {
+    let normalized = normalize_ip(ip);
+    if trusted_proxies.contains(&normalized) {
+        return true;
+    }
+    match normalized {
+        IpAddr::V4(address) => trusted_proxies.contains(&IpAddr::V6(address.to_ipv6_mapped())),
+        IpAddr::V6(_) => false,
+    }
+}
+
 /// Maximum accepted request body for proxy/provider routes (1 MiB).
 pub const MAX_PROXY_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 /// Maximum accepted response body in one proxied request (10 MiB).
@@ -174,6 +201,7 @@ impl ClientQuota {
         known_bytes: usize,
         now: Instant,
     ) -> Result<QuotaTicket, QuotaRejection> {
+        let client = normalize_ip(client);
         self.clients.retain(|_, usage| {
             usage.last_seen.is_some_and(|last| now.saturating_duration_since(last) < IDLE_TTL)
         });
@@ -261,6 +289,7 @@ impl ClientQuota {
         response_bytes: usize,
         now: Instant,
     ) -> Result<(), QuotaRejection> {
+        let client = normalize_ip(client);
         let usage = self.clients.get_mut(&client).ok_or(QuotaRejection::StaleTicket)?;
         usage.last_seen = Some(now);
         let bucket = usage.buckets.entry(class).or_default();
@@ -309,7 +338,8 @@ pub fn resolve_client_ip(
     forwarded_for: Option<&str>,
     trusted_proxies: &HashSet<IpAddr>,
 ) -> IpAddr {
-    if !trusted_proxies.contains(&peer) {
+    let peer = normalize_ip(peer);
+    if !is_trusted_proxy(peer, trusted_proxies) {
         return peer;
     }
     let Some(header) = forwarded_for else {
@@ -320,7 +350,8 @@ pub fn resolve_client_ip(
         let Ok(candidate) = IpAddr::from_str(token.trim()) else {
             return peer;
         };
-        if !trusted_proxies.contains(&candidate) {
+        let candidate = normalize_ip(candidate);
+        if !is_trusted_proxy(candidate, trusted_proxies) {
             return candidate;
         }
     }
@@ -338,7 +369,7 @@ pub fn parse_trusted_proxy_ips(raw: &str) -> Result<HashSet<IpAddr>, String> {
         }
         let address = IpAddr::from_str(token)
             .map_err(|_| format!("invalid IP address in PRISM_TRUSTED_PROXY_IPS: {token}"))?;
-        addresses.insert(address);
+        addresses.insert(normalize_ip(address));
     }
     Ok(addresses)
 }
@@ -358,6 +389,7 @@ impl Default for ClientQuotaState {
 
 impl ClientQuotaState {
     pub fn new(trusted_proxies: HashSet<IpAddr>) -> Self {
+        let trusted_proxies = trusted_proxies.into_iter().map(normalize_ip).collect();
         Self {
             limiter: Arc::new(Mutex::new(ClientQuota::default())),
             trusted_proxies: Arc::new(trusted_proxies),
@@ -589,6 +621,45 @@ mod tests {
             resolve_client_ip(ip("198.51.100.9"), Some("203.0.113.5"), &trusted),
             ip("198.51.100.9")
         );
+    }
+
+    #[test]
+    fn ipv4_mapped_ipv6_cannot_obtain_a_separate_quota_bucket() {
+        let start = Instant::now();
+        let ipv4: IpAddr = "198.51.100.25".parse().unwrap();
+        let mapped: IpAddr = "::ffff:198.51.100.25".parse().unwrap();
+        let mut quota = ClientQuota::default();
+
+        for index in 0..30 {
+            let client = if index % 2 == 0 { ipv4 } else { mapped };
+            let ticket = quota
+                .admit_request(client, QuotaClass::Search, 0, start + Duration::from_millis(index))
+                .unwrap();
+            quota.release_request(ticket);
+        }
+
+        assert_eq!(
+            quota.admit_request(mapped, QuotaClass::Search, 0, start + Duration::from_secs(1)),
+            Err(QuotaRejection::RequestRate),
+            "alternating IPv4 and IPv4-mapped IPv6 spellings must share one rolling budget"
+        );
+        assert_eq!(quota.active_clients(), 1);
+    }
+
+    #[test]
+    fn trusted_proxy_matching_normalizes_ipv4_mapped_ipv6() {
+        let trusted = HashSet::from([ip("::ffff:192.0.2.1")]);
+        assert_eq!(
+            resolve_client_ip(
+                ip("192.0.2.1"),
+                Some("203.0.113.24"),
+                &trusted
+            ),
+            ip("203.0.113.24")
+        );
+
+        let parsed = parse_trusted_proxy_ips("::ffff:192.0.2.1").unwrap();
+        assert_eq!(parsed, HashSet::from([ip("192.0.2.1")]));
     }
 
     #[test]

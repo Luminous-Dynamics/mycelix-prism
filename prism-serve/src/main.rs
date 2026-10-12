@@ -116,13 +116,22 @@ async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
     )
     .await
     {
-        Ok(fetched) => axum::response::Response::builder()
-            .status(fetched.status)
-            .header("content-type", fetched.content_type)
-            .header("x-prism-proxied", "true")
-            .body(axum::body::Body::from(fetched.body))
-            .unwrap_or_else(|_| internal_error_response())
-            .into_response(),
+        Ok(fetched) => {
+            let response_bytes = fetched.body.len();
+            log::info!(
+                "Proxy fetch completed: status={} response_bytes={} redirects={}",
+                fetched.status,
+                response_bytes,
+                fetched.redirect_count
+            );
+            axum::response::Response::builder()
+                .status(fetched.status)
+                .header("content-type", fetched.content_type)
+                .header("x-prism-proxied", "true")
+                .body(axum::body::Body::from(fetched.body))
+                .unwrap_or_else(|_| internal_error_response())
+                .into_response()
+        },
         Err(SafeFetchError::TooLarge) => {
             (StatusCode::PAYLOAD_TOO_LARGE, "Response too large").into_response()
         }

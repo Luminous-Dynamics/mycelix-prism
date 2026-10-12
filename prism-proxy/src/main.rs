@@ -299,10 +299,14 @@ async fn health() -> &'static str {
 }
 
 macro_rules! route_limit_layer {
-    ($capacity:expr, $timeout:expr) => {
+    ($class:literal, $capacity:expr, $timeout:expr) => {
         tower::ServiceBuilder::new()
             .layer(axum::error_handling::HandleErrorLayer::new(
                 |_: axum::BoxError| async {
+                    log::warn!(
+                        "Proxy route unavailable: class={} reason=capacity_or_deadline",
+                        $class
+                    );
                     (
                         StatusCode::SERVICE_UNAVAILABLE,
                         "Route capacity reached; retry shortly",
@@ -346,7 +350,7 @@ fn build_app_with_quota(quota_state: ClientQuotaState) -> Router {
             quota_state.clone(),
             quota_middleware::enforce_client_quota,
         ))
-        .layer(route_limit_layer!(12, Duration::from_secs(20)));
+        .layer(route_limit_layer!("generic_proxy", 12, Duration::from_secs(20)));
 
     let search_routes = Router::new()
         .route("/api/ddg", get(ddg_handler))
@@ -355,7 +359,7 @@ fn build_app_with_quota(quota_state: ClientQuotaState) -> Router {
             quota_state.clone(),
             quota_middleware::enforce_client_quota,
         ))
-        .layer(route_limit_layer!(12, Duration::from_secs(20)));
+        .layer(route_limit_layer!("search", 12, Duration::from_secs(20)));
 
     let provider_route = Router::new()
         .route("/api/perplexity", axum::routing::post(perplexity_handler))
@@ -363,7 +367,7 @@ fn build_app_with_quota(quota_state: ClientQuotaState) -> Router {
             quota_state.clone(),
             quota_middleware::enforce_client_quota,
         ))
-        .layer(route_limit_layer!(3, Duration::from_secs(35)));
+        .layer(route_limit_layer!("provider", 3, Duration::from_secs(35)));
 
     let app = Router::new()
         .merge(generic_proxy_route)

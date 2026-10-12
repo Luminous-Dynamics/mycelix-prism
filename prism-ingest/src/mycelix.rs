@@ -154,7 +154,10 @@ mod tests {
         let claims = load_mycelix_claims();
 
         #[cfg(feature = "workspace-seed-data")]
-        assert!(!claims.is_empty(), "Enabled companion seed corpus should load claims");
+        assert!(
+            !claims.is_empty(),
+            "Enabled companion seed corpus should load claims"
+        );
 
         #[cfg(not(feature = "workspace-seed-data"))]
         assert!(

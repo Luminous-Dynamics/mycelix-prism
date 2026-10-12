@@ -11,6 +11,7 @@ use axum::{
 };
 use prism_common::client_quota::{
     ClientQuotaState, QuotaClass, QuotaRejection, MAX_PROXY_REQUEST_BODY_BYTES,
+    MAX_PROXY_RESPONSE_BODY_BYTES,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
@@ -74,11 +75,49 @@ pub async fn enforce_client_quota(
         return rejection_response(reason);
     }
 
-    next.run(axum::extract::Request::from_parts(
-        parts,
-        Body::from(body_bytes),
-    ))
+    let response = next
+        .run(axum::extract::Request::from_parts(
+            parts,
+            Body::from(body_bytes),
+        ))
+        .await;
+
+    let (response_parts, response_body) = response.into_parts();
+    let response_bytes = match tokio::time::timeout(
+        Duration::from_secs(5),
+        to_bytes(response_body, MAX_PROXY_RESPONSE_BODY_BYTES),
+    )
     .await
+    {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(_)) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                "Proxy response exceeds safety limit",
+            )
+                .into_response();
+        }
+        Err(_) => {
+            return (
+                StatusCode::GATEWAY_TIMEOUT,
+                "Proxy response did not complete",
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(reason) = state.charge_response(client, class, response_bytes.len()) {
+        return rejection_response(reason);
+    }
+
+    log::info!(
+        "Proxy request completed: class={:?} status={} response_bytes={}",
+        class,
+        response_parts.status.as_u16(),
+        response_bytes.len()
+    );
+
+    Response::from_parts(response_parts, Body::from(response_bytes))
 }
 
 fn rejection_response(reason: QuotaRejection) -> Response {
@@ -98,6 +137,15 @@ fn rejection_response(reason: QuotaRejection) -> Response {
                 StatusCode::TOO_MANY_REQUESTS,
                 [(axum::http::header::RETRY_AFTER, "60")],
                 "Client byte budget exceeded",
+            )
+                .into_response()
+        }
+        QuotaRejection::ResponseBytes => {
+            log::warn!("Proxy client quota denied: response byte budget");
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, "60")],
+                "Client response byte budget exceeded",
             )
                 .into_response()
         }

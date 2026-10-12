@@ -95,7 +95,7 @@ struct ClientUsage {
 
 /// Proof that a request consumed one rate slot; middleware uses it to charge
 /// the exact decoded request-body size after reading the bounded body.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QuotaTicket {
     client: IpAddr,
     class: QuotaClass,

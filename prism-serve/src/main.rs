@@ -302,6 +302,45 @@ async fn perplexity_handler(
 
 const SYMTHAEA_MAX_QUERY_CHARS: usize = 2000;
 
+const SYMTHAEA_MAX_RESPONSE_LINE_BYTES: usize = 1024 * 1024; // 1 MiB
+
+/// Read one newline-delimited daemon response without allowing an unbounded
+/// String allocation if the local service misbehaves or is compromised.
+async fn read_bounded_line<R>(
+    reader: &mut R,
+    max_bytes: usize,
+) -> Result<String, String>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    let mut bytes = Vec::with_capacity(max_bytes.min(4096));
+    loop {
+        let (take, has_newline) = {
+            let available = reader
+                .fill_buf()
+                .await
+                .map_err(|_| "failed to read Symthaea response".to_string())?;
+            if available.is_empty() {
+                break;
+            }
+
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let take = newline.map_or(available.len(), |index| index + 1);
+            if bytes.len().saturating_add(take) > max_bytes {
+                return Err("Symthaea response line exceeds size limit".to_string());
+            }
+            bytes.extend_from_slice(&available[..take]);
+            (take, newline.is_some())
+        };
+        reader.consume(take);
+        if has_newline {
+            break;
+        }
+    }
+
+    String::from_utf8(bytes).map_err(|_| "Symthaea response is not valid UTF-8".to_string())
+}
+
 /// Concurrency-limit + load-shed + timeout stack for the Symthaea route.
 /// A macro rather than a function because the ServiceBuilder stack's type
 /// is awkward to name explicitly; HandleErrorLayer is mandatory here —
@@ -406,12 +445,7 @@ async fn symthaea_query_handler(
             .await
             .map_err(|e| format!("write failed: {e}"))?;
         let mut reader = BufReader::new(stream);
-        let mut response_line = String::new();
-        reader
-            .read_line(&mut response_line)
-            .await
-            .map_err(|e| format!("read failed: {e}"))?;
-        Ok(response_line)
+        read_bounded_line(&mut reader, SYMTHAEA_MAX_RESPONSE_LINE_BYTES).await
     }
     .await;
 
@@ -652,6 +686,37 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn symthaea_response_line_is_bounded_before_parsing() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, stream) = tokio::io::duplex(64);
+        writer.write_all(b"12345678901234567890\\n").await.unwrap();
+        drop(writer);
+        let mut reader = BufReader::new(stream);
+
+        let error = read_bounded_line(&mut reader, 8).await.unwrap_err();
+        assert!(
+            error.contains("size limit"),
+            "oversized daemon response should fail with a bounded-read error"
+        );
+    }
+
+    #[tokio::test]
+    async fn symthaea_response_line_accepts_a_bounded_complete_json_line() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, stream) = tokio::io::duplex(64);
+        writer.write_all(b"{\\"safe\\":true}\\n").await.unwrap();
+        drop(writer);
+        let mut reader = BufReader::new(stream);
+
+        assert_eq!(
+            read_bounded_line(&mut reader, 64).await.unwrap(),
+            "{\\"safe\\":true}\\n"
+        );
+    }
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;

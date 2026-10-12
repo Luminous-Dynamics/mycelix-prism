@@ -31,6 +31,15 @@ CHECKOUT_REF_ALLOWLIST = {
 LOCK_RECOVERY_JOB = "generate_lockfile"
 LOCK_RECOVERY_PERMISSIONS = {"contents": "write", "statuses": "write"}
 LOCK_RECOVERY_CONDITION = "${{ (github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010') }}"
+LOCK_RECOVERY_TOKEN_STEPS = {
+    "Commit generated lockfile to PR branch",
+    "Publish result for the exact validated commit",
+}
+TOKEN_ACCESS_RE = re.compile(
+    r"\$\{\{[^}]*?(?:secrets\s*\.\s*GITHUB_TOKEN|"
+    r"secrets\s*\[\s*['\"]GITHUB_TOKEN['\"]\s*\]|github\s*\.\s*token)[^}]*?\}\}",
+    re.IGNORECASE,
+)
 
 def validate_action_reference(reference: str, source_line: str) -> list[str]:
     """Validate a single action reference; local actions are tied to this tree."""
@@ -219,6 +228,52 @@ def validate_checkout_refs(path_label: str, content: str) -> list[str]:
 
     return errors
 
+def validate_token_scope(path_label: str, content: str) -> list[str]:
+    """Keep the workflow token scoped to the two explicit lock-publication steps."""
+    lines = content.splitlines()
+    errors: list[str] = []
+    in_jobs = False
+    current_job: str | None = None
+    current_step: str | None = None
+    allowed_token_line = "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}"
+
+    for line_number, line in enumerate(lines, start=1):
+        if line == "jobs:":
+            in_jobs = True
+            current_job = None
+            current_step = None
+            continue
+        if in_jobs and line.strip() and not line.startswith(" "):
+            in_jobs = False
+            current_job = None
+            current_step = None
+
+        if in_jobs:
+            job_match = JOB_RE.fullmatch(line)
+            if job_match:
+                current_job = job_match.group(1)
+                current_step = None
+            step_name = re.match(r"^      - name\\s*:\\s*(.*?)\\s*$", line)
+            if step_name:
+                current_step = step_name.group(1).strip().strip("'\\\"")
+            elif re.match(r"^      - uses\\s*:", line):
+                current_step = None
+
+        if not TOKEN_ACCESS_RE.search(line):
+            continue
+        if (
+            current_job != LOCK_RECOVERY_JOB
+            or current_step not in LOCK_RECOVERY_TOKEN_STEPS
+            or line != allowed_token_line
+        ):
+            errors.append(
+                f"{path_label}:{line_number}: workflow token may only be exposed as "
+                "GH_TOKEN in the two named lock-publication steps"
+            )
+
+    return errors
+
+
 def validate_workflow_text(path_label: str, content: str) -> list[str]:
     errors: list[str] = []
     found_actions = 0
@@ -249,6 +304,7 @@ def validate_workflow_text(path_label: str, content: str) -> list[str]:
 
     errors.extend(validate_checkout_refs(path_label, content))
     errors.extend(validate_job_permissions(path_label, content))
+    errors.extend(validate_token_scope(path_label, content))
     return errors
 
 

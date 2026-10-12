@@ -78,6 +78,7 @@ jobs:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
         with:
           ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
+          persist-credentials: false
 """
         self.assertEqual(validate_workflow_text("ci.yml", content), [])
 
@@ -97,6 +98,7 @@ jobs:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
         with:
           ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
+          persist-credentials: false
 """
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(
@@ -126,6 +128,7 @@ jobs:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
         with:
           ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
+          persist-credentials: false
 """
                 errors = validate_workflow_text("ci.yml", content)
                 self.assertTrue(
@@ -190,8 +193,54 @@ jobs:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
         with:
           ref: {safe_ref}
+          persist-credentials: false
 """
         self.assertEqual(validate_workflow_text("ci.yml", content), [])
+
+    def test_rejects_persisted_credentials_in_read_only_checkout(self) -> None:
+        safe_ref = "$" + "{{ github.event.pull_request.head.sha || github.sha }}"
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  policy:
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: {safe_ref}
+          persist-credentials: true
+"""
+        errors = validate_workflow_text("ci.yml", content)
+        self.assertTrue(
+            any("persist-credentials: false for read-only jobs" in error for error in errors)
+        )
+
+    def test_requires_explicit_checkout_credential_policy(self) -> None:
+        safe_ref = "$" + "{{ github.event.pull_request.head.sha || github.sha }}"
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  policy:
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: {safe_ref}
+"""
+        errors = validate_workflow_text("ci.yml", content)
+        self.assertTrue(
+            any("persist-credentials: false for read-only jobs" in error for error in errors)
+        )
 
     def test_rejects_missing_permissions_baseline(self) -> None:
         content = f"""name: test
@@ -203,6 +252,7 @@ jobs:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
         with:
           ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
+          persist-credentials: false
 """
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(any("top-level permissions" in error for error in errors))
@@ -220,6 +270,7 @@ jobs:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
         with:
           ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
+          persist-credentials: false
 """
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(any("top-level permissions" in error for error in errors))
@@ -242,6 +293,7 @@ jobs:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
         with:
           ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
+          persist-credentials: false
 """
         self.assertEqual(validate_workflow_text("ci.yml", content), [])
 
@@ -262,6 +314,7 @@ jobs:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
         with:
           ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
+          persist-credentials: false
 """
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(any("job-level permissions are forbidden" in error for error in errors))
@@ -285,6 +338,7 @@ jobs:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
         with:
           ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
+          persist-credentials: true
 """
         self.assertEqual(validate_workflow_text("ci.yml", content), [])
 
@@ -307,6 +361,7 @@ jobs:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
         with:
           ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
+          persist-credentials: false
 """
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(any("lacks required same-repository/event/ref gates" in error for error in errors))

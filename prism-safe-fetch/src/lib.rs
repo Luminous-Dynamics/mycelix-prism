@@ -701,7 +701,7 @@ mod tests {
             // deadline to expire. This fixture never contacts a public host.
             tokio::time::sleep(Duration::from_millis(250)).await;
             let _ = socket.write_all(
-                b"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok",
+                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
             ).await;
         });
 

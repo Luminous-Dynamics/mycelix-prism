@@ -90,6 +90,18 @@ pub async fn enforce_client_quota(
         ticket,
     };
 
+    // Reject a known oversized payload without waiting for the body stream.
+    // The rate slot remains charged, while the RAII guard releases concurrency.
+    if request
+        .headers()
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .is_some_and(|length| length > MAX_PROXY_REQUEST_BODY_BYTES as u64)
+    {
+        return (StatusCode::PAYLOAD_TOO_LARGE, "Request body too large").into_response();
+    }
+
     let (parts, body) = request.into_parts();
     let body_bytes = match tokio::time::timeout(
         Duration::from_secs(10),

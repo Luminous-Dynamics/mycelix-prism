@@ -175,22 +175,7 @@ def validate_checkout_refs(path_label: str, content: str) -> list[str]:
     """Require immutable checkout refs and prevent credential persistence outside the writer lane."""
     lines = content.splitlines()
     errors: list[str] = []
-    in_jobs = False
-    current_job: str | None = None
-
     for index, line in enumerate(lines):
-        if line == "jobs:":
-            in_jobs = True
-            current_job = None
-            continue
-        if in_jobs and line.strip() and not line.startswith(" "):
-            in_jobs = False
-            current_job = None
-        if in_jobs:
-            job_match = JOB_RE.fullmatch(line)
-            if job_match:
-                current_job = job_match.group(1)
-
         checkout = CHECKOUT_RE.match(line)
         if not checkout:
             continue
@@ -233,13 +218,11 @@ def validate_checkout_refs(path_label: str, content: str) -> list[str]:
                 f"event SHA expression; found {ref_values[0]!r}"
             )
 
-        expected_credentials = "true" if current_job == LOCK_RECOVERY_JOB else "false"
-        if credential_values != [expected_credentials]:
-            if current_job == LOCK_RECOVERY_JOB:
-                reason = "explicitly set persist-credentials: true for the gated lock-recovery writer"
-            else:
-                reason = "explicitly set persist-credentials: false for read-only jobs"
-            errors.append(f"{path_label}:{line_number}: actions/checkout must {reason}")
+        if credential_values != ["false"]:
+            errors.append(
+                f"{path_label}:{line_number}: actions/checkout must explicitly set "
+                "persist-credentials: false; no checkout may persist the workflow token"
+            )
 
     return errors
 

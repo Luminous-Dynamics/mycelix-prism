@@ -6,12 +6,12 @@ permissions:
 
 # Cancel superseded work for the same PR/ref; keep lock resolution tied to one source head.
 concurrency:
-  group: prism-ci-${{ github.event.pull_request.head.ref || github.ref_name }}
+  group: prism-ci-${{ github.event.pull_request.number || github.ref_name }}-${{ github.event_name }}
   cancel-in-progress: true
 
 on:
   push:
-    branches: [main, fix/proxy-dns-pinning-redirects-20261010, 'security/**', 'hardening/**']
+    branches: [main, fix/proxy-dns-pinning-redirects-20261010, 'security/**']
   pull_request:
     branches: [main, fix/proxy-dns-pinning-redirects-20261010]
 

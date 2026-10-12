@@ -32,11 +32,17 @@ DEFAULT_FILES = (
 
 
 def iter_macro_invocations(source: str, macro_pattern: re.Pattern[str]):
-    """Yield (offset, source) for balanced macro invocations, including multiline ones.
+    """Yield balanced macro invocations while skipping common Rust lexical forms.
 
-    The scanner accounts for nested parentheses, escaped quotes and comments.
-    It is intentionally narrow and does not implement the full Rust grammar.
+    This narrow scanner handles ordinary/raw strings, character literals,
+    line comments, and nested block comments. It is not a complete Rust parser;
+    it exists to catch common logging regressions without external dependencies.
     """
+    raw_string_re = re.compile(r"(?:br|r)(?P<hashes>#{0,255})\"")
+    char_literal_re = re.compile(
+        r"""'(?:[^'\\\n]|\\(?:[nrt0\\'"]|x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]+\}))'"""
+    )
+
     for match in macro_pattern.finditer(source):
         start = match.start()
         # The selected macro pattern consumes the opening parenthesis.
@@ -45,7 +51,7 @@ def iter_macro_invocations(source: str, macro_pattern: re.Pattern[str]):
         in_string = False
         escaped = False
         line_comment = False
-        block_comment = False
+        block_comment_depth = 0
 
         while index < len(source):
             char = source[index]
@@ -56,13 +62,18 @@ def iter_macro_invocations(source: str, macro_pattern: re.Pattern[str]):
                     line_comment = False
                 index += 1
                 continue
-            if block_comment:
-                if char == "*" and following == "/":
-                    block_comment = False
+
+            if block_comment_depth:
+                if char == "/" and following == "*":
+                    block_comment_depth += 1
+                    index += 2
+                elif char == "*" and following == "/":
+                    block_comment_depth -= 1
                     index += 2
                 else:
                     index += 1
                 continue
+
             if in_string:
                 if escaped:
                     escaped = False
@@ -73,12 +84,34 @@ def iter_macro_invocations(source: str, macro_pattern: re.Pattern[str]):
                 index += 1
                 continue
 
+            # Rust raw strings can contain quotes, parentheses, and comment
+            # delimiters without escaping. Require a token boundary so an
+            # identifier containing "br" cannot start a raw string by accident.
+            token_boundary = index == 0 or not (
+                source[index - 1].isalnum() or source[index - 1] == "_"
+            )
+            raw_match = raw_string_re.match(source, index) if token_boundary else None
+            if raw_match:
+                terminator = '"' + ("#" * len(raw_match.group("hashes")))
+                closing = source.find(terminator, raw_match.end())
+                if closing < 0:
+                    break
+                index = closing + len(terminator)
+                continue
+
+            # Character literals may include ')' or other syntax characters.
+            # Do not confuse Rust lifetimes ('a, 'static) with char literals.
+            char_match = char_literal_re.match(source, index) if char == "'" else None
+            if char_match:
+                index = char_match.end()
+                continue
+
             if char == "/" and following == "/":
                 line_comment = True
                 index += 2
                 continue
             if char == "/" and following == "*":
-                block_comment = True
+                block_comment_depth = 1
                 index += 2
                 continue
             if char == '"':
@@ -91,7 +124,6 @@ def iter_macro_invocations(source: str, macro_pattern: re.Pattern[str]):
                     yield start, source[start : index + 1]
                     break
             index += 1
-
 
 def find_sensitive_logging(path: str, source: str) -> list[str]:
     findings: list[str] = []

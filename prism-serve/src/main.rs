@@ -1,6 +1,8 @@
 // Copyright (C) 2024-2026 Tristan Stoltz / Luminous Dynamics
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Commercial licensing: see COMMERCIAL_LICENSE.md at repository root
+
+mod quota_middleware;
 //! Unified Prism server: static files + CORS proxy on a single port.
 //!
 //! Serves the WASM app from dist/ and proxies external API requests,
@@ -12,9 +14,11 @@ use axum::http::StatusCode;
 use axum::http::header::HeaderValue;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use prism_common::client_quota::{parse_trusted_proxy_ips, ClientQuotaState};
 use prism_common::proxy_limits::MAX_REQUEST_TARGET_BYTES;
 use prism_common::ssrf::validate_proxy_url;
 use prism_safe_fetch::{SafeFetchError, fetch_public_get, read_limited_body};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -468,6 +472,14 @@ async fn health() -> &'static str {
 /// — the route itself handles that by returning 503, so this is purely an
 /// explicit opt-in rather than a hard dependency.
 fn build_app(dist_path: &str, symthaea_cfg: Option<Arc<SymthaeaConfig>>) -> Router {
+    build_app_with_quota(dist_path, symthaea_cfg, ClientQuotaState::default())
+}
+
+fn build_app_with_quota(
+    dist_path: &str,
+    symthaea_cfg: Option<Arc<SymthaeaConfig>>,
+    quota_state: ClientQuotaState,
+) -> Router {
     let fallback = ServeFile::new(format!("{}/index.html", dist_path));
 
     let symthaea_route = axum::Router::new()
@@ -495,6 +507,11 @@ fn build_app(dist_path: &str, symthaea_cfg: Option<Arc<SymthaeaConfig>>) -> Rout
         .merge(symthaea_route)
         // Static files with SPA fallback
         .fallback_service(ServeDir::new(dist_path).not_found_service(fallback))
+        // Keep body reads and upstream work inside the global concurrency cap.
+        .layer(axum::middleware::from_fn_with_state(
+            quota_state,
+            quota_middleware::enforce_client_quota,
+        ))
         .layer(tower::limit::ConcurrencyLimitLayer::new(100))
         .layer(DefaultBodyLimit::max(MAX_PROVIDER_REQUEST_SIZE))
         .layer(axum::middleware::from_fn(reject_oversized_request_target))
@@ -514,6 +531,32 @@ fn build_app(dist_path: &str, symthaea_cfg: Option<Arc<SymthaeaConfig>>) -> Rout
 }
 
 #[tokio::main]
+fn quota_state_from_env() -> Result<ClientQuotaState, String> {
+    let raw = std::env::var("PRISM_TRUSTED_PROXY_IPS").unwrap_or_default();
+    if raw.trim().is_empty() {
+        return Ok(ClientQuotaState::default());
+    }
+    parse_trusted_proxy_ips(&raw).map(ClientQuotaState::new)
+}
+
+fn validate_bind_addr(
+    configured: Option<&str>,
+    allow_non_loopback: bool,
+) -> Result<SocketAddr, String> {
+    let raw = configured.unwrap_or("127.0.0.1:8130");
+    let addr: SocketAddr = raw
+        .parse()
+        .map_err(|_| "PRISM_ADDR must be an IP address and port, such as 127.0.0.1:8130".to_string())?;
+
+    if !addr.ip().is_loopback() && !allow_non_loopback {
+        return Err(
+            "Refusing non-loopback PRISM_ADDR by default; set PRISM_ALLOW_NON_LOOPBACK_BIND=1 only when a trusted ingress/authentication layer protects this service"
+                .to_string(),
+        );
+    }
+    Ok(addr)
+}
+
 async fn main() {
     env_logger::init();
 
@@ -528,19 +571,38 @@ async fn main() {
         );
     }
 
-    let app = build_app(&dist_path, symthaea_cfg);
+    let quota_state = quota_state_from_env().unwrap_or_else(|error| {
+        log::error!("{}", error);
+        std::process::exit(2);
+    });
+    let app = build_app_with_quota(&dist_path, symthaea_cfg, quota_state);
 
-    let addr = std::env::var("PRISM_ADDR").unwrap_or_else(|_| "0.0.0.0:8130".to_string());
+    let configured_addr = std::env::var("PRISM_ADDR").ok();
+    let allow_non_loopback = std::env::var("PRISM_ALLOW_NON_LOOPBACK_BIND")
+        .is_ok_and(|value| value == "1");
+    let addr = validate_bind_addr(configured_addr.as_deref(), allow_non_loopback)
+        .unwrap_or_else(|error| {
+            log::error!("{}", error);
+            std::process::exit(2);
+        });
 
+    if !addr.ip().is_loopback() {
+        log::warn!(
+            "Non-loopback bind enabled; place Prism behind a trusted ingress/authentication layer. CORS is not access control."
+        );
+    }
     log::info!("Prism unified server on {} (dist: {})", addr, dist_path);
     println!("Prism serving on http://{}", addr);
 
-    let listener = tokio::net::TcpListener::bind(&addr)
+    let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("Failed to bind Prism server address");
-    axum::serve(listener, app)
-        .await
-        .expect("Prism server error");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .expect("Prism server error");
 }
 
 #[cfg(test)]
@@ -549,6 +611,36 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
+
+    #[test]
+    fn server_bind_defaults_to_loopback() {
+        assert_eq!(
+            validate_bind_addr(None, false).unwrap(),
+            "127.0.0.1:8130".parse::<SocketAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn server_bind_rejects_non_loopback_without_explicit_opt_in() {
+        for value in ["0.0.0.0:8130", "192.0.2.10:8130", "[::]:8130"] {
+            assert!(
+                validate_bind_addr(Some(value), false).is_err(),
+                "must reject accidental public/private bind {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn server_bind_allows_non_loopback_only_with_explicit_opt_in() {
+        assert_eq!(
+            validate_bind_addr(Some("0.0.0.0:8130"), true).unwrap(),
+            "0.0.0.0:8130".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(
+            validate_bind_addr(Some("127.0.0.1:8130"), false).unwrap(),
+            "127.0.0.1:8130".parse::<SocketAddr>().unwrap()
+        );
+    }
 
     fn test_dist_dir() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();

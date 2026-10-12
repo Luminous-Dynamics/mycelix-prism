@@ -388,10 +388,24 @@ mod tests {
         let mut quota = ClientQuota::with_capacity(4);
 
         for n in 0..30 {
-            assert!(quota.admit_request(client, QuotaClass::GenericProxy, 1, start + Duration::from_secs(n)).is_ok());
+            assert!(
+                quota
+                    .admit_request(
+                        client,
+                        QuotaClass::GenericProxy,
+                        1,
+                        start + Duration::from_secs(n),
+                    )
+                    .is_ok()
+            );
         }
         assert_eq!(
-            quota.admit_request(client, QuotaClass::GenericProxy, 1, start + Duration::from_secs(29)),
+            quota.admit_request(
+                client,
+                QuotaClass::GenericProxy,
+                1,
+                start + Duration::from_secs(29),
+            ),
             Err(QuotaRejection::RequestRate)
         );
         assert!(quota.admit_request(client, QuotaClass::GenericProxy, 1, start + WINDOW).is_ok());
@@ -431,14 +445,31 @@ mod tests {
         let b = ip("192.0.2.13");
         let mut quota = ClientQuota::with_capacity(4);
         for n in 0..30 {
-            assert!(quota.admit_request(a, QuotaClass::Search, 0, start + Duration::from_millis(n)).is_ok());
+            assert!(
+                quota
+                    .admit_request(
+                        a,
+                        QuotaClass::Search,
+                        0,
+                        start + Duration::from_millis(n),
+                    )
+                    .is_ok()
+            );
         }
         assert_eq!(
             quota.admit_request(a, QuotaClass::Search, 0, start + Duration::from_secs(1)),
             Err(QuotaRejection::RequestRate)
         );
-        assert!(quota.admit_request(a, QuotaClass::Provider, 0, start + Duration::from_secs(1)).is_ok());
-        assert!(quota.admit_request(b, QuotaClass::Search, 0, start + Duration::from_secs(1)).is_ok());
+        assert!(
+            quota
+                .admit_request(a, QuotaClass::Provider, 0, start + Duration::from_secs(1))
+                .is_ok()
+        );
+        assert!(
+            quota
+                .admit_request(b, QuotaClass::Search, 0, start + Duration::from_secs(1))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -447,10 +478,19 @@ mod tests {
         let mut quota = ClientQuota::with_capacity(1);
         assert!(quota.admit_request(ip("192.0.2.20"), QuotaClass::Search, 0, start).is_ok());
         assert_eq!(
-            quota.admit_request(ip("192.0.2.21"), QuotaClass::Search, 0, start + Duration::from_secs(1)),
+            quota.admit_request(
+                ip("192.0.2.21"),
+                QuotaClass::Search,
+                0,
+                start + Duration::from_secs(1),
+            ),
             Err(QuotaRejection::ClientTableFull)
         );
-        assert!(quota.admit_request(ip("192.0.2.21"), QuotaClass::Search, 0, start + IDLE_TTL).is_ok());
+        assert!(
+            quota
+                .admit_request(ip("192.0.2.21"), QuotaClass::Search, 0, start + IDLE_TTL)
+                .is_ok()
+        );
         assert_eq!(quota.active_clients(), 1);
     }
 
@@ -480,7 +520,11 @@ mod tests {
     fn invalid_forwarded_suffix_fails_closed_to_the_peer() {
         let trusted = HashSet::from([ip("192.0.2.1")]);
         assert_eq!(
-            resolve_client_ip(ip("192.0.2.1"), Some("198.51.100.7, attacker-controlled"), &trusted),
+            resolve_client_ip(
+                ip("192.0.2.1"),
+                Some("198.51.100.7, attacker-controlled"),
+                &trusted,
+            ),
             ip("192.0.2.1")
         );
     }
@@ -500,14 +544,25 @@ mod tests {
         assert_eq!(QuotaClass::for_path("/api/ddg"), Some(QuotaClass::Search));
         assert_eq!(QuotaClass::for_path("/api/brave"), Some(QuotaClass::Search));
         assert_eq!(QuotaClass::for_path("/api/perplexity"), Some(QuotaClass::Provider));
-        assert_eq!(QuotaClass::for_path("/api/symthaea/query"), Some(QuotaClass::Symthaea));
+        assert_eq!(
+            QuotaClass::for_path("/api/symthaea/query"),
+            Some(QuotaClass::Symthaea)
+        );
     }
 
     #[test]
     fn quota_defaults_support_ipv4_and_ipv6_keys() {
         let mut quota = ClientQuota::default();
         let now = Instant::now();
-        assert!(quota.admit_request(IpAddr::V4(Ipv4Addr::LOCALHOST), QuotaClass::Search, 0, now).is_ok());
-        assert!(quota.admit_request(IpAddr::V6(Ipv6Addr::LOCALHOST), QuotaClass::Search, 0, now).is_ok());
+        assert!(
+            quota
+                .admit_request(IpAddr::V4(Ipv4Addr::LOCALHOST), QuotaClass::Search, 0, now)
+                .is_ok()
+        );
+        assert!(
+            quota
+                .admit_request(IpAddr::V6(Ipv6Addr::LOCALHOST), QuotaClass::Search, 0, now)
+                .is_ok()
+        );
     }
 }

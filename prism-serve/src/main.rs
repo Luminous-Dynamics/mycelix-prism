@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Commercial licensing: see COMMERCIAL_LICENSE.md at repository root
 
-mod quota_middleware;
 //! Unified Prism server: static files + CORS proxy on a single port.
 //!
 //! Serves the WASM app from dist/ and proxies external API requests,
 //! eliminating the need for a separate proxy service and port.
+
+mod quota_middleware;
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Query, State};

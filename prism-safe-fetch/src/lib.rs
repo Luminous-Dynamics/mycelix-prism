@@ -26,6 +26,11 @@ const DNS_TIMEOUT: Duration = Duration::from_secs(5);
 pub enum SafeFetchError {
     Policy(String),
     Request(String),
+    /// An upstream HTTP exchange or DNS resolution exceeded its deadline.
+    Timeout,
+    /// A redirect was rejected by policy. The number is the redirect hop being
+    /// rejected, starting at 1; no target URL or Location value is retained.
+    RedirectRejected { hop: usize },
     TooLarge,
 }
 
@@ -33,6 +38,10 @@ impl std::fmt::Display for SafeFetchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Policy(message) | Self::Request(message) => f.write_str(message),
+            Self::Timeout => f.write_str("upstream request timed out"),
+            Self::RedirectRejected { hop } => {
+                write!(f, "redirect rejected by policy at hop {hop}")
+            }
             Self::TooLarge => f.write_str("response exceeds configured byte limit"),
         }
     }
@@ -86,7 +95,7 @@ where
 async fn resolve_public_host(host: &str, port: u16) -> Result<Vec<SocketAddr>, SafeFetchError> {
     let resolved = tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host((host, port)))
         .await
-        .map_err(|_| SafeFetchError::Policy("hostname resolution timed out".into()))?
+        .map_err(|_| SafeFetchError::Timeout)?
         .map_err(|_| SafeFetchError::Policy("hostname resolution failed".into()))?;
 
     pinned_addrs_from_ips(resolved.map(|address| address.ip()))
@@ -255,11 +264,13 @@ pub async fn read_limited_body(
         .unwrap_or(0);
     let mut body = Vec::with_capacity(initial_capacity);
 
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| SafeFetchError::Request("failed while reading response body".into()))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        if error.is_timeout() {
+            SafeFetchError::Timeout
+        } else {
+            SafeFetchError::Request("failed while reading response body".into())
+        }
+    })? {
         append_limited_chunk(&mut body, &chunk, max_bytes)?;
     }
 
@@ -303,26 +314,36 @@ async fn fetch_public_get_with_resolver(
     let mut redirect_count = 0usize;
 
     for hop in 0..=max_redirects {
-        let client = client_for_url(&current, user_agent, timeout, resolver).await?;
-        let response = client
-            .get(current.clone())
-            .send()
-            .await
-            .map_err(|_| SafeFetchError::Request("upstream request failed".into()))?;
+        let client = match client_for_url(&current, user_agent, timeout, resolver).await {
+            Ok(client) => client,
+            Err(SafeFetchError::Policy(_)) if hop > 0 => {
+                // The current hostname was introduced by a redirect, so DNS
+                // policy failures belong to that redirect hop.
+                return Err(SafeFetchError::RedirectRejected { hop });
+            }
+            Err(error) => return Err(error),
+        };
+        let response = client.get(current.clone()).send().await.map_err(|error| {
+            if error.is_timeout() {
+                SafeFetchError::Timeout
+            } else {
+                SafeFetchError::Request("upstream request failed".into())
+            }
+        })?;
 
         if is_redirect(response.status()) {
+            let rejected_hop = hop + 1;
             if hop == max_redirects {
-                return Err(SafeFetchError::Policy("redirect hop limit exceeded".into()));
+                return Err(SafeFetchError::RedirectRejected { hop: rejected_hop });
             }
             let location = response
                 .headers()
                 .get(LOCATION)
                 .and_then(|value| value.to_str().ok())
-                .ok_or_else(|| {
-                    SafeFetchError::Policy("redirect response lacked a valid Location".into())
-                })?
+                .ok_or(SafeFetchError::RedirectRejected { hop: rejected_hop })?
                 .to_string();
-            current = validate_redirect_target(&current, &location)?;
+            current = validate_redirect_target(&current, &location)
+                .map_err(|_| SafeFetchError::RedirectRejected { hop: rejected_hop })?;
             redirect_count = redirect_count.saturating_add(1);
             // Drop this response without reading its body; the next hop gets
             // a newly resolved and pinned client before any outbound request.
@@ -348,7 +369,7 @@ async fn fetch_public_get_with_resolver(
         });
     }
 
-    Err(SafeFetchError::Policy("redirect hop limit exceeded".into()))
+    Err(SafeFetchError::RedirectRejected { hop: max_redirects.saturating_add(1) })
 }
 
 #[cfg(test)]

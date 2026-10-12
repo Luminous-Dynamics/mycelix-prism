@@ -575,7 +575,9 @@ fn validate_bind_addr(
     let raw = configured.unwrap_or("127.0.0.1:8130");
     let addr: SocketAddr = raw
         .parse()
-        .map_err(|_| "PRISM_ADDR must be an IP address and port, such as 127.0.0.1:8130".to_string())?;
+        .map_err(|_| {
+            "PRISM_ADDR must be an IP address and port, such as 127.0.0.1:8130".to_string()
+        })?;
 
     if !addr.ip().is_loopback() && !allow_non_loopback {
         return Err(

@@ -7,12 +7,12 @@ description = "CORS proxy for Prism — enables WASM to fetch external URLs"
 
 [dependencies]
 prism-common = { path = "../prism-common" }
+prism-safe-fetch = { path = "../prism-safe-fetch" }
 axum = "0.8"
 reqwest = { workspace = true }
 tokio = { workspace = true }
-tower = { version = "0.5", features = ["limit"] }
+tower = { version = "0.5", features = ["limit", "util"] }
 tower-http = { version = "0.6", features = ["cors"] }
 serde = { workspace = true }
-url = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }

@@ -23,6 +23,9 @@ required-features = ["fetch"]
 
 [features]
 fetch = ["dep:reqwest"]
+# Opt into the sibling mycelix-knowledge repository’s compile-time corpus.
+# This feature requires that repo’s seed-data/claims tree to exist at build time.
+workspace-seed-data = []
 
 [dependencies.reqwest]
 version = "0.12"

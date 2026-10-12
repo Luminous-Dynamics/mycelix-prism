@@ -16,21 +16,102 @@
 //! stays compilable for both native (proxy/serve) and `wasm32-unknown-unknown`
 //! (prism-ui) targets that depend on `prism-common`.
 
-/// Check if an IPv4 address is private/reserved and therefore unsafe to proxy to.
+/// Return true for IPv4 destinations that must not be reached by the
+/// server-side proxy.
+///
+/// This is deliberately conservative and rejects special-purpose, private,
+/// shared, documentation, benchmarking, multicast, reserved, loopback, and
+/// unspecified ranges. It does not rely on nightly-only `Ipv4Addr::is_global`.
+///
+/// Range references: [IANA IPv4 Special-Purpose Address Space](https://www.iana.org/assignments/iana-ipv4-special-registry).
+/// Re-audit this table when the registry changes; this is a proxy-denial policy,
+/// not a claim that every non-public-purpose range is fully enumerated.
 pub fn is_private_ipv4(ip: &std::net::Ipv4Addr) -> bool {
+    let [a, b, c, _d] = ip.octets();
+
     ip.is_loopback()
         || ip.is_private()
         || ip.is_link_local()
         || ip.is_broadcast()
         || ip.is_unspecified()
-        || (ip.octets()[0] == 169 && ip.octets()[1] == 254)
+        || a == 0 // "this network" / current-host special range
+        || a >= 224 // multicast and reserved
+        || (a == 100 && (64..=127).contains(&b)) // RFC 6598 shared address space
+        || (a == 192 && b == 0 && c == 0) // IETF protocol assignments
+        || (a == 192 && b == 0 && c == 2) // TEST-NET-1
+        || (a == 192 && b == 88 && c == 99) // deprecated 6to4 relay anycast
+        || (a == 198 && (b == 18 || b == 19)) // benchmarking
+        || (a == 198 && b == 51 && c == 100) // TEST-NET-2
+        || (a == 203 && b == 0 && c == 113) // TEST-NET-3
 }
 
-/// Validate that a URL is safe to proxy — reject private/reserved addresses
-/// and non-HTTP schemes.
+/// Return true unless an IP address is clearly globally routable.
 ///
-/// Returns the parsed `url::Url` on success, or a static error string
-/// describing why the URL was rejected.
+/// IPv6 is allow-listed to global unicast (2000::/3) and then excludes the
+/// IETF special-purpose, 6to4 and documentation ranges. This policy is more
+/// conservative than merely testing loopback/private/link-local because some
+/// translated and transition addresses can encode an IPv4 destination.
+///
+/// Range references: [IANA IPv6 Global Unicast Address Space](https://www.iana.org/assignments/ipv6-unicast-address-assignments)
+/// and [IANA IPv6 Special-Purpose Address Space](https://www.iana.org/assignments/iana-ipv6-special-registry).
+pub fn is_non_public_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => is_private_ipv4(&ip),
+        std::net::IpAddr::V6(ip) => {
+            let s = ip.segments();
+            let is_global_unicast = (s[0] & 0xe000) == 0x2000; // 2000::/3
+            let is_ietf_special = s[0] == 0x2001 && s[1] <= 0x01ff; // 2001::/23
+            let is_documentation = s[0] == 0x2001 && s[1] == 0x0db8; // 2001:db8::/32
+            let is_6to4 = s[0] == 0x2002; // 2002::/16 embeds IPv4
+            let is_new_documentation = s[0] == 0x3fff && (s[1] & 0xfff0) == 0; // 3fff::/20
+            !is_global_unicast
+                || is_ietf_special
+                || is_documentation
+                || is_6to4
+                || is_new_documentation
+                || ip.is_multicast()
+                || ip.is_unspecified()
+                || ip.is_loopback()
+        }
+    }
+}
+
+// IANA's Special-Use Domain Names registry (including subdomains) is the
+// source of this curated set. Review it when the registry changes. RFC 6761 §6.5
+// says applications should use example names normally, so example.com/net/org
+// and .example are deliberately not rejected solely for being examples.
+// Reverse-lookup zones are omitted; literal IPs use the address policy below.
+const SPECIAL_USE_DOMAIN_SUFFIXES: &[&str] = &[
+    "alt",
+    "6tisch.arpa",
+    "eap.arpa",
+    "eap-noob.arpa",
+    "home.arpa",
+    "ipv4only.arpa",
+    "resolver.arpa",
+    "service.arpa",
+    "invalid",
+    "local",
+    "localhost",
+    "onion",
+    "test",
+];
+
+fn is_special_use_domain(host: &str) -> bool {
+    SPECIAL_USE_DOMAIN_SUFFIXES.iter().any(|suffix| {
+        host == *suffix
+            || host
+                .strip_suffix(suffix)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
+}
+
+/// Validate that a URL is syntactically safe for a server-side proxy.
+///
+/// This is only the first gate: callers must also resolve the hostname, reject
+/// any non-public DNS answer, pin the HTTP client to the approved address set,
+/// and validate every redirect hop. A domain passing this function alone is
+/// not authorization to connect to it.
 pub fn validate_proxy_url(raw: &str) -> Result<url::Url, &'static str> {
     let parsed = url::Url::parse(raw).map_err(|_| "Invalid URL")?;
 
@@ -39,56 +120,45 @@ pub fn validate_proxy_url(raw: &str) -> Result<url::Url, &'static str> {
         _ => return Err("Only http and https URLs are allowed"),
     }
 
-    let host_str = parsed.host_str().unwrap_or("");
+    // The accessors catch non-empty username/password values. Also inspect
+    // the serialized authority so an empty userinfo delimiter ("https://@host")
+    // cannot slip through simply because both accessors appear empty.
+    let authority_remainder = raw
+        .split_once("://")
+        .map(|(_, remainder)| remainder)
+        .unwrap_or("");
+    let authority_end = authority_remainder
+        .find(|ch| matches!(ch, '/' | '?' | '#'))
+        .unwrap_or(authority_remainder.len());
+    let has_userinfo_delimiter = authority_remainder[..authority_end].contains('@');
 
-    if host_str == "localhost" || host_str == "metadata.google.internal" {
-        return Err("Access to internal addresses is forbidden");
+    if !parsed.username().is_empty() || parsed.password().is_some() || has_userinfo_delimiter {
+        return Err("URLs containing user credentials are forbidden");
     }
 
-    // Use url::Host for proper IPv4/IPv6 discrimination
+    let host_str = parsed.host_str().unwrap_or("");
+    let normalized_host = host_str.trim_end_matches('.').to_ascii_lowercase();
+    let is_domain = matches!(parsed.host(), Some(url::Host::Domain(_)));
+
+    if normalized_host.is_empty()
+        || (is_domain && !normalized_host.contains('.'))
+        || is_special_use_domain(&normalized_host)
+        || normalized_host.ends_with(".internal")
+        || normalized_host == "metadata.google.internal"
+    {
+        return Err("Access to local or reserved hostnames is forbidden");
+    }
+
     match parsed.host() {
-        Some(url::Host::Ipv4(ip)) => {
-            if is_private_ipv4(&ip) {
-                return Err("Access to private/reserved IP addresses is forbidden");
-            }
+        Some(url::Host::Ipv4(ip)) if is_non_public_ip(std::net::IpAddr::V4(ip)) => {
+            return Err("Access to private/reserved IP addresses is forbidden");
         }
-        Some(url::Host::Ipv6(ip)) => {
-            if ip.is_loopback() || ip.is_unspecified() {
-                return Err("Access to private/reserved IP addresses is forbidden");
-            }
-
-            let seg = ip.segments();
-
-            // IPv4-mapped IPv6 (::ffff:x.x.x.x)
-            if seg[0] == 0
-                && seg[1] == 0
-                && seg[2] == 0
-                && seg[3] == 0
-                && seg[4] == 0
-                && seg[5] == 0xffff
-            {
-                let mapped = std::net::Ipv4Addr::new(
-                    (seg[6] >> 8) as u8,
-                    seg[6] as u8,
-                    (seg[7] >> 8) as u8,
-                    seg[7] as u8,
-                );
-                if is_private_ipv4(&mapped) {
-                    return Err("Access to private/reserved IP addresses is forbidden");
-                }
-            }
-
-            // IPv6 link-local (fe80::/10)
-            if (seg[0] & 0xffc0) == 0xfe80 {
-                return Err("Access to private/reserved IP addresses is forbidden");
-            }
-
-            // IPv6 unique-local (fc00::/7)
-            if (seg[0] & 0xfe00) == 0xfc00 {
-                return Err("Access to private/reserved IP addresses is forbidden");
-            }
+        Some(url::Host::Ipv6(ip)) if is_non_public_ip(std::net::IpAddr::V6(ip)) => {
+            return Err("Access to private/reserved IP addresses is forbidden");
         }
-        _ => {} // Domain names pass through (validated by DNS at fetch time)
+        Some(url::Host::Domain(_)) => {}
+        Some(url::Host::Ipv4(_)) | Some(url::Host::Ipv6(_)) => {}
+        None => return Err("URL must include a hostname"),
     }
 
     Ok(parsed)
@@ -111,6 +181,28 @@ mod tests {
         assert!(validate_proxy_url("http://10.0.0.1").is_err());
         assert!(validate_proxy_url("http://172.16.0.1").is_err());
         assert!(validate_proxy_url("http://192.168.1.1").is_err());
+    }
+
+    #[test]
+    fn rejects_legacy_ipv4_spellings_of_loopback() {
+        // The URL Standard parses these legacy host spellings as IPv4 before
+        // the proxy policy runs; test both canonicalization and rejection.
+        for raw in [
+            "http://127.1/",
+            "http://0177.0.0.1/",
+            "http://0x7f.1/",
+            "http://2130706433/",
+        ] {
+            let parsed = url::Url::parse(raw).expect("valid URL Standard IPv4 spelling");
+            assert!(
+                matches!(parsed.host(), Some(url::Host::Ipv4(ip)) if ip.is_loopback()),
+                "legacy spelling must canonicalize to loopback: {raw}"
+            );
+            assert!(
+                validate_proxy_url(raw).is_err(),
+                "proxy policy must reject loopback spelling: {raw}"
+            );
+        }
     }
 
     #[test]
@@ -146,6 +238,125 @@ mod tests {
         assert!(validate_proxy_url("http://[fc00::1]").is_err());
         // fd00:: — also unique-local
         assert!(validate_proxy_url("http://[fd12::1]").is_err());
+    }
+
+    #[test]
+    fn rejects_credentials_and_reserved_hostname_suffixes() {
+        for url in [
+            "https://user:password@example.com/",
+            "https://@example.com/",
+            "http://LOCALHOST./",
+            "http://metadata.google.internal./",
+            "http://service.local/",
+            "http://printer.localhost/",
+            "http://database.internal/",
+            "http://testhost.test/",
+            "http://host.invalid/",
+            "http://eap-server.eap.arpa/",
+            "http://legacy.eap-noob.arpa/",
+            "http://private.home.arpa/",
+            "http://HOME.ARPA./",
+            "http://dns.resolver.arpa/",
+            "http://default.service.arpa/",
+            "http://dns64.ipv4only.arpa/",
+            "http://node.alt/",
+            "http://service.onion/",
+            "http://database/",
+            "http://metadata/",
+        ] {
+            assert!(validate_proxy_url(url).is_err(), "must reject {url}");
+        }
+    }
+
+    #[test]
+    fn example_domains_remain_valid_and_suffix_matching_respects_label_boundaries() {
+        // RFC 6761 §6.5 says applications should use example names normally.
+        // Keep examples accepted, even though the IANA special-use registry lists them.
+        for url in [
+            "https://example.com/",
+            "https://api.example.net/",
+            "https://api.example.org/",
+            "https://fixture.example/",
+            "https://notexample.com/",
+            "https://apihome.arpa/",
+            "https://service-arpa.example.com.attacker.net/",
+        ] {
+            assert!(
+                validate_proxy_url(url).is_ok(),
+                "hostname should remain eligible for DNS policy: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_noncanonical_ipv4_literal_spellings() {
+        // WHATWG URL parsing accepts legacy shorthand, integer, hexadecimal,
+        // and octal IPv4 forms. Ensure they are normalized to literal IPs and
+        // then pass through the same destination policy as dotted-decimal IPs.
+        for raw in [
+            "http://127.1/",
+            "http://2130706433/",
+            "http://0x7f000001/",
+            "http://0177.0.0.1/",
+        ] {
+            let parsed = url::Url::parse(raw).expect("URL fixture must parse");
+            assert!(
+                matches!(parsed.host(), Some(url::Host::Ipv4(_))),
+                "fixture must parse as an IPv4 literal: {raw} -> {parsed}"
+            );
+            assert!(
+                validate_proxy_url(raw).is_err(),
+                "must reject noncanonical private IPv4 spelling {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_special_purpose_ipv4_ranges() {
+        for ip in [
+            "0.0.0.1",
+            "100.64.0.1",
+            "192.0.0.8",
+            "192.0.2.1",
+            "192.88.99.1",
+            "198.18.0.1",
+            "198.51.100.1",
+            "203.0.113.1",
+            "224.0.0.1",
+            "240.0.0.1",
+        ] {
+            let parsed = ip.parse().unwrap();
+            assert!(
+                is_non_public_ip(std::net::IpAddr::V4(parsed)),
+                "must reject {ip}"
+            );
+            assert!(validate_proxy_url(&format!("http://{ip}/")).is_err());
+        }
+    }
+
+    #[test]
+    fn rejects_non_global_ipv6_special_ranges() {
+        for ip in [
+            "2001:db8::1",     // documentation
+            "2001::1",         // IETF protocol assignments
+            "2002:7f00:1::",   // 6to4 can encode loopback IPv4
+            "3fff::1",         // documentation
+            "ff02::1",         // multicast
+            "64:ff9b::7f00:1", // NAT64 translated special destination
+        ] {
+            let parsed = ip.parse().unwrap();
+            assert!(
+                is_non_public_ip(std::net::IpAddr::V6(parsed)),
+                "must reject {ip}"
+            );
+            assert!(validate_proxy_url(&format!("http://[{ip}]/")).is_err());
+        }
+    }
+
+    #[test]
+    fn accepts_unambiguously_global_ip_literals() {
+        assert!(!is_non_public_ip("1.1.1.1".parse().unwrap()));
+        assert!(!is_non_public_ip("2606:4700:4700::1111".parse().unwrap()));
     }
 
     #[test]

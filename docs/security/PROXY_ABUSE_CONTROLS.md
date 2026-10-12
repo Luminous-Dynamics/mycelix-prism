@@ -16,12 +16,12 @@ Rate limits are IP-based, not account identity. Users sharing NAT may share a qu
 
 Every applicable route uses an independent, per-client sliding 60-second budget. Requests are charged before handler/upstream work; bounded request bodies are then charged by their actual byte length. Response bodies are bounded and counted before delivery to the client; the budget counts the application response body before the outer HTTP compression layer.
 
-| Route class | Routes | Requests/minute per client | Ingress bytes/minute | Response-body bytes/minute (before HTTP compression) |
+| Route class | Routes | Requests/minute per client | In-flight requests per client | Ingress bytes/minute | Response-body bytes/minute (before HTTP compression) |
 |---|---|---:|---:|---:|
-| Generic proxy | `/proxy` | 30 | 512 KiB | 64 MiB |
-| Search | `/api/ddg`, `/api/brave` | 30 | 256 KiB | 16 MiB |
-| Metered provider | `/api/perplexity` | 8 | 2 MiB | 16 MiB |
-| Symthaea bridge | `/api/symthaea/query` | 4 | 128 KiB | 4 MiB |
+| Generic proxy | `/proxy` | 30 | 2 | 512 KiB | 64 MiB |
+| Search | `/api/ddg`, `/api/brave` | 30 | 2 | 256 KiB | 16 MiB |
+| Metered provider | `/api/perplexity` | 8 | 1 | 2 MiB | 16 MiB |
+| Symthaea bridge | `/api/symthaea/query` | 4 | 1 | 128 KiB | 4 MiB |
 
 The global request-body cap is 1 MiB. The proxy middleware caps a single response body at 10 MiB and bounds body reading by a deadline. The response-byte budget is separate from that per-response hard cap.
 
@@ -29,7 +29,7 @@ The in-memory client table is capped at 4,096 active IP keys and idle entries ex
 
 ## Concurrency and backpressure
 
-| Route class | In-flight request cap | Handler deadline |
+| Route class | In-flight request cap (process-wide) | Route deadline |
 |---|---:|---:|
 | Generic proxy | 12 | 20 seconds |
 | Search | 12 | 20 seconds |
@@ -40,7 +40,7 @@ The route-level concurrency layer wraps quota middleware as well as handler exec
 
 ## Client-visible outcomes
 
-- **HTTP 429 Too Many Requests:** request-rate, ingress-byte, or egress-byte budget exhausted. A `Retry-After: 60` header is provided.
+- **HTTP 429 Too Many Requests:** request-rate or ingress/response byte budget exhausted (`Retry-After: 60`), or the per-client in-flight cap is reached (`Retry-After: 1`).
 - **HTTP 503 Service Unavailable:** route capacity/deadline exhausted, or the bounded quota table cannot admit a new client.
 - **HTTP 413 Payload Too Large:** request body exceeds the request cap.
 - **HTTP 408 Request Timeout / 504 Gateway Timeout / 502 Bad Gateway:** bounded body/request processing did not complete or violated a body safety limit.

@@ -52,21 +52,25 @@ impl QuotaClass {
             // The proxy response is separately capped at 10 MiB per request.
             Self::GenericProxy => Policy {
                 requests: 30,
+                in_flight: 2,
                 ingress_bytes: 512 * 1024,
                 response_bytes: 64 * 1024 * 1024,
             },
             Self::Search => Policy {
                 requests: 30,
+                in_flight: 2,
                 ingress_bytes: 256 * 1024,
                 response_bytes: 16 * 1024 * 1024,
             },
             Self::Provider => Policy {
                 requests: 8,
+                in_flight: 1,
                 ingress_bytes: 2 * 1024 * 1024,
                 response_bytes: 16 * 1024 * 1024,
             },
             Self::Symthaea => Policy {
                 requests: 4,
+                in_flight: 1,
                 ingress_bytes: 128 * 1024,
                 response_bytes: 4 * 1024 * 1024,
             },
@@ -77,6 +81,7 @@ impl QuotaClass {
 #[derive(Debug, Clone, Copy)]
 struct Policy {
     requests: usize,
+    in_flight: usize,
     ingress_bytes: usize,
     response_bytes: usize,
 }
@@ -89,6 +94,8 @@ pub enum QuotaRejection {
     IngressBytes,
     /// The route's rolling one-minute egress-byte allowance is exhausted.
     ResponseBytes,
+    /// This client has reached its in-flight request cap for the route class.
+    InFlight,
     /// The bounded state table is full of active client entries.
     ClientTableFull,
     /// The original request ticket disappeared before its body could be charged.
@@ -120,6 +127,7 @@ struct Bucket {
 struct ClientUsage {
     last_seen: Option<Instant>,
     buckets: HashMap<QuotaClass, Bucket>,
+    in_flight: HashMap<QuotaClass, usize>,
 }
 
 /// Proof that a request consumed one rate slot; middleware uses it to charge
@@ -176,6 +184,9 @@ impl ClientQuota {
         let usage = self.clients.entry(client).or_default();
         usage.last_seen = Some(now);
         let policy = class.policy();
+        if usage.in_flight.get(&class).copied().unwrap_or(0) >= policy.in_flight {
+            return Err(QuotaRejection::InFlight);
+        }
         let bucket = usage.buckets.entry(class).or_default();
         purge_expired(bucket, now);
 
@@ -194,8 +205,26 @@ impl ClientQuota {
             ingress_bytes: known_bytes,
         });
         bucket.ingress_bytes = bucket.ingress_bytes.saturating_add(known_bytes);
+        *usage.in_flight.entry(class).or_default() += 1;
 
         Ok(QuotaTicket { client, class, event_id })
+    }
+
+    /// Release a request's in-flight slot. Middleware owns an RAII guard so
+    /// cancellation, timeout, and early error returns also release capacity.
+    pub fn release_request(&mut self, ticket: QuotaTicket) {
+        let Some(usage) = self.clients.get_mut(&ticket.client) else {
+            return;
+        };
+        let remove_entry = if let Some(count) = usage.in_flight.get_mut(&ticket.class) {
+            *count = count.saturating_sub(1);
+            *count == 0
+        } else {
+            false
+        };
+        if remove_entry {
+            usage.in_flight.remove(&ticket.class);
+        }
     }
 
     /// Charge bytes read from the request body. A failed byte charge keeps the
@@ -359,6 +388,12 @@ impl ClientQuotaState {
             .charge_body(ticket, body_bytes)
     }
 
+    pub fn release_request(&self, ticket: QuotaTicket) {
+        if let Ok(mut limiter) = self.limiter.lock() {
+            limiter.release_request(ticket);
+        }
+    }
+
     pub fn charge_response(
         &self,
         client: IpAddr,
@@ -409,6 +444,30 @@ mod tests {
             Err(QuotaRejection::RequestRate)
         );
         assert!(quota.admit_request(client, QuotaClass::GenericProxy, 1, start + WINDOW).is_ok());
+    }
+
+    #[test]
+    fn per_client_in_flight_cap_releases_on_completion_or_cancellation() {
+        let start = Instant::now();
+        let client = ip("192.0.2.15");
+        let mut quota = ClientQuota::with_capacity(4);
+        let first = quota
+            .admit_request(client, QuotaClass::GenericProxy, 0, start)
+            .unwrap();
+        let second = quota
+            .admit_request(client, QuotaClass::GenericProxy, 0, start)
+            .unwrap();
+
+        assert_eq!(
+            quota.admit_request(client, QuotaClass::GenericProxy, 0, start),
+            Err(QuotaRejection::InFlight)
+        );
+
+        quota.release_request(first);
+        assert!(quota
+            .admit_request(client, QuotaClass::GenericProxy, 0, start)
+            .is_ok());
+        quota.release_request(second);
     }
 
     #[test]

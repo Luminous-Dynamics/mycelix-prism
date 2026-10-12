@@ -77,9 +77,10 @@ pub fn is_non_public_ip(ip: std::net::IpAddr) -> bool {
 }
 
 // IANA's Special-Use Domain Names registry (including subdomains) is the
-// source of truth for this curated set. Review it when the registry changes.
-// Reverse-lookup zones are omitted; literal IP destinations are handled by the
-// address policy below.
+// source of this curated set. Review it when the registry changes. RFC 6761 §6.5
+// says applications should use example names normally, so example.com/net/org
+// and .example are deliberately not rejected solely for being examples.
+// Reverse-lookup zones are omitted; literal IPs use the address policy below.
 const SPECIAL_USE_DOMAIN_SUFFIXES: &[&str] = &[
     "alt",
     "6tisch.arpa",
@@ -89,10 +90,6 @@ const SPECIAL_USE_DOMAIN_SUFFIXES: &[&str] = &[
     "ipv4only.arpa",
     "resolver.arpa",
     "service.arpa",
-    "example",
-    "example.com",
-    "example.net",
-    "example.org",
     "invalid",
     "local",
     "localhost",
@@ -254,10 +251,6 @@ mod tests {
             "http://printer.localhost/",
             "http://database.internal/",
             "http://testhost.test/",
-            "http://fixture.example/",
-            "http://example.com/",
-            "http://api.example.net/",
-            "http://api.example.org/",
             "http://private.home.arpa/",
             "http://HOME.ARPA./",
             "http://dns.resolver.arpa/",
@@ -273,16 +266,21 @@ mod tests {
     }
 
     #[test]
-    fn special_use_suffix_matching_respects_label_boundaries() {
-        // Substring matches alone must not reject unrelated globally scoped names.
+    fn example_domains_remain_valid_and_suffix_matching_respects_label_boundaries() {
+        // RFC 6761 §6.5 says applications should use example names normally.
+        // Keep examples accepted, even though the IANA special-use registry lists them.
         for url in [
+            "https://example.com/",
+            "https://api.example.net/",
+            "https://api.example.org/",
+            "https://fixture.example/",
             "https://notexample.com/",
             "https://apihome.arpa/",
             "https://service-arpa.example.com.attacker.net/",
         ] {
             assert!(
                 validate_proxy_url(url).is_ok(),
-                "non-special-use hostname must remain eligible for DNS policy: {url}"
+                "hostname should remain eligible for DNS policy: {url}"
             );
         }
     }

@@ -484,7 +484,10 @@ mod tests {
                     Some("60")
                 );
                 assert_eq!(
-                    response.headers().get("access-control-allow-origin").and_then(|v| v.to_str().ok()),
+                    response
+                        .headers()
+                        .get("access-control-allow-origin")
+                        .and_then(|v| v.to_str().ok()),
                     Some("http://localhost:8130")
                 );
             }

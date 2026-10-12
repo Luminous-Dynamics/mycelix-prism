@@ -229,46 +229,73 @@ def validate_checkout_refs(path_label: str, content: str) -> list[str]:
     return errors
 
 def validate_token_scope(path_label: str, content: str) -> list[str]:
-    """Keep the workflow token scoped to the two explicit lock-publication steps."""
+    """Keep the workflow token scoped to explicit shell-only publication steps."""
     lines = content.splitlines()
     errors: list[str] = []
     in_jobs = False
     current_job: str | None = None
     current_step: str | None = None
+    current_step_start: int | None = None
+    token_lines: list[tuple[int, str | None, str | None, int | None, str]] = []
     allowed_token_line = "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}"
 
-    for line_number, line in enumerate(lines, start=1):
+    for index, line in enumerate(lines):
         if line == "jobs:":
             in_jobs = True
             current_job = None
             current_step = None
+            current_step_start = None
             continue
         if in_jobs and line.strip() and not line.startswith(" "):
             in_jobs = False
             current_job = None
             current_step = None
+            current_step_start = None
 
         if in_jobs:
             job_match = JOB_RE.fullmatch(line)
             if job_match:
                 current_job = job_match.group(1)
                 current_step = None
-            step_name = re.match(r"^      - name\s*:\s*(.*?)\s*$", line)
-            if step_name:
-                current_step = step_name.group(1).strip().strip("'\\\"")
-            elif re.match(r"^      - uses\s*:", line):
-                current_step = None
+                current_step_start = None
 
-        if not TOKEN_ACCESS_RE.search(line):
-            continue
+            step_match = STEP_START_RE.match(line)
+            if step_match and len(step_match.group("indent")) == 6:
+                current_step_start = index
+                name_match = re.match(r"^      - name\s*:\s*(.*?)\s*$", line)
+                current_step = name_match.group(1).strip() if name_match else None
+
+        if TOKEN_ACCESS_RE.search(line):
+            token_lines.append((index, current_job, current_step, current_step_start, line))
+
+    for index, job_name, step_name, step_start, line in token_lines:
+        allowed_step_shape = False
+        if step_start is not None:
+            step_lines = [lines[step_start]]
+            for candidate in lines[step_start + 1 :]:
+                next_step = STEP_START_RE.match(candidate)
+                if (
+                    (next_step and len(next_step.group("indent")) == 6)
+                    or JOB_RE.fullmatch(candidate)
+                    or (candidate.strip() and not candidate.startswith(" "))
+                ):
+                    break
+                step_lines.append(candidate)
+
+            step_starts_with_uses = bool(re.match(r"^ {6}-\s*uses\s*:", step_lines[0]))
+            nested_uses = any(re.match(r"^ {8}uses\s*:", item) for item in step_lines[1:])
+            has_run = any(re.match(r"^ {8}run\s*:", item) for item in step_lines[1:])
+            allowed_step_shape = has_run and not step_starts_with_uses and not nested_uses
+
         if (
-            current_job != LOCK_RECOVERY_JOB
-            or current_step not in LOCK_RECOVERY_TOKEN_STEPS
+            job_name != LOCK_RECOVERY_JOB
+            or step_name not in LOCK_RECOVERY_TOKEN_STEPS
             or line != allowed_token_line
+            or not allowed_step_shape
         ):
             errors.append(
-                f"{path_label}:{line_number}: workflow token may only be exposed as "
-                "GH_TOKEN in the two named lock-publication steps"
+                f"{path_label}:{index + 1}: workflow token may only be exposed as GH_TOKEN "
+                "inside the two named shell-only lock-publication steps"
             )
 
     return errors

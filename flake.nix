@@ -43,6 +43,19 @@
             openssl
           ];
 
+          # Fast formatting lane: intentionally omits GTK/WebKit/Tauri inputs.
+          mkFmtShell = version: pkgs.mkShell {
+            packages = [
+              (pkgs.rust-bin.stable.${version}.minimal.override {
+                extensions = [ "rustfmt" ];
+              })
+            ];
+
+            shellHook = ''
+              echo "Prism format shell: Rust ${version} with rustfmt only."
+            '';
+          };
+
           mkPrismShell = version: pkgs.mkShell {
             packages = commonPackages ++ [ (rustToolchain version) ];
 
@@ -78,6 +91,9 @@
 
           # Compatibility lane if Prism commits to Rust 1.96.1 as its MSRV.
           msrv = mkPrismShell "1.96.1";
+
+          # Fast, independent formatting check; no UI system dependencies.
+          fmt = mkFmtShell "1.99.0";
         });
     };
 }

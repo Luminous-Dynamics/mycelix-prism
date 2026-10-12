@@ -46,6 +46,8 @@ pub struct FetchedResponse {
     pub content_type: String,
     pub body: Vec<u8>,
     pub final_url: Url,
+    /// Number of redirect hops validated and followed before the final response.
+    pub redirect_count: usize,
 }
 
 /// Validate a set of DNS answers and return pinned socket addresses.
@@ -298,6 +300,7 @@ async fn fetch_public_get_with_resolver(
     let validated = validate_proxy_url(initial_url.as_str())
         .map_err(|reason| SafeFetchError::Policy(reason.to_string()))?;
     let mut current = normalize_domain_host(validated)?;
+    let mut redirect_count = 0usize;
 
     for hop in 0..=max_redirects {
         let client = client_for_url(&current, user_agent, timeout, resolver).await?;
@@ -320,6 +323,7 @@ async fn fetch_public_get_with_resolver(
                 })?
                 .to_string();
             current = validate_redirect_target(&current, &location)?;
+            redirect_count = redirect_count.saturating_add(1);
             // Drop this response without reading its body; the next hop gets
             // a newly resolved and pinned client before any outbound request.
             drop(response);
@@ -340,6 +344,7 @@ async fn fetch_public_get_with_resolver(
             content_type,
             body,
             final_url: current,
+            redirect_count,
         });
     }
 
@@ -539,6 +544,7 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(response.body, b"ok");
         assert_eq!(response.final_url.host_str(), Some("target.example.com"));
+        assert_eq!(response.redirect_count, 1, "one validated redirect should be counted");
         let seen = resolver.seen();
         assert_eq!(
             seen,

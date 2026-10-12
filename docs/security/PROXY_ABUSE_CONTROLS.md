@@ -8,7 +8,7 @@ The unified `prism-serve` process binds to `127.0.0.1:8130` by default. A non-lo
 
 The standalone `prism-proxy` remains bound to `127.0.0.1:8131`; it does not expose a public-bind switch.
 
-When the service is behind a reverse proxy, set `PRISM_TRUSTED_PROXY_IPS` to a comma-separated list of the reverse proxy's exact peer IP addresses. CIDRs are rejected. Forwarding headers are ignored unless the immediate socket peer is explicitly trusted. The resolver walks `X-Forwarded-For` from right to left and skips configured trusted proxies; a malformed suffix falls back to the immediate peer. Do not add client-controlled hosts to the trusted list. Direct deployments can leave this variable unset.
+When the service is behind a reverse proxy, set `PRISM_TRUSTED_PROXY_IPS` to a comma-separated list of the reverse proxy's exact peer IP addresses. CIDRs are rejected. IPv4-mapped IPv6 spellings are canonicalized to their IPv4 address for quota keys and trusted-proxy matching, so one IPv4 caller cannot gain a second quota identity through dual-stack representation. Forwarding headers are ignored unless the immediate socket peer is explicitly trusted. The resolver walks `X-Forwarded-For` from right to left and skips configured trusted proxies; a malformed suffix falls back to the immediate peer. Do not add client-controlled hosts to the trusted list. Direct deployments can leave this variable unset.
 
 Rate limits are IP-based, not account identity. Users sharing NAT may share a quota; clients that can change their public IP may obtain separate quotas. These controls reduce accidental and single-source abuse but are not a replacement for authenticated ingress, network-level defenses, or provider billing controls.
 

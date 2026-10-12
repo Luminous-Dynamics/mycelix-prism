@@ -253,10 +253,10 @@ def validate_token_scope(path_label: str, content: str) -> list[str]:
             if job_match:
                 current_job = job_match.group(1)
                 current_step = None
-            step_name = re.match(r"^      - name\\s*:\\s*(.*?)\\s*$", line)
+            step_name = re.match(r"^      - name\s*:\s*(.*?)\s*$", line)
             if step_name:
                 current_step = step_name.group(1).strip().strip("'\\\"")
-            elif re.match(r"^      - uses\\s*:", line):
+            elif re.match(r"^      - uses\s*:", line):
                 current_step = None
 
         if not TOKEN_ACCESS_RE.search(line):

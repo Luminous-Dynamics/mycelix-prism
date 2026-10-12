@@ -63,7 +63,7 @@ async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
     let validated = match validate_proxy_url(&params.url) {
         Ok(u) => u,
         Err(reason) => {
-            log::warn!("Blocked proxy request to {}: {}", params.url, reason);
+            log::warn!("Blocked proxy destination: {}", reason);
             return (StatusCode::FORBIDDEN, reason.to_string()).into_response();
         }
     };
@@ -91,10 +91,10 @@ async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
                         .unwrap_or_else(|_| internal_error_response())
                         .into_response()
                 }
-                Err(e) => (StatusCode::BAD_GATEWAY, format!("Read failed: {}", e)).into_response(),
+                Err(_) => (StatusCode::BAD_GATEWAY, "Failed to read upstream response body").into_response(),
             }
         }
-        Err(e) => (StatusCode::BAD_GATEWAY, format!("Fetch failed: {}", e)).into_response(),
+        Err(_) => (StatusCode::BAD_GATEWAY, "Upstream request failed").into_response(),
     }
 }
 
@@ -119,7 +119,7 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
                 .unwrap_or_else(|_| internal_error_response())
                 .into_response()
         }
-        Err(e) => (StatusCode::BAD_GATEWAY, format!("DDG fetch failed: {}", e)).into_response(),
+        Err(_) => (StatusCode::BAD_GATEWAY, "DuckDuckGo upstream request failed").into_response(),
     }
 }
 
@@ -161,9 +161,9 @@ async fn brave_handler(
                 .unwrap_or_else(|_| internal_error_response())
                 .into_response()
         }
-        Err(e) => (
+        Err(_) => (
             StatusCode::BAD_GATEWAY,
-            format!("Brave fetch failed: {}", e),
+            "Brave Search upstream request failed",
         )
             .into_response(),
     }
@@ -199,9 +199,9 @@ async fn perplexity_handler(
                 .unwrap_or_else(|_| internal_error_response())
                 .into_response()
         }
-        Err(e) => (
+        Err(_) => (
             StatusCode::BAD_GATEWAY,
-            format!("Perplexity fetch failed: {}", e),
+            "Perplexity upstream request failed",
         )
             .into_response(),
     }
@@ -340,8 +340,8 @@ async fn symthaea_query_handler(
 
     let response_line = match result {
         Ok(line) => line,
-        Err(e) => {
-            log::warn!("Symthaea bridge error: {}", e);
+        Err(_) => {
+            log::warn!("Symthaea bridge request failed");
             return (StatusCode::BAD_GATEWAY, "Symthaea unavailable").into_response();
         }
     };
@@ -352,11 +352,7 @@ async fn symthaea_query_handler(
     };
 
     if parsed.get("type").and_then(|t| t.as_str()) == Some("error") {
-        let msg = parsed
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("Symthaea error");
-        log::warn!("Symthaea returned an error response: {}", msg);
+        log::warn!("Symthaea returned an error response");
         return (StatusCode::BAD_GATEWAY, "Symthaea error").into_response();
     }
 

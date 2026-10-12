@@ -56,12 +56,13 @@ async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
     let validated = match validate_proxy_url(&params.url) {
         Ok(u) => u,
         Err(reason) => {
-            log::warn!("Blocked proxy request to {}: {}", params.url, reason);
+            log::warn!("Blocked proxy destination: {}", reason);
             return (StatusCode::FORBIDDEN, reason.to_string()).into_response();
         }
     };
 
-    log::info!("Proxying: {}", validated);
+    let host = validated.host_str().unwrap_or("<unknown>");
+    log::info!("Proxy request for host {}", host);
 
     let client = build_client("Prism/0.1 (proxy; +https://luminousdynamics.org)", 15);
 
@@ -92,14 +93,14 @@ async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
                         .unwrap_or_else(|_| internal_error_response())
                         .into_response()
                 }
-                Err(e) => (
+                Err(_) => (
                     StatusCode::BAD_GATEWAY,
-                    format!("Failed to read response body: {}", e),
+                    "Failed to read upstream response body",
                 )
                     .into_response(),
             }
         }
-        Err(e) => (StatusCode::BAD_GATEWAY, format!("Fetch failed: {}", e)).into_response(),
+        Err(_) => (StatusCode::BAD_GATEWAY, "Upstream request failed").into_response(),
     }
 }
 
@@ -114,7 +115,7 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
         "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
         params.q.replace(' ', "+")
     );
-    log::info!("DDG proxy: {}", params.q);
+    log::info!("DuckDuckGo proxy request");
 
     let client = build_client("Prism/0.2 (ddg-proxy)", 10);
 
@@ -123,7 +124,7 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
             let body = resp.bytes().await.unwrap_or_default();
             json_response(200, body).into_response()
         }
-        Err(e) => (StatusCode::BAD_GATEWAY, format!("DDG fetch failed: {}", e)).into_response(),
+        Err(_) => (StatusCode::BAD_GATEWAY, "DuckDuckGo upstream request failed").into_response(),
     }
 }
 
@@ -150,7 +151,7 @@ async fn brave_handler(
         "https://api.search.brave.com/res/v1/web/search?q={}",
         params.q.replace(' ', "+")
     );
-    log::info!("Brave proxy: {}", params.q);
+    log::info!("Brave Search proxy request");
 
     let client = build_client("Prism/0.2 (brave-proxy)", 15);
 
@@ -166,9 +167,9 @@ async fn brave_handler(
             let body = resp.bytes().await.unwrap_or_default();
             json_response(status, body).into_response()
         }
-        Err(e) => (
+        Err(_) => (
             StatusCode::BAD_GATEWAY,
-            format!("Brave fetch failed: {}", e),
+            "Brave Search upstream request failed",
         )
             .into_response(),
     }
@@ -205,9 +206,9 @@ async fn perplexity_handler(
             let body = resp.bytes().await.unwrap_or_default();
             json_response(status, body).into_response()
         }
-        Err(e) => (
+        Err(_) => (
             StatusCode::BAD_GATEWAY,
-            format!("Perplexity fetch failed: {}", e),
+            "Perplexity upstream request failed",
         )
             .into_response(),
     }

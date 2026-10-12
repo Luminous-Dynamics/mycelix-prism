@@ -582,7 +582,7 @@ fn validate_bind_addr(
 
     if !addr.ip().is_loopback() && !allow_non_loopback {
         return Err(
-            "Refusing non-loopback PRISM_ADDR by default; set PRISM_ALLOW_NON_LOOPBACK_BIND=1 only when a trusted ingress/authentication layer protects this service"
+            "Non-loopback PRISM_ADDR requires PRISM_ALLOW_NON_LOOPBACK_BIND=1 and trusted ingress"
                 .to_string(),
         );
     }
@@ -621,7 +621,7 @@ async fn main() {
 
     if !addr.ip().is_loopback() {
         log::warn!(
-            "Non-loopback bind enabled; place Prism behind a trusted ingress/authentication layer. CORS is not access control."
+            "Non-loopback bind enabled; use trusted ingress/auth. CORS is not access control."
         );
     }
     log::info!("Prism unified server on {} (dist: {})", addr, dist_path);

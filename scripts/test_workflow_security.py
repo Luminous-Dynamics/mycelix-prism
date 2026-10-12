@@ -76,6 +76,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
 """
         self.assertEqual(validate_workflow_text("ci.yml", content), [])
 
@@ -93,6 +95,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
 """
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(
@@ -120,12 +124,74 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
 """
                 errors = validate_workflow_text("ci.yml", content)
                 self.assertTrue(
                     any("pull_request_target trigger is forbidden" in error for error in errors),
                     msg=f"did not reject trigger form: {trigger}",
                 )
+
+    def test_rejects_checkout_without_explicit_ref(self) -> None:
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  policy:
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+"""
+        errors = validate_workflow_text("ci.yml", content)
+        self.assertTrue(
+            any("must declare exactly one immutable ref" in error for error in errors)
+        )
+
+    def test_rejects_checkout_moving_branch_ref(self) -> None:
+        moving_ref = "$" + "{{ github.head_ref }}"
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  policy:
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: {moving_ref}
+"""
+        errors = validate_workflow_text("ci.yml", content)
+        self.assertTrue(
+            any("approved immutable event SHA expression" in error for error in errors)
+        )
+
+    def test_accepts_checkout_pinned_to_pull_request_head(self) -> None:
+        safe_ref = "$" + "{{ github.event.pull_request.head.sha || github.sha }}"
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  policy:
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: {safe_ref}
+"""
+        self.assertEqual(validate_workflow_text("ci.yml", content), [])
 
     def test_rejects_missing_permissions_baseline(self) -> None:
         content = f"""name: test
@@ -135,6 +201,8 @@ jobs:
   policy:
     steps:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
 """
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(any("top-level permissions" in error for error in errors))
@@ -150,6 +218,8 @@ jobs:
   policy:
     steps:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
 """
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(any("top-level permissions" in error for error in errors))
@@ -170,6 +240,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
 """
         self.assertEqual(validate_workflow_text("ci.yml", content), [])
 
@@ -188,6 +260,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
 """
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(any("job-level permissions are forbidden" in error for error in errors))
@@ -209,6 +283,8 @@ jobs:
       statuses: write
     steps:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
 """
         self.assertEqual(validate_workflow_text("ci.yml", content), [])
 
@@ -229,6 +305,8 @@ jobs:
       statuses: write
     steps:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
 """
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(any("lacks required same-repository/event/ref gates" in error for error in errors))

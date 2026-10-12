@@ -63,7 +63,7 @@ pub async fn enforce_client_quota(
             }
             #[cfg(not(test))]
             {
-                log::error!("Proxy quota middleware received a request without ConnectInfo");
+                log::error!("Proxy quota middleware received a request without ConnectInfo: class={:?}", class);
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     "Client identity unavailable",
@@ -82,7 +82,7 @@ pub async fn enforce_client_quota(
 
     let ticket = match state.admit_request(client, class, target_bytes) {
         Ok(ticket) => ticket,
-        Err(reason) => return rejection_response(reason),
+        Err(reason) => return rejection_response(class, reason),
     };
     // Drop always releases the slot, including every early return and task cancellation.
     let _in_flight = InFlightGuard {
@@ -99,6 +99,7 @@ pub async fn enforce_client_quota(
         .and_then(|value| value.parse::<u64>().ok())
         .is_some_and(|length| length > MAX_PROXY_REQUEST_BODY_BYTES as u64)
     {
+        log::warn!("Proxy request rejected: class={:?} reason=request_body_too_large", class);
         return (StatusCode::PAYLOAD_TOO_LARGE, "Request body too large").into_response();
     }
 
@@ -111,15 +112,17 @@ pub async fn enforce_client_quota(
     {
         Ok(Ok(bytes)) => bytes,
         Ok(Err(_)) => {
-            return (StatusCode::PAYLOAD_TOO_LARGE, "Request body too large").into_response();
+            log::warn!("Proxy request rejected: class={:?} reason=request_body_too_large", class);
+        return (StatusCode::PAYLOAD_TOO_LARGE, "Request body too large").into_response();
         }
         Err(_) => {
+            log::warn!("Proxy request rejected: class={:?} reason=request_body_timeout", class);
             return (StatusCode::REQUEST_TIMEOUT, "Request body read timed out").into_response();
         }
     };
 
     if let Err(reason) = state.charge_body(ticket, body_bytes.len()) {
-        return rejection_response(reason);
+        return rejection_response(class, reason);
     }
 
     let response = next
@@ -138,6 +141,7 @@ pub async fn enforce_client_quota(
     {
         Ok(Ok(bytes)) => bytes,
         Ok(Err(_)) => {
+            log::warn!("Proxy upstream response rejected: class={:?} reason=response_body_too_large", class);
             return (
                 StatusCode::BAD_GATEWAY,
                 "Proxy response exceeds safety limit",
@@ -145,6 +149,7 @@ pub async fn enforce_client_quota(
                 .into_response();
         }
         Err(_) => {
+            log::warn!("Proxy upstream response unavailable: class={:?} reason=response_body_timeout", class);
             return (
                 StatusCode::GATEWAY_TIMEOUT,
                 "Proxy response did not complete",
@@ -154,7 +159,7 @@ pub async fn enforce_client_quota(
     };
 
     if let Err(reason) = state.charge_response(client, class, response_bytes.len()) {
-        return rejection_response(reason);
+        return rejection_response(class, reason);
     }
 
     log::info!(
@@ -167,10 +172,10 @@ pub async fn enforce_client_quota(
     Response::from_parts(response_parts, Body::from(response_bytes))
 }
 
-fn rejection_response(reason: QuotaRejection) -> Response {
+fn rejection_response(class: QuotaClass, reason: QuotaRejection) -> Response {
     match reason {
         QuotaRejection::RequestRate => {
-            log::warn!("Proxy client quota denied: request rate");
+            log::warn!("Proxy client quota denied: class={:?} reason=request_rate", class);
             (
                 StatusCode::TOO_MANY_REQUESTS,
                 [(axum::http::header::RETRY_AFTER, "60")],
@@ -179,7 +184,7 @@ fn rejection_response(reason: QuotaRejection) -> Response {
                 .into_response()
         }
         QuotaRejection::IngressBytes => {
-            log::warn!("Proxy client quota denied: ingress byte budget");
+            log::warn!("Proxy client quota denied: class={:?} reason=ingress_byte_budget", class);
             (
                 StatusCode::TOO_MANY_REQUESTS,
                 [(axum::http::header::RETRY_AFTER, "60")],
@@ -188,7 +193,7 @@ fn rejection_response(reason: QuotaRejection) -> Response {
                 .into_response()
         }
         QuotaRejection::ResponseBytes => {
-            log::warn!("Proxy client quota denied: response byte budget");
+            log::warn!("Proxy client quota denied: class={:?} reason=response_byte_budget", class);
             (
                 StatusCode::TOO_MANY_REQUESTS,
                 [(axum::http::header::RETRY_AFTER, "60")],
@@ -197,7 +202,7 @@ fn rejection_response(reason: QuotaRejection) -> Response {
                 .into_response()
         }
         QuotaRejection::InFlight => {
-            log::warn!("Proxy client quota denied: in-flight request cap");
+            log::warn!("Proxy client quota denied: class={:?} reason=in_flight_cap", class);
             (
                 StatusCode::TOO_MANY_REQUESTS,
                 [(axum::http::header::RETRY_AFTER, "1")],
@@ -206,7 +211,7 @@ fn rejection_response(reason: QuotaRejection) -> Response {
                 .into_response()
         }
         QuotaRejection::ClientTableFull | QuotaRejection::StaleTicket => {
-            log::warn!("Proxy client quota unavailable");
+            log::warn!("Proxy client quota unavailable: class={:?} reason=state_unavailable", class);
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 [(axum::http::header::RETRY_AFTER, "60")],

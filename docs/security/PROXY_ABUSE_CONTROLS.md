@@ -36,12 +36,12 @@ The in-memory client table is capped at 4,096 active IP keys and idle entries ex
 | Metered provider | 3 | 35 seconds |
 | Symthaea bridge | 3 | 240 seconds |
 
-The server also retains its process-wide concurrency cap. Excess route work is shed with HTTP 503 rather than accumulating an unbounded queue. The Symthaea bridge stays explicit and optional; these quotas do not grant it authority over Prism's trust or security decisions.
+The route-level concurrency layer wraps quota middleware as well as handler execution, so bounded request-body reads and response-body accounting stay inside the per-route in-flight cap and deadline. The server also retains its process-wide concurrency cap. Excess route work is shed with HTTP 503 rather than accumulating an unbounded queue. The Symthaea bridge stays explicit and optional; these quotas do not grant it authority over Prism's trust or security decisions.
 
 ## Client-visible outcomes
 
 - **HTTP 429 Too Many Requests:** request-rate, ingress-byte, or egress-byte budget exhausted. A `Retry-After: 60` header is provided.
-- **HTTP 503 Service Unavailable:** route capacity exhausted, or the bounded quota table cannot admit a new client.
+- **HTTP 503 Service Unavailable:** route capacity/deadline exhausted, or the bounded quota table cannot admit a new client.
 - **HTTP 413 Payload Too Large:** request body exceeds the request cap.
 - **HTTP 408 Request Timeout / 504 Gateway Timeout / 502 Bad Gateway:** bounded body/request processing did not complete or violated a body safety limit.
 

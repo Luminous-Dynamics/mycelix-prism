@@ -16,7 +16,7 @@ use prism_common::client_quota::{
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
-/// Enforce per-client request-rate and ingress-byte quotas before upstream work
+/// Enforce per-client rate, ingress-byte, and response-body quotas before delivery
 /// starts. This middleware reads bodies with an explicit byte cap and deadline,
 /// then restores the body for Axum's normal extractors.
 pub async fn enforce_client_quota(

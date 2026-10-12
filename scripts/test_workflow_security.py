@@ -174,7 +174,7 @@ jobs:
 """
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(
-            any("approved immutable event SHA expression" in error for error in errors)
+            any("approved source-head-aware event SHA expression" in error for error in errors)
         )
 
     def test_accepts_checkout_pinned_to_pull_request_head(self) -> None:
@@ -196,6 +196,28 @@ jobs:
           persist-credentials: false
 """
         self.assertEqual(validate_workflow_text("ci.yml", content), [])
+
+    def test_rejects_checkout_pinned_only_to_github_sha_on_pull_request(self) -> None:
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  policy:
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: ${{{{ github.sha }}}}
+          persist-credentials: false
+"""
+        errors = validate_workflow_text("ci.yml", content)
+        self.assertTrue(
+            any("approved source-head-aware event SHA expression" in error for error in errors)
+        )
 
     def test_rejects_persisted_credentials_in_read_only_checkout(self) -> None:
         safe_ref = "$" + "{{ github.event.pull_request.head.sha || github.sha }}"

@@ -560,7 +560,6 @@ fn build_app_with_quota(
         .layer(CompressionLayer::new())
 }
 
-#[tokio::main]
 fn quota_state_from_env() -> Result<ClientQuotaState, String> {
     let raw = std::env::var("PRISM_TRUSTED_PROXY_IPS").unwrap_or_default();
     if raw.trim().is_empty() {
@@ -587,6 +586,7 @@ fn validate_bind_addr(
     Ok(addr)
 }
 
+#[tokio::main]
 async fn main() {
     env_logger::init();
 

@@ -133,13 +133,25 @@ async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
                 .into_response()
         },
         Err(SafeFetchError::TooLarge) => {
+            log::warn!("Proxy fetch failed: reason=response_too_large");
             (StatusCode::PAYLOAD_TOO_LARGE, "Response too large").into_response()
         }
-        Err(SafeFetchError::Policy(reason)) => {
-            log::warn!("Blocked proxy destination or redirect: {}", reason);
-            (StatusCode::FORBIDDEN, reason).into_response()
+        Err(SafeFetchError::Policy(_)) => {
+            log::warn!("Proxy fetch blocked: reason=destination_policy");
+            (StatusCode::FORBIDDEN, "Destination blocked by proxy policy").into_response()
         }
-        Err(SafeFetchError::Request(reason)) => (StatusCode::BAD_GATEWAY, reason).into_response(),
+        Err(SafeFetchError::RedirectRejected { hop }) => {
+            log::warn!("Proxy redirect rejected: reason=policy hop={}", hop);
+            (StatusCode::FORBIDDEN, "Redirect rejected by proxy policy").into_response()
+        }
+        Err(SafeFetchError::Timeout) => {
+            log::warn!("Proxy fetch failed: reason=upstream_timeout");
+            (StatusCode::GATEWAY_TIMEOUT, "Upstream request timed out").into_response()
+        }
+        Err(SafeFetchError::Request(_)) => {
+            log::warn!("Proxy fetch failed: reason=upstream_transport");
+            (StatusCode::BAD_GATEWAY, "Upstream request failed").into_response()
+        },
     }
 }
 

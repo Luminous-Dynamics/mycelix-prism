@@ -127,7 +127,7 @@ struct Bucket {
 struct ClientUsage {
     last_seen: Option<Instant>,
     buckets: HashMap<QuotaClass, Bucket>,
-    in_flight: HashMap<QuotaClass, usize>,
+    in_flight: HashMap<QuotaClass, HashSet<u64>>,
 }
 
 /// Proof that a request consumed one rate slot; middleware uses it to charge
@@ -184,7 +184,7 @@ impl ClientQuota {
         let usage = self.clients.entry(client).or_default();
         usage.last_seen = Some(now);
         let policy = class.policy();
-        if usage.in_flight.get(&class).copied().unwrap_or(0) >= policy.in_flight {
+        if usage.in_flight.get(&class).map(HashSet::len).unwrap_or(0) >= policy.in_flight {
             return Err(QuotaRejection::InFlight);
         }
         let bucket = usage.buckets.entry(class).or_default();
@@ -205,7 +205,7 @@ impl ClientQuota {
             ingress_bytes: known_bytes,
         });
         bucket.ingress_bytes = bucket.ingress_bytes.saturating_add(known_bytes);
-        *usage.in_flight.entry(class).or_default() += 1;
+        usage.in_flight.entry(class).or_default().insert(event_id);
 
         Ok(QuotaTicket { client, class, event_id })
     }
@@ -216,9 +216,11 @@ impl ClientQuota {
         let Some(usage) = self.clients.get_mut(&ticket.client) else {
             return;
         };
-        let remove_entry = if let Some(count) = usage.in_flight.get_mut(&ticket.class) {
-            *count = (*count).saturating_sub(1);
-            *count == 0
+        // A ticket identifies exactly one active permit. Double-release must
+        // not release another concurrent request's capacity.
+        let remove_entry = if let Some(active_ids) = usage.in_flight.get_mut(&ticket.class) {
+            active_ids.remove(&ticket.event_id);
+            active_ids.is_empty()
         } else {
             false
         };
@@ -467,10 +469,17 @@ mod tests {
         );
 
         quota.release_request(first);
+        quota.release_request(first);
+        assert_eq!(
+            quota.admit_request(client, QuotaClass::GenericProxy, 0, start),
+            Err(QuotaRejection::InFlight),
+            "double release of one ticket must not free another request's slot"
+        );
+
+        quota.release_request(second);
         let third = quota
             .admit_request(client, QuotaClass::GenericProxy, 0, start)
             .unwrap();
-        quota.release_request(second);
         quota.release_request(third);
         assert_eq!(
             quota

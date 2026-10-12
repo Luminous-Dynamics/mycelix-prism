@@ -38,7 +38,7 @@ def iter_macro_invocations(source: str, macro_pattern: re.Pattern[str]):
     line comments, and nested block comments. It is not a complete Rust parser;
     it exists to catch common logging regressions without external dependencies.
     """
-    raw_string_re = re.compile(r"(?:br|r)(?P<hashes>#{0,255})\"")
+    raw_string_re = re.compile(r"(?:br|cr|r)(?P<hashes>#{0,})\"")
     char_literal_re = re.compile(
         r"""'(?:[^'\\\n]|\\(?:[nrt0\\'"]|x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]+\}))'"""
     )

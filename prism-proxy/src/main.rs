@@ -24,6 +24,7 @@ use prism_common::client_quota::{parse_trusted_proxy_ips, ClientQuotaState};
 use prism_common::proxy_limits::MAX_REQUEST_TARGET_BYTES;
 use prism_common::ssrf::validate_proxy_url;
 use std::net::SocketAddr;
+use std::time::Duration;
 use prism_safe_fetch::{SafeFetchError, fetch_public_get, read_limited_body};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
@@ -287,6 +288,23 @@ async fn health() -> &'static str {
     "Prism proxy OK"
 }
 
+macro_rules! route_limit_layer {
+    ($capacity:expr, $timeout:expr) => {
+        tower::ServiceBuilder::new()
+            .layer(axum::error_handling::HandleErrorLayer::new(
+                |_: axum::BoxError| async {
+                    (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Route capacity reached; retry shortly",
+                    )
+                },
+            ))
+            .load_shed()
+            .concurrency_limit($capacity)
+            .timeout($timeout)
+    };
+}
+
 fn build_app() -> Router {
     build_app_with_quota(ClientQuotaState::default())
 }
@@ -312,11 +330,23 @@ fn build_app_with_quota(quota_state: ClientQuotaState) -> Router {
         .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
         .allow_headers(tower_http::cors::Any);
 
-    let app = Router::new()
+    let generic_proxy_route = Router::new()
         .route("/proxy", get(proxy_handler))
+        .layer(route_limit_layer!(12, Duration::from_secs(20)));
+
+    let search_routes = Router::new()
         .route("/api/ddg", get(ddg_handler))
         .route("/api/brave", get(brave_handler))
+        .layer(route_limit_layer!(12, Duration::from_secs(20)));
+
+    let provider_route = Router::new()
         .route("/api/perplexity", axum::routing::post(perplexity_handler))
+        .layer(route_limit_layer!(3, Duration::from_secs(35)));
+
+    let app = Router::new()
+        .merge(generic_proxy_route)
+        .merge(search_routes)
+        .merge(provider_route)
         .route("/health", get(health))
         // Keep bounded body reads inside the concurrency cap and before the handlers.
         .layer(axum::middleware::from_fn_with_state(

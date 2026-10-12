@@ -686,13 +686,16 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
 
     #[tokio::test]
     async fn symthaea_response_line_is_bounded_before_parsing() {
         use tokio::io::AsyncWriteExt;
 
         let (mut writer, stream) = tokio::io::duplex(64);
-        writer.write_all(b"12345678901234567890\\n").await.unwrap();
+        writer.write_all(b"12345678901234567890\n").await.unwrap();
         drop(writer);
         let mut reader = BufReader::new(stream);
 
@@ -708,18 +711,15 @@ mod tests {
         use tokio::io::AsyncWriteExt;
 
         let (mut writer, stream) = tokio::io::duplex(64);
-        writer.write_all(b"{\\"safe\\":true}\\n").await.unwrap();
+        writer.write_all(b"{\"safe\":true}\n").await.unwrap();
         drop(writer);
         let mut reader = BufReader::new(stream);
 
         assert_eq!(
             read_bounded_line(&mut reader, 64).await.unwrap(),
-            "{\\"safe\\":true}\\n"
+            "{\"safe\":true}\n"
         );
     }
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
-    use tower::ServiceExt;
 
     #[tokio::test]
     async fn per_client_in_flight_cap_sheds_excess_and_recovers_after_completion() {

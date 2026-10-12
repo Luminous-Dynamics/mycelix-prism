@@ -1,0 +1,58 @@
+# Prism proxy abuse controls
+
+**Status:** implementation proposal stacked on the DNS-pinning/redirect-validation branch; not qualified until exact-head CI and review complete.
+
+## Deployment boundary
+
+The unified `prism-serve` process binds to `127.0.0.1:8130` by default. A non-loopback bind requires both an explicit address, for example `PRISM_ADDR=0.0.0.0:8130`, and `PRISM_ALLOW_NON_LOOPBACK_BIND=1`. This is a deliberate deployment opt-in, not authentication. Before using it, restrict ingress with a firewall and a trusted reverse proxy or other authentication layer. **CORS is not an authorization boundary.**
+
+The standalone `prism-proxy` remains bound to `127.0.0.1:8131`; it does not expose a public-bind switch.
+
+When the service is behind a reverse proxy, set `PRISM_TRUSTED_PROXY_IPS` to a comma-separated list of the reverse proxy's exact peer IP addresses. CIDRs are rejected. Forwarding headers are ignored unless the immediate socket peer is explicitly trusted. The resolver walks `X-Forwarded-For` from right to left and skips configured trusted proxies; a malformed suffix falls back to the immediate peer. Do not add client-controlled hosts to the trusted list. Direct deployments can leave this variable unset.
+
+Rate limits are IP-based, not account identity. Users sharing NAT may share a quota; clients that can change their public IP may obtain separate quotas. These controls reduce accidental and single-source abuse but are not a replacement for authenticated ingress, network-level defenses, or provider billing controls.
+
+## Rolling one-minute budgets
+
+Every applicable route uses an independent, per-client sliding 60-second budget. Requests are charged before handler/upstream work; bounded request bodies are then charged by their actual byte length. Responses are bounded and counted before delivery to the client.
+
+| Route class | Routes | Requests/minute per client | Ingress bytes/minute | Egress bytes/minute |
+|---|---|---:|---:|---:|
+| Generic proxy | `/proxy` | 30 | 512 KiB | 64 MiB |
+| Search | `/api/ddg`, `/api/brave` | 30 | 256 KiB | 16 MiB |
+| Metered provider | `/api/perplexity` | 8 | 2 MiB | 16 MiB |
+| Symthaea bridge | `/api/symthaea/query` | 4 | 128 KiB | 4 MiB |
+
+The global request-body cap is 1 MiB. The proxy middleware caps a single response body at 10 MiB and bounds body reading by a deadline. The response-byte budget is separate from that per-response hard cap.
+
+The in-memory client table is capped at 4,096 active IP keys and idle entries expire after five minutes. If it cannot safely track another active client, new tracked work fails closed with HTTP 503 rather than silently escaping quotas. This state is per process and resets on restart; horizontally scaled deployments need equivalent controls at ingress or a shared rate-limit service if a global quota is required.
+
+## Concurrency and backpressure
+
+| Route class | In-flight request cap | Handler deadline |
+|---|---:|---:|
+| Generic proxy | 12 | 20 seconds |
+| Search | 12 | 20 seconds |
+| Metered provider | 3 | 35 seconds |
+| Symthaea bridge | 3 | 240 seconds |
+
+The server also retains its process-wide concurrency cap. Excess route work is shed with HTTP 503 rather than accumulating an unbounded queue. The Symthaea bridge stays explicit and optional; these quotas do not grant it authority over Prism's trust or security decisions.
+
+## Client-visible outcomes
+
+- **HTTP 429 Too Many Requests:** request-rate, ingress-byte, or egress-byte budget exhausted. A `Retry-After: 60` header is provided.
+- **HTTP 503 Service Unavailable:** route capacity exhausted, or the bounded quota table cannot admit a new client.
+- **HTTP 413 Payload Too Large:** request body exceeds the request cap.
+- **HTTP 408 Request Timeout / 504 Gateway Timeout / 502 Bad Gateway:** bounded body/request processing did not complete or violated a body safety limit.
+
+CORS preflight (`OPTIONS`) requests do not consume upstream-work quotas.
+
+## Logs and remaining operational work
+
+The middleware emits bounded static denial reasons and, for completed proxied requests, route class, status, and response byte count. It does not intentionally log raw target URLs, search terms, forwarded headers, request bodies, or provider keys. Access logs at an upstream reverse proxy must be configured with the same privacy discipline.
+
+This change establishes local request and byte budgets; it does not yet provide a full metrics endpoint or reliable per-hop redirect-count telemetry. Deployment-level monitoring should separately track 429/503 counts, provider spend, upstream latency/timeouts, and egress volume without recording sensitive query data.
+
+## Qualification requirements
+
+The implementation is a draft and must not be described as security-qualified until the exact commit has passed the repository's workflow-policy guard, formatter, locked workspace check, test suite, and MSRV lane. Deterministic local regression coverage should verify sliding-window boundaries, body and response budget exhaustion, active-client table saturation/expiry, malformed/spoofed forwarding headers, public-bind opt-in, load shedding, and that denied responses retain security headers. No unit test should require a public upstream service.

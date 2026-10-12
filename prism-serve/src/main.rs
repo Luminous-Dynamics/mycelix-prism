@@ -642,6 +642,24 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
+    #[tokio::test]
+    async fn oversized_provider_body_is_rejected_before_handler_execution() {
+        let dir = test_dist_dir();
+        let app = build_app(dir.path().to_str().unwrap(), None);
+        let body = vec![b'x'; prism_common::client_quota::MAX_PROXY_REQUEST_BODY_BYTES + 1];
+        let response = app
+            .oneshot(
+                Request::post("/api/perplexity")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
     #[test]
     fn server_bind_defaults_to_loopback() {
         assert_eq!(

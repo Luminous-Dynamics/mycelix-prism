@@ -49,7 +49,7 @@ CORS preflight (`OPTIONS`) requests do not consume upstream-work quotas.
 
 ## Logs and remaining operational work
 
-The middleware emits bounded static denial reasons and, for completed proxied requests, route class, status, and response byte count. It does not intentionally log raw target URLs, search terms, forwarded headers, request bodies, or provider keys. Access logs at an upstream reverse proxy must be configured with the same privacy discipline.
+The middleware emits bounded reason codes for quota denials, missing client identity, oversized/timed-out request bodies, and oversized/timed-out upstream response bodies. Quota and body decisions include route class; route load-shed/deadline failures use the bounded `capacity_or_deadline` reason. Completed proxied requests log route class, status, and response byte count. The generic safe-fetch handlers also log the validated redirect-hop count for successful fetches. Logs do not include raw target URLs, search terms, forwarded headers, request bodies, or provider keys. Access logs at an upstream reverse proxy must be configured with the same privacy discipline.
 
 This change establishes local request and byte budgets and emits bounded completion events with route class, response status, response-body bytes, and the validated redirect-hop count for successful generic fetches. It does not yet provide a metrics endpoint or a per-hop event stream for rejected redirects. Deployment-level monitoring should separately track 429/503 counts, provider spend, upstream latency/timeouts, and egress volume without recording sensitive query data.
 

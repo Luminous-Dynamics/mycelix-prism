@@ -217,7 +217,7 @@ impl ClientQuota {
             return;
         };
         let remove_entry = if let Some(count) = usage.in_flight.get_mut(&ticket.class) {
-            *count = count.saturating_sub(1);
+            *count = (*count).saturating_sub(1);
             *count == 0
         } else {
             false

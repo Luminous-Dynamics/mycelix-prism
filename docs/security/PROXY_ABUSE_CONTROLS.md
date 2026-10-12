@@ -23,7 +23,7 @@ Every applicable route uses an independent, per-client sliding 60-second budget.
 | Metered provider | `/api/perplexity` | 8 | 1 | 2 MiB | 16 MiB |
 | Symthaea bridge | `/api/symthaea/query` | 4 | 1 | 128 KiB | 4 MiB |
 
-The global request-body cap is 1 MiB. The proxy middleware caps a single response body at 10 MiB and bounds body reading by a deadline. The response-byte budget is separate from that per-response hard cap.
+The global request-body cap is 1 MiB. The proxy middleware caps a single response body at 10 MiB and bounds body reading by a deadline. The response-byte budget is separate from that per-response hard cap. The Symthaea Unix-socket bridge additionally caps one newline-delimited daemon response at 1 MiB before JSON parsing, preventing unbounded line allocation inside the handler.
 
 The in-memory client table is capped at 4,096 active IP keys and idle entries expire after five minutes. If it cannot safely track another active client, new tracked work fails closed with HTTP 503 rather than silently escaping quotas. This state is per process and resets on restart; horizontally scaled deployments need equivalent controls at ingress or a shared rate-limit service if a global quota is required.
 

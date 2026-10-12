@@ -153,7 +153,7 @@ def validate_job_permissions(path_label: str, content: str) -> list[str]:
                 f"{LOCK_RECOVERY_PERMISSIONS!r}; found {permission_map!r}"
             )
 
-        condition_lines = [line for line in block if re.match(r"^ {4}if\\s*:", line)]
+        condition_lines = [line for line in block if re.match(r"^ {4}if\s*:", line)]
         expected_condition_line = f"    if: {LOCK_RECOVERY_CONDITION}"
         if condition_lines != [expected_condition_line]:
             errors.append(

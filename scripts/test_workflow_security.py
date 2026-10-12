@@ -197,6 +197,51 @@ jobs:
 """
         self.assertEqual(validate_workflow_text("ci.yml", content), [])
 
+    def test_rejects_persisted_credentials_in_read_only_checkout(self) -> None:
+        safe_ref = "$" + "{{ github.event.pull_request.head.sha || github.sha }}"
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  policy:
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: {safe_ref}
+          persist-credentials: true
+"""
+        errors = validate_workflow_text("ci.yml", content)
+        self.assertTrue(
+            any("persist-credentials: false for read-only jobs" in error for error in errors)
+        )
+
+    def test_requires_explicit_checkout_credential_policy(self) -> None:
+        safe_ref = "$" + "{{ github.event.pull_request.head.sha || github.sha }}"
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  policy:
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: {safe_ref}
+"""
+        errors = validate_workflow_text("ci.yml", content)
+        self.assertTrue(
+            any("persist-credentials: false for read-only jobs" in error for error in errors)
+        )
+
     def test_rejects_missing_permissions_baseline(self) -> None:
         content = f"""name: test
 on:

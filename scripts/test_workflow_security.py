@@ -372,6 +372,39 @@ jobs:
 """
         self.assertEqual(validate_workflow_text("ci.yml", content), [])
 
+    def test_rejects_token_passed_to_action_named_as_publication_step(self) -> None:
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  generate_lockfile:
+    if: ${{{{ (github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010') }}}}
+    permissions:
+      contents: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
+          persist-credentials: false
+      - name: Commit generated lockfile to PR branch
+        uses: actions/cache@{VALID_SHA} # v5.0.4
+        env:
+          GH_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
+        with:
+          path: /tmp/cache
+          key: test
+"""
+        errors = validate_workflow_text("ci.yml", content)
+        self.assertTrue(
+            any("shell-only lock-publication steps" in error for error in errors)
+        )
+
     def test_rejects_workflow_token_outside_allowed_publication_steps(self) -> None:
         token_refs = (
             "$" + "{{ secrets.GITHUB_TOKEN }}",

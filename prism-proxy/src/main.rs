@@ -547,6 +547,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oversized_content_length_is_rejected_before_body_read() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let app = build_app();
+        let response = app
+            .oneshot(
+                Request::post("/api/perplexity")
+                    .header("origin", "http://localhost:8130")
+                    .header("content-type", "application/json")
+                    .header(
+                        "content-length",
+                        (prism_common::client_quota::MAX_PROXY_REQUEST_BODY_BYTES + 1).to_string(),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .and_then(|value| value.to_str().ok()),
+            Some("http://localhost:8130")
+        );
+    }
+
+    #[tokio::test]
     async fn oversized_provider_body_is_rejected_before_handler_execution() {
         use axum::body::Body;
         use axum::http::Request;

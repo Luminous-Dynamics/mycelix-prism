@@ -20,8 +20,8 @@ UNSAFE_TRIGGER_PATTERNS = (
     re.compile(r"^\s*on\s*:\s*.*\bpull_request_target\b"),
 )
 KEY_VALUE_RE = re.compile(r"^\s*([a-z][a-z0-9_-]*):\s*([a-z]+)\s*(?:#.*)?$")
-CHECKOUT_RE = re.compile(r"^(?P<indent> *)-\\s*uses\\s*:\\s*actions/checkout@")
-STEP_START_RE = re.compile(r"^(?P<indent> *)-\\s+(?:uses|name)\\s*:")
+CHECKOUT_RE = re.compile(r"^(?P<indent> *)-\s*uses\s*:\s*actions/checkout@")
+STEP_START_RE = re.compile(r"^(?P<indent> *)-\s+(?:uses|name)\s*:")
 CHECKOUT_REF_ALLOWLIST = {
     "${{ github.event.pull_request.head.sha || github.sha }}",
     "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}",
@@ -197,7 +197,7 @@ def validate_checkout_refs(path_label: str, content: str) -> list[str]:
 
         ref_values: list[str] = []
         for block_line in block[1:]:
-            match = re.match(r"^\\s*ref\\s*:\\s*(.*?)\\s*(?:#.*)?$", block_line)
+            match = re.match(r"^\s*ref\s*:\s*(.*?)\s*(?:#.*)?$", block_line)
             if match:
                 value = match.group(1).strip()
                 if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:

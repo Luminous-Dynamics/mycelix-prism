@@ -361,7 +361,6 @@ fn build_app_with_quota(quota_state: ClientQuotaState) -> Router {
     app
 }
 
-#[tokio::main]
 fn quota_state_from_env() -> Result<ClientQuotaState, String> {
     let raw = std::env::var("PRISM_TRUSTED_PROXY_IPS").unwrap_or_default();
     if raw.trim().is_empty() {
@@ -370,6 +369,7 @@ fn quota_state_from_env() -> Result<ClientQuotaState, String> {
     parse_trusted_proxy_ips(&raw).map(ClientQuotaState::new)
 }
 
+#[tokio::main]
 async fn main() {
     env_logger::init();
     let quota_state = quota_state_from_env().unwrap_or_else(|error| {

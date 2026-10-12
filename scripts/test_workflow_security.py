@@ -235,7 +235,7 @@ jobs:
       - uses: actions/checkout@{VALID_SHA} # v7.0.1
         with:
           ref: {safe_ref}
-          persist-credentials: true
+          persist-credentials: false
 """
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(
@@ -363,6 +363,32 @@ jobs:
           persist-credentials: true
 """
         self.assertEqual(validate_workflow_text("ci.yml", content), [])
+
+    def test_rejects_persisted_credentials_in_lock_recovery_writer(self) -> None:
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  generate_lockfile:
+    if: ${{{{ (github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010') }}}}
+    permissions:
+      contents: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
+          persist-credentials: true
+"""
+        errors = validate_workflow_text("ci.yml", content)
+        self.assertTrue(
+            any("must explicitly set persist-credentials: false" in error for error in errors)
+        )
 
     def test_recovery_permission_without_same_repo_gate_is_rejected(self) -> None:
         content = f"""name: test

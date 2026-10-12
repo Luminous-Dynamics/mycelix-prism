@@ -172,7 +172,7 @@ def validate_job_permissions(path_label: str, content: str) -> list[str]:
 
 
 def validate_checkout_refs(path_label: str, content: str) -> list[str]:
-    """Require immutable checkout refs and prevent credential persistence outside the writer lane."""
+    """Require source-head-aware checkout refs and forbid persisted checkout credentials."""
     lines = content.splitlines()
     errors: list[str] = []
     for index, line in enumerate(lines):

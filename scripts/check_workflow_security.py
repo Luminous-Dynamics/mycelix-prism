@@ -173,16 +173,25 @@ def validate_job_permissions(path_label: str, content: str) -> list[str]:
 
 
 def validate_checkout_refs(path_label: str, content: str) -> list[str]:
-    """Require actions/checkout to pin the checked-out source to an immutable event SHA.
-
-    We intentionally accept only the exact PR-head/push-SHA expressions used by
-    this repository. A branch name, github.ref, github.head_ref, omitted ref, or
-    the default synthetic pull-request merge checkout is not exact-head evidence.
-    """
+    """Require immutable checkout refs and prevent credential persistence outside the writer lane."""
     lines = content.splitlines()
     errors: list[str] = []
+    in_jobs = False
+    current_job: str | None = None
 
     for index, line in enumerate(lines):
+        if line == "jobs:":
+            in_jobs = True
+            current_job = None
+            continue
+        if in_jobs and line.strip() and not line.startswith(" "):
+            in_jobs = False
+            current_job = None
+        if in_jobs:
+            job_match = JOB_RE.fullmatch(line)
+            if job_match:
+                current_job = job_match.group(1)
+
         checkout = CHECKOUT_RE.match(line)
         if not checkout:
             continue
@@ -196,29 +205,44 @@ def validate_checkout_refs(path_label: str, content: str) -> list[str]:
             block.append(candidate)
 
         ref_values: list[str] = []
+        credential_values: list[str] = []
         for block_line in block[1:]:
-            match = re.match(r"^\s*ref\s*:\s*(.*?)\s*(?:#.*)?$", block_line)
-            if match:
-                value = match.group(1).strip()
+            ref_match = re.match(r"^\s*ref\s*:\s*(.*?)\s*(?:#.*)?$", block_line)
+            if ref_match:
+                value = ref_match.group(1).strip()
                 if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
                     value = value[1:-1]
                 ref_values.append(value)
+
+            credential_match = re.match(
+                r"^\s*persist-credentials\s*:\s*(.*?)\s*(?:#.*)?$", block_line
+            )
+            if credential_match:
+                credential_value = credential_match.group(1).strip().lower()
+                if len(credential_value) >= 2 and credential_value[0] == credential_value[-1] and credential_value[0] in {"'", '"'}:
+                    credential_value = credential_value[1:-1]
+                credential_values.append(credential_value)
 
         line_number = index + 1
         if len(ref_values) != 1:
             errors.append(
                 f"{path_label}:{line_number}: actions/checkout must declare exactly one immutable ref"
             )
-            continue
-
-        if ref_values[0] not in CHECKOUT_REF_ALLOWLIST:
+        elif ref_values[0] not in CHECKOUT_REF_ALLOWLIST:
             errors.append(
                 f"{path_label}:{line_number}: actions/checkout ref must be an approved immutable "
                 f"event SHA expression; found {ref_values[0]!r}"
             )
 
-    return errors
+        expected_credentials = "true" if current_job == LOCK_RECOVERY_JOB else "false"
+        if credential_values != [expected_credentials]:
+            if current_job == LOCK_RECOVERY_JOB:
+                reason = "explicitly set persist-credentials: true for the gated lock-recovery writer"
+            else:
+                reason = "explicitly set persist-credentials: false for read-only jobs"
+            errors.append(f"{path_label}:{line_number}: actions/checkout must {reason}")
 
+    return errors
 
 def validate_workflow_text(path_label: str, content: str) -> list[str]:
     errors: list[str] = []

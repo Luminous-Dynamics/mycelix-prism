@@ -464,10 +464,20 @@ mod tests {
         );
 
         quota.release_request(first);
-        assert!(quota
+        let third = quota
             .admit_request(client, QuotaClass::GenericProxy, 0, start)
-            .is_ok());
+            .unwrap();
         quota.release_request(second);
+        quota.release_request(third);
+        assert_eq!(
+            quota
+                .clients
+                .get(&client)
+                .unwrap()
+                .in_flight
+                .get(&QuotaClass::GenericProxy),
+            None
+        );
     }
 
     #[test]

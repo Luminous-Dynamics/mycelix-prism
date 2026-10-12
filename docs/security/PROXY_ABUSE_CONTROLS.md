@@ -43,13 +43,16 @@ The route-level concurrency layer wraps quota middleware as well as handler exec
 - **HTTP 429 Too Many Requests:** request-rate or ingress/response byte budget exhausted (`Retry-After: 60`), or the per-client in-flight cap is reached (`Retry-After: 1`).
 - **HTTP 503 Service Unavailable:** route capacity/deadline exhausted, or the bounded quota table cannot admit a new client.
 - **HTTP 413 Payload Too Large:** request body exceeds the request cap.
-- **HTTP 408 Request Timeout / 504 Gateway Timeout / 502 Bad Gateway:** bounded body/request processing did not complete or violated a body safety limit.
+- **HTTP 504 Gateway Timeout:** an upstream DNS/HTTP operation or upstream response-body read exceeded its deadline; the log reason is `timeout`.
+- **HTTP 502 Bad Gateway:** upstream transport/read failure that was not classified as a timeout.
+- **HTTP 403 Forbidden:** destination or redirect rejected by policy. Redirect rejections log a 1-based hop number but never log the Location URL.
+- **HTTP 408 Request Timeout:** the client request-body stream exceeded its read deadline.
 
 CORS preflight (`OPTIONS`) requests do not consume upstream-work quotas.
 
 ## Logs and remaining operational work
 
-The middleware emits bounded reason codes for quota denials, missing client identity, oversized/timed-out request bodies, and oversized/timed-out upstream response bodies. Quota and body decisions include route class; route load-shed/deadline failures use the bounded `capacity_or_deadline` reason. Completed proxied requests log route class, status, and response byte count. The generic safe-fetch handlers also log the validated redirect-hop count for successful fetches. Logs do not include raw target URLs, search terms, forwarded headers, request bodies, or provider keys. Access logs at an upstream reverse proxy must be configured with the same privacy discipline.
+The middleware emits bounded reason codes for quota denials, missing client identity, oversized/timed-out request bodies, and oversized/timed-out upstream response bodies. Quota and body decisions include route class; route load-shed/deadline failures use the bounded `capacity_or_deadline` reason. Provider send/read failures distinguish timeouts from other transport failures and return 504 for timeouts. Completed proxied requests log route class, status, and response byte count. The generic safe-fetch handlers log the validated redirect-hop count for successful fetches, and a numeric hop plus a fixed policy reason for rejected redirects. Logs do not include raw target URLs, search terms, redirect Location values, forwarded headers, request bodies, or provider keys. Access logs at an upstream reverse proxy must be configured with the same privacy discipline.
 
 This change establishes local request and byte budgets and emits bounded completion events with route class, response status, response-body bytes, and the validated redirect-hop count for successful generic fetches. It does not yet provide a metrics endpoint or a per-hop event stream for rejected redirects. Deployment-level monitoring should separately track 429/503 counts, provider spend, upstream latency/timeouts, and egress volume without recording sensitive query data.
 

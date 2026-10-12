@@ -665,8 +665,8 @@ mod tests {
         .await;
 
         assert!(
-            matches!(result, Err(SafeFetchError::Policy(_))),
-            "a public origin must not redirect the proxy to loopback"
+            matches!(result, Err(SafeFetchError::RedirectRejected { hop: 1 })),
+            "a public origin must not redirect the proxy to loopback; rejection must carry the hop number"
         );
         assert_eq!(
             resolver.seen(),
@@ -680,6 +680,56 @@ mod tests {
             "the private redirect target must receive no connection"
         );
         origin_server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fetch_classifies_upstream_deadline_as_timeout() {
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) =
+                tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                    .await
+                    .expect("client should connect to the local fixture")
+                    .unwrap();
+            let _request = read_fixture_headers(&mut socket).await;
+            // Leave the response unanswered long enough for Reqwest's total
+            // deadline to expire. This fixture never contacts a public host.
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let _ = socket.write_all(
+                b"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok",
+            ).await;
+        });
+
+        let resolver = FixtureResolver::new(HashMap::from([(
+            "timeout.example.com".to_string(),
+            vec![loopback_pin()],
+        )]));
+        let initial = Url::parse(&format!("http://timeout.example.com:{}/wait", address.port()))
+            .unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            fetch_public_get_with_resolver(
+                initial,
+                "prism-safe-fetch-test",
+                Duration::from_millis(50),
+                32,
+                0,
+                &resolver,
+            ),
+        )
+        .await
+        .expect("fetch state machine should respect its shorter upstream timeout");
+
+        assert!(
+            matches!(result, Err(SafeFetchError::Timeout)),
+            "transport timeout must be distinguishable from an ordinary transport error"
+        );
+        server.await.unwrap();
     }
 
     #[test]

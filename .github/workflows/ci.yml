@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: true
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Check whether Cargo.lock is missing
@@ -118,6 +118,7 @@ jobs:
         if: steps.lockfile.outputs.missing == 'true'
         env:
           BRANCH: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -125,7 +126,8 @@ jobs:
           git add Cargo.lock
           git diff --cached --check
           git commit -m "build: lock standalone workspace dependencies"
-          git push origin "HEAD:${BRANCH}"
+          TOKEN_B64="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c http.extraheader="AUTHORIZATION: basic ${TOKEN_B64}" push origin "HEAD:${BRANCH}"
 
       - name: Record exact tested revision
         run: |

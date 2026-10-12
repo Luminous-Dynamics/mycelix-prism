@@ -457,6 +457,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn per_client_rate_limit_rejects_the_31st_generic_proxy_request() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let app = build_app();
+        for index in 0..31 {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::get("/proxy?url=http%3A%2F%2F127.0.0.1")
+                        .header("origin", "http://localhost:8130")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            if index < 30 {
+                assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            } else {
+                assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+                assert_eq!(
+                    response.headers().get("retry-after").and_then(|v| v.to_str().ok()),
+                    Some("60")
+                );
+                assert_eq!(
+                    response.headers().get("access-control-allow-origin").and_then(|v| v.to_str().ok()),
+                    Some("http://localhost:8130")
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_provider_body_is_rejected_before_handler_execution() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let app = build_app();
+        let body = vec![b'x'; prism_common::client_quota::MAX_PROXY_REQUEST_BODY_BYTES + 1];
+        let response = app
+            .oneshot(
+                Request::post("/api/perplexity")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
     async fn accepts_request_target_at_limit() {
         use axum::body::Body;
         use axum::http::Request;

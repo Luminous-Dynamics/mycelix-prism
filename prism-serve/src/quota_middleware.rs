@@ -1,0 +1,138 @@
+// Copyright (C) 2024-2026 Tristan Stoltz / Luminous Dynamics
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Commercial licensing: see COMMERCIAL_LICENSE.md at repository root
+
+use axum::{
+    body::{to_bytes, Body},
+    extract::{ConnectInfo, State},
+    http::{header::HeaderMap, Method, StatusCode},
+    middleware::Next,
+    response::{IntoResponse, Response},
+};
+use prism_common::client_quota::{
+    ClientQuotaState, QuotaClass, QuotaRejection, MAX_PROXY_REQUEST_BODY_BYTES,
+};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::time::Duration;
+
+/// Enforce per-client request-rate and ingress-byte quotas before upstream work
+/// starts. This middleware reads bodies with an explicit byte cap and deadline,
+/// then restores the body for Axum's normal extractors.
+pub async fn enforce_client_quota(
+    State(state): State<ClientQuotaState>,
+    request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    if request.method() == Method::OPTIONS {
+        // CORS preflights do not create upstream work and should not consume
+        // the browser's request allowance.
+        return next.run(request).await;
+    }
+
+    let Some(class) = QuotaClass::for_path(request.uri().path()) else {
+        return next.run(request).await;
+    };
+
+    // The production listener uses into_make_service_with_connect_info.
+    // Loopback is a conservative fallback for Router::oneshot unit tests;
+    // a deployment must not omit the socket peer from the serving stack.
+    let peer = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0.ip())
+        .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+    let forwarded_for = bounded_forwarded_for(request.headers());
+    let client = state.resolve_client_ip(peer, forwarded_for.as_deref());
+    let target_bytes = request
+        .uri()
+        .path_and_query()
+        .map(|target| target.as_str().len())
+        .unwrap_or_else(|| request.uri().path().len());
+
+    let ticket = match state.admit_request(client, class, target_bytes) {
+        Ok(ticket) => ticket,
+        Err(reason) => return rejection_response(reason),
+    };
+
+    let (parts, body) = request.into_parts();
+    let body_bytes = match tokio::time::timeout(
+        Duration::from_secs(10),
+        to_bytes(body, MAX_PROXY_REQUEST_BODY_BYTES),
+    )
+    .await
+    {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(_)) => {
+            return (StatusCode::PAYLOAD_TOO_LARGE, "Request body too large").into_response();
+        }
+        Err(_) => {
+            return (StatusCode::REQUEST_TIMEOUT, "Request body read timed out").into_response();
+        }
+    };
+
+    if let Err(reason) = state.charge_body(ticket, body_bytes.len()) {
+        return rejection_response(reason);
+    }
+
+    next.run(axum::extract::Request::from_parts(
+        parts,
+        Body::from(body_bytes),
+    ))
+    .await
+}
+
+fn rejection_response(reason: QuotaRejection) -> Response {
+    match reason {
+        QuotaRejection::RequestRate => {
+            log::warn!("Proxy client quota denied: request rate");
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, "60")],
+                "Client request rate exceeded",
+            )
+                .into_response()
+        }
+        QuotaRejection::IngressBytes => {
+            log::warn!("Proxy client quota denied: ingress byte budget");
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, "60")],
+                "Client byte budget exceeded",
+            )
+                .into_response()
+        }
+        QuotaRejection::ClientTableFull | QuotaRejection::StaleTicket => {
+            log::warn!("Proxy client quota unavailable");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(axum::http::header::RETRY_AFTER, "60")],
+                "Client quota capacity unavailable",
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Bound duplicate/oversized forwarding headers before parsing. Malformed
+/// headers are ignored; trusted-proxy resolution then falls back to the peer.
+fn bounded_forwarded_for(headers: &HeaderMap) -> Option<String> {
+    let values: Vec<_> = headers.get_all("x-forwarded-for").iter().collect();
+    if values.is_empty() || values.len() > 8 {
+        return None;
+    }
+
+    let mut combined = String::new();
+    for (index, value) in values.iter().enumerate() {
+        let Ok(value) = value.to_str() else {
+            return None;
+        };
+        if combined.len().saturating_add(value.len()) > 4096 {
+            return None;
+        }
+        if index > 0 {
+            combined.push(',');
+        }
+        combined.push_str(value);
+    }
+    Some(combined)
+}

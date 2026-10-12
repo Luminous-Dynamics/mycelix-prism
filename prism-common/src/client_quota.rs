@@ -130,8 +130,9 @@ struct ClientUsage {
     in_flight: HashMap<QuotaClass, HashSet<u64>>,
 }
 
-/// Proof that a request consumed one rate slot; middleware uses it to charge
-/// the exact decoded request-body size after reading the bounded body.
+/// Unique ticket for an admitted request: it carries rate/body accounting
+/// identity and the corresponding in-flight permit. Releasing the permit is
+/// idempotent, even though the ticket is copyable for body/response accounting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QuotaTicket {
     client: IpAddr,

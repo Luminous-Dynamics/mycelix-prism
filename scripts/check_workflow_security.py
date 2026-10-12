@@ -25,7 +25,6 @@ STEP_START_RE = re.compile(r"^(?P<indent> *)-\s+(?:uses|name)\s*:")
 CHECKOUT_REF_ALLOWLIST = {
     "${{ github.event.pull_request.head.sha || github.sha }}",
     "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}",
-    "${{ github.sha }}",
 }
 
 # The one temporary writer lane is intentionally exceptional and tightly gated.

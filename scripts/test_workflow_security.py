@@ -341,6 +341,70 @@ jobs:
         errors = validate_workflow_text("ci.yml", content)
         self.assertTrue(any("job-level permissions are forbidden" in error for error in errors))
 
+    def test_accepts_token_only_in_lock_publication_steps(self) -> None:
+        content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  generate_lockfile:
+    if: ${{{{ (github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010') }}}}
+    permissions:
+      contents: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
+          persist-credentials: false
+      - name: Commit generated lockfile to PR branch
+        env:
+          GH_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
+        run: echo push
+      - name: Publish result for the exact validated commit
+        env:
+          GH_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
+        run: echo status
+"""
+        self.assertEqual(validate_workflow_text("ci.yml", content), [])
+
+    def test_rejects_workflow_token_outside_allowed_publication_steps(self) -> None:
+        token_refs = (
+            "$" + "{{ secrets.GITHUB_TOKEN }}",
+            "$" + "{{ secrets['GITHUB_TOKEN'] }}",
+            "$" + "{{ github.token }}",
+        )
+        for token_ref in token_refs:
+            with self.subTest(token_ref=token_ref):
+                content = f"""name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  policy:
+    steps:
+      - uses: actions/checkout@{VALID_SHA} # v7.0.1
+        with:
+          ref: ${{{{ github.event.pull_request.head.sha || github.sha }}}}
+          persist-credentials: false
+      - name: Untrusted script
+        env:
+          GH_TOKEN: {token_ref}
+        run: echo not-allowed
+"""
+                errors = validate_workflow_text("ci.yml", content)
+                self.assertTrue(
+                    any("workflow token may only be exposed as GH_TOKEN" in error for error in errors)
+                )
+
     def test_allows_only_exact_gated_lock_recovery_permissions(self) -> None:
         content = f"""name: test
 

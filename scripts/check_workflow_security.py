@@ -30,14 +30,7 @@ CHECKOUT_REF_ALLOWLIST = {
 # The one temporary writer lane is intentionally exceptional and tightly gated.
 LOCK_RECOVERY_JOB = "generate_lockfile"
 LOCK_RECOVERY_PERMISSIONS = {"contents": "write", "statuses": "write"}
-LOCK_RECOVERY_GATES = (
-    "github.event_name == 'pull_request'",
-    "github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010'",
-    "github.event.pull_request.head.repo.full_name == github.repository",
-    "github.event_name == 'push'",
-    "github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010'",
-)
-
+LOCK_RECOVERY_CONDITION = "${{ (github.event_name == 'pull_request' && github.head_ref == 'fix/proxy-dns-pinning-redirects-20261010' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/fix/proxy-dns-pinning-redirects-20261010') }}"
 
 def validate_action_reference(reference: str, source_line: str) -> list[str]:
     """Validate a single action reference; local actions are tied to this tree."""
@@ -160,12 +153,12 @@ def validate_job_permissions(path_label: str, content: str) -> list[str]:
                 f"{LOCK_RECOVERY_PERMISSIONS!r}; found {permission_map!r}"
             )
 
-        joined_block = "\n".join(block)
-        missing_gates = [gate for gate in LOCK_RECOVERY_GATES if gate not in joined_block]
-        if missing_gates:
+        condition_lines = [line for line in block if re.match(r"^ {4}if\\s*:", line)]
+        expected_condition_line = f"    if: {LOCK_RECOVERY_CONDITION}"
+        if condition_lines != [expected_condition_line]:
             errors.append(
-                f"{path_label}: {LOCK_RECOVERY_JOB!r} lacks required same-repository/event/ref gates: "
-                + "; ".join(missing_gates)
+                f"{path_label}: {LOCK_RECOVERY_JOB!r} if condition must exactly match "
+                "the gated same-repository/event/ref expression"
             )
 
     return errors

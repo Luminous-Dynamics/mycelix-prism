@@ -16,7 +16,7 @@ use prism_common::client_quota::{
 use std::net::{IpAddr, SocketAddr};
 #[cfg(test)]
 use std::net::Ipv4Addr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 struct InFlightGuard {
     state: ClientQuotaState,
@@ -37,6 +37,7 @@ pub async fn enforce_client_quota(
     request: axum::extract::Request,
     next: Next,
 ) -> Response {
+    let started_at = Instant::now();
     if request.method() == Method::OPTIONS {
         // CORS preflights do not create upstream work and should not consume
         // the browser's request allowance.
@@ -116,7 +117,7 @@ pub async fn enforce_client_quota(
         return (StatusCode::PAYLOAD_TOO_LARGE, "Request body too large").into_response();
         }
         Err(_) => {
-            log::warn!("Proxy request rejected: class={:?} reason=request_body_timeout", class);
+            log::warn!("Proxy request rejected: class={:?} reason=request_body_timeout duration_ms={}", class, started_at.elapsed().as_millis());
             return (StatusCode::REQUEST_TIMEOUT, "Request body read timed out").into_response();
         }
     };
@@ -124,6 +125,7 @@ pub async fn enforce_client_quota(
     if let Err(reason) = state.charge_body(ticket, body_bytes.len()) {
         return rejection_response(class, reason);
     }
+    let request_bytes = target_bytes.saturating_add(body_bytes.len());
 
     let response = next
         .run(axum::extract::Request::from_parts(
@@ -149,7 +151,7 @@ pub async fn enforce_client_quota(
                 .into_response();
         }
         Err(_) => {
-            log::warn!("Proxy upstream response unavailable: class={:?} reason=response_body_timeout", class);
+            log::warn!("Proxy upstream response unavailable: class={:?} reason=response_body_timeout duration_ms={}", class, started_at.elapsed().as_millis());
             return (
                 StatusCode::GATEWAY_TIMEOUT,
                 "Proxy response did not complete",
@@ -163,10 +165,12 @@ pub async fn enforce_client_quota(
     }
 
     log::info!(
-        "Proxy request completed: class={:?} status={} response_bytes={}",
+        "Proxy request completed: class={:?} status={} request_bytes={} response_bytes={} duration_ms={}",
         class,
         response_parts.status.as_u16(),
-        response_bytes.len()
+        request_bytes,
+        response_bytes.len(),
+        started_at.elapsed().as_millis()
     );
 
     Response::from_parts(response_parts, Body::from(response_bytes))

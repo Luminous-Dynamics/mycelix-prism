@@ -423,17 +423,17 @@ mod tests {
         let mut quota = ClientQuota::with_capacity(4);
 
         for n in 0..30 {
-            assert!(
-                quota
-                    .admit_request(
-                        client,
-                        QuotaClass::GenericProxy,
-                        1,
-                        start + Duration::from_secs(n),
-                    )
-                    .is_ok()
-            );
+            let ticket = quota
+                .admit_request(
+                    client,
+                    QuotaClass::GenericProxy,
+                    1,
+                    start + Duration::from_secs(n),
+                )
+                .unwrap();
+            quota.release_request(ticket);
         }
+
         assert_eq!(
             quota.admit_request(
                 client,
@@ -443,11 +443,14 @@ mod tests {
             ),
             Err(QuotaRejection::RequestRate)
         );
-        assert!(quota.admit_request(client, QuotaClass::GenericProxy, 1, start + WINDOW).is_ok());
+        let recovered = quota
+            .admit_request(client, QuotaClass::GenericProxy, 1, start + WINDOW)
+            .unwrap();
+        quota.release_request(recovered);
     }
 
     #[test]
-    fn per_client_in_flight_cap_releases_on_completion_or_cancellation() {
+    fn per_client_in_flight_cap_is_bounded_and_reusable() {
         let start = Instant::now();
         let client = ip("192.0.2.15");
         let mut quota = ClientQuota::with_capacity(4);
@@ -487,6 +490,8 @@ mod tests {
         let mut quota = ClientQuota::with_capacity(4);
         let ticket = quota.admit_request(client, QuotaClass::Search, 10, start).unwrap();
         assert!(quota.charge_body(ticket, 256 * 1024 - 10).is_ok());
+        quota.release_request(ticket);
+
         assert_eq!(
             quota.admit_request(client, QuotaClass::Search, 1, start + Duration::from_secs(1)),
             Err(QuotaRejection::IngressBytes)
@@ -498,8 +503,10 @@ mod tests {
         let start = Instant::now();
         let client = ip("192.0.2.14");
         let mut quota = ClientQuota::with_capacity(4);
-        assert!(quota.admit_request(client, QuotaClass::Search, 0, start).is_ok());
+        let ticket = quota.admit_request(client, QuotaClass::Search, 0, start).unwrap();
         assert!(quota.charge_response(client, QuotaClass::Search, 16 * 1024 * 1024, start).is_ok());
+        quota.release_request(ticket);
+
         assert_eq!(
             quota.charge_response(client, QuotaClass::Search, 1, start + Duration::from_secs(1)),
             Err(QuotaRejection::ResponseBytes)
@@ -513,39 +520,42 @@ mod tests {
         let a = ip("192.0.2.12");
         let b = ip("192.0.2.13");
         let mut quota = ClientQuota::with_capacity(4);
+
         for n in 0..30 {
-            assert!(
-                quota
-                    .admit_request(
-                        a,
-                        QuotaClass::Search,
-                        0,
-                        start + Duration::from_millis(n),
-                    )
-                    .is_ok()
-            );
+            let ticket = quota
+                .admit_request(
+                    a,
+                    QuotaClass::Search,
+                    0,
+                    start + Duration::from_millis(n),
+                )
+                .unwrap();
+            quota.release_request(ticket);
         }
+
         assert_eq!(
             quota.admit_request(a, QuotaClass::Search, 0, start + Duration::from_secs(1)),
             Err(QuotaRejection::RequestRate)
         );
-        assert!(
-            quota
-                .admit_request(a, QuotaClass::Provider, 0, start + Duration::from_secs(1))
-                .is_ok()
-        );
-        assert!(
-            quota
-                .admit_request(b, QuotaClass::Search, 0, start + Duration::from_secs(1))
-                .is_ok()
-        );
+        let provider_ticket = quota
+            .admit_request(a, QuotaClass::Provider, 0, start + Duration::from_secs(1))
+            .unwrap();
+        quota.release_request(provider_ticket);
+        let other_client_ticket = quota
+            .admit_request(b, QuotaClass::Search, 0, start + Duration::from_secs(1))
+            .unwrap();
+        quota.release_request(other_client_ticket);
     }
 
     #[test]
     fn active_client_table_is_bounded_and_recovers_after_idle_expiration() {
         let start = Instant::now();
         let mut quota = ClientQuota::with_capacity(1);
-        assert!(quota.admit_request(ip("192.0.2.20"), QuotaClass::Search, 0, start).is_ok());
+        let first_client_ticket = quota
+            .admit_request(ip("192.0.2.20"), QuotaClass::Search, 0, start)
+            .unwrap();
+        quota.release_request(first_client_ticket);
+
         assert_eq!(
             quota.admit_request(
                 ip("192.0.2.21"),
@@ -555,11 +565,10 @@ mod tests {
             ),
             Err(QuotaRejection::ClientTableFull)
         );
-        assert!(
-            quota
-                .admit_request(ip("192.0.2.21"), QuotaClass::Search, 0, start + IDLE_TTL)
-                .is_ok()
-        );
+        let second_client_ticket = quota
+            .admit_request(ip("192.0.2.21"), QuotaClass::Search, 0, start + IDLE_TTL)
+            .unwrap();
+        quota.release_request(second_client_ticket);
         assert_eq!(quota.active_clients(), 1);
     }
 
@@ -623,15 +632,13 @@ mod tests {
     fn quota_defaults_support_ipv4_and_ipv6_keys() {
         let mut quota = ClientQuota::default();
         let now = Instant::now();
-        assert!(
-            quota
-                .admit_request(IpAddr::V4(Ipv4Addr::LOCALHOST), QuotaClass::Search, 0, now)
-                .is_ok()
-        );
-        assert!(
-            quota
-                .admit_request(IpAddr::V6(Ipv6Addr::LOCALHOST), QuotaClass::Search, 0, now)
-                .is_ok()
-        );
+        let ipv4_ticket = quota
+            .admit_request(IpAddr::V4(Ipv4Addr::LOCALHOST), QuotaClass::Search, 0, now)
+            .unwrap();
+        quota.release_request(ipv4_ticket);
+        let ipv6_ticket = quota
+            .admit_request(IpAddr::V6(Ipv6Addr::LOCALHOST), QuotaClass::Search, 0, now)
+            .unwrap();
+        quota.release_request(ipv6_ticket);
     }
 }

@@ -20,6 +20,13 @@ UNSAFE_TRIGGER_PATTERNS = (
     re.compile(r"^\s*on\s*:\s*.*\bpull_request_target\b"),
 )
 KEY_VALUE_RE = re.compile(r"^\s*([a-z][a-z0-9_-]*):\s*([a-z]+)\s*(?:#.*)?$")
+CHECKOUT_RE = re.compile(r"^(?P<indent> *)-\\s*uses\\s*:\\s*actions/checkout@")
+STEP_START_RE = re.compile(r"^(?P<indent> *)-\\s+(?:uses|name)\\s*:")
+CHECKOUT_REF_ALLOWLIST = {
+    "${{ github.event.pull_request.head.sha || github.sha }}",
+    "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}",
+    "${{ github.sha }}",
+}
 
 # The one temporary writer lane is intentionally exceptional and tightly gated.
 LOCK_RECOVERY_JOB = "generate_lockfile"
@@ -165,6 +172,54 @@ def validate_job_permissions(path_label: str, content: str) -> list[str]:
     return errors
 
 
+def validate_checkout_refs(path_label: str, content: str) -> list[str]:
+    """Require actions/checkout to pin the checked-out source to an immutable event SHA.
+
+    We intentionally accept only the exact PR-head/push-SHA expressions used by
+    this repository. A branch name, github.ref, github.head_ref, omitted ref, or
+    the default synthetic pull-request merge checkout is not exact-head evidence.
+    """
+    lines = content.splitlines()
+    errors: list[str] = []
+
+    for index, line in enumerate(lines):
+        checkout = CHECKOUT_RE.match(line)
+        if not checkout:
+            continue
+
+        step_indent = len(checkout.group("indent"))
+        block = [line]
+        for candidate in lines[index + 1 :]:
+            next_step = STEP_START_RE.match(candidate)
+            if next_step and len(next_step.group("indent")) == step_indent:
+                break
+            block.append(candidate)
+
+        ref_values: list[str] = []
+        for block_line in block[1:]:
+            match = re.match(r"^\\s*ref\\s*:\\s*(.*?)\\s*(?:#.*)?$", block_line)
+            if match:
+                value = match.group(1).strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                    value = value[1:-1]
+                ref_values.append(value)
+
+        line_number = index + 1
+        if len(ref_values) != 1:
+            errors.append(
+                f"{path_label}:{line_number}: actions/checkout must declare exactly one immutable ref"
+            )
+            continue
+
+        if ref_values[0] not in CHECKOUT_REF_ALLOWLIST:
+            errors.append(
+                f"{path_label}:{line_number}: actions/checkout ref must be an approved immutable "
+                f"event SHA expression; found {ref_values[0]!r}"
+            )
+
+    return errors
+
+
 def validate_workflow_text(path_label: str, content: str) -> list[str]:
     errors: list[str] = []
     found_actions = 0
@@ -193,6 +248,7 @@ def validate_workflow_text(path_label: str, content: str) -> list[str]:
             f"'contents: read'; found {permissions!r}"
         )
 
+    errors.extend(validate_checkout_refs(path_label, content))
     errors.extend(validate_job_permissions(path_label, content))
     return errors
 

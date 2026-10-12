@@ -535,6 +535,13 @@ async fn symthaea_query_handler(
         return (StatusCode::BAD_GATEWAY, "Symthaea error").into_response();
     }
 
+    // Safety is affirmative evidence, not a default. A missing or mistyped
+    // daemon flag must not be converted into a successful "safe" result.
+    let Some(safe) = parsed.get("safe").and_then(|value| value.as_bool()) else {
+        log::warn!("Symthaea response rejected: reason=missing_or_invalid_safety_flag");
+        return (StatusCode::BAD_GATEWAY, "Malformed Symthaea response").into_response();
+    };
+
     let out = SymthaeaQueryResponse {
         content: parsed
             .get("content")
@@ -545,7 +552,7 @@ async fn symthaea_query_handler(
             .get("confidence")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0) as f32,
-        safe: parsed.get("safe").and_then(|v| v.as_bool()).unwrap_or(true),
+        safe,
         phi: parsed.get("phi").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
         processing_time_ms: parsed
             .get("processing_time_ms")
@@ -1133,6 +1140,62 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(parsed["content"], "a real answer");
         assert_eq!(parsed["processing_time_ms"], 42);
+    }
+
+    #[tokio::test]
+    async fn symthaea_query_rejects_missing_or_invalid_safety_flag() {
+        let malformed_responses = [
+            serde_json::json!({
+                "type": "response",
+                "content": "unqualified answer",
+                "confidence": 0.9,
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": "unqualified answer",
+                "confidence": 0.9,
+                "safe": "true",
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+        ];
+
+        for (index, malformed) in malformed_responses.into_iter().enumerate() {
+            let dir = test_dist_dir();
+            let socket_path = dir.path().join(format!("fake-symthaea-invalid-safe-{index}.sock"));
+            spawn_fake_daemon(socket_path.clone(), move |_req| {
+                FakeDaemonAction::Reply(malformed.to_string())
+            });
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            let app = build_app(
+                dir.path().to_str().unwrap(),
+                test_symthaea_cfg(&socket_path),
+            );
+            let response = app
+                .oneshot(
+                    Request::post("/api/symthaea/query")
+                        .header("content-type", "application/json")
+                        .body(Body::from(r#"{ "content": "hello" }"#))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_GATEWAY,
+                "malformed safety flag case {index} must not become a successful response"
+            );
+            assert_eq!(
+                response.headers().get("x-content-type-options")
+                    .and_then(|value| value.to_str().ok()),
+                Some("nosniff"),
+                "security headers must remain present on rejected daemon responses"
+            );
+        }
     }
 
     #[tokio::test]

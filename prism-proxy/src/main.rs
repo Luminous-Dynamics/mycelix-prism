@@ -24,9 +24,9 @@ use axum::{
 use prism_common::client_quota::{parse_trusted_proxy_ips, ClientQuotaState};
 use prism_common::proxy_limits::MAX_REQUEST_TARGET_BYTES;
 use prism_common::ssrf::validate_proxy_url;
+use prism_safe_fetch::{SafeFetchError, fetch_public_get, read_limited_body};
 use std::net::SocketAddr;
 use std::time::Duration;
-use prism_safe_fetch::{SafeFetchError, fetch_public_get, read_limited_body};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MiB

@@ -18,6 +18,8 @@ const DEFAULT_MAX_CLIENTS: usize = 4_096;
 
 /// Maximum accepted request body for proxy/provider routes (1 MiB).
 pub const MAX_PROXY_REQUEST_BODY_BYTES: usize = 1024 * 1024;
+/// Maximum accepted response body in one proxied request (10 MiB).
+pub const MAX_PROXY_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
 
 /// Endpoint class used to keep expensive operations from sharing the cheap
 /// generic-fetch allowance.
@@ -48,10 +50,26 @@ impl QuotaClass {
     fn policy(self) -> Policy {
         match self {
             // The proxy response is separately capped at 10 MiB per request.
-            Self::GenericProxy => Policy { requests: 30, bytes: 512 * 1024 },
-            Self::Search => Policy { requests: 30, bytes: 256 * 1024 },
-            Self::Provider => Policy { requests: 8, bytes: 2 * 1024 * 1024 },
-            Self::Symthaea => Policy { requests: 4, bytes: 128 * 1024 },
+            Self::GenericProxy => Policy {
+                requests: 30,
+                ingress_bytes: 512 * 1024,
+                response_bytes: 64 * 1024 * 1024,
+            },
+            Self::Search => Policy {
+                requests: 30,
+                ingress_bytes: 256 * 1024,
+                response_bytes: 16 * 1024 * 1024,
+            },
+            Self::Provider => Policy {
+                requests: 8,
+                ingress_bytes: 2 * 1024 * 1024,
+                response_bytes: 16 * 1024 * 1024,
+            },
+            Self::Symthaea => Policy {
+                requests: 4,
+                ingress_bytes: 128 * 1024,
+                response_bytes: 4 * 1024 * 1024,
+            },
         }
     }
 }
@@ -59,7 +77,8 @@ impl QuotaClass {
 #[derive(Debug, Clone, Copy)]
 struct Policy {
     requests: usize,
-    bytes: usize,
+    ingress_bytes: usize,
+    response_bytes: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +87,8 @@ pub enum QuotaRejection {
     RequestRate,
     /// The route's rolling one-minute ingress-byte allowance is exhausted.
     IngressBytes,
+    /// The route's rolling one-minute egress-byte allowance is exhausted.
+    ResponseBytes,
     /// The bounded state table is full of active client entries.
     ClientTableFull,
     /// The original request ticket disappeared before its body could be charged.
@@ -78,13 +99,21 @@ pub enum QuotaRejection {
 struct Event {
     id: u64,
     at: Instant,
+    ingress_bytes: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ResponseEvent {
+    at: Instant,
     bytes: usize,
 }
 
 #[derive(Debug, Default)]
 struct Bucket {
     events: VecDeque<Event>,
-    bytes: usize,
+    ingress_bytes: usize,
+    responses: VecDeque<ResponseEvent>,
+    response_bytes: usize,
 }
 
 #[derive(Debug, Default)]
@@ -153,14 +182,18 @@ impl ClientQuota {
         if bucket.events.len() >= policy.requests {
             return Err(QuotaRejection::RequestRate);
         }
-        if known_bytes > policy.bytes.saturating_sub(bucket.bytes) {
+        if known_bytes > policy.ingress_bytes.saturating_sub(bucket.ingress_bytes) {
             return Err(QuotaRejection::IngressBytes);
         }
 
         let event_id = self.next_event_id;
         self.next_event_id = self.next_event_id.wrapping_add(1).max(1);
-        bucket.events.push_back(Event { id: event_id, at: now, bytes: known_bytes });
-        bucket.bytes = bucket.bytes.saturating_add(known_bytes);
+        bucket.events.push_back(Event {
+            id: event_id,
+            at: now,
+            ingress_bytes: known_bytes,
+        });
+        bucket.ingress_bytes = bucket.ingress_bytes.saturating_add(known_bytes);
 
         Ok(QuotaTicket { client, class, event_id })
     }
@@ -178,11 +211,35 @@ impl ClientQuota {
         let event = bucket.events.iter_mut().find(|event| event.id == ticket.event_id)
             .ok_or(QuotaRejection::StaleTicket)?;
         let policy = ticket.class.policy();
-        if body_bytes > policy.bytes.saturating_sub(bucket.bytes) {
+        if body_bytes > policy.ingress_bytes.saturating_sub(bucket.ingress_bytes) {
             return Err(QuotaRejection::IngressBytes);
         }
-        event.bytes = event.bytes.saturating_add(body_bytes);
-        bucket.bytes = bucket.bytes.saturating_add(body_bytes);
+        event.ingress_bytes = event.ingress_bytes.saturating_add(body_bytes);
+        bucket.ingress_bytes = bucket.ingress_bytes.saturating_add(body_bytes);
+        Ok(())
+    }
+
+    /// Charge the actual response body before it is sent to the client. This
+    /// permits an over-budget response to be replaced with HTTP 429 rather than
+    /// leaking a partial body; each endpoint also enforces a hard per-response cap.
+    pub fn charge_response(
+        &mut self,
+        client: IpAddr,
+        class: QuotaClass,
+        response_bytes: usize,
+        now: Instant,
+    ) -> Result<(), QuotaRejection> {
+        let usage = self.clients.get_mut(&client).ok_or(QuotaRejection::StaleTicket)?;
+        usage.last_seen = Some(now);
+        let bucket = usage.buckets.entry(class).or_default();
+        purge_expired(bucket, now);
+        let policy = class.policy();
+
+        if response_bytes > policy.response_bytes.saturating_sub(bucket.response_bytes) {
+            return Err(QuotaRejection::ResponseBytes);
+        }
+        bucket.responses.push_back(ResponseEvent { at: now, bytes: response_bytes });
+        bucket.response_bytes = bucket.response_bytes.saturating_add(response_bytes);
         Ok(())
     }
 
@@ -197,7 +254,14 @@ fn purge_expired(bucket: &mut Bucket, now: Instant) {
         now.saturating_duration_since(event.at) >= WINDOW
     }) {
         if let Some(event) = bucket.events.pop_front() {
-            bucket.bytes = bucket.bytes.saturating_sub(event.bytes);
+            bucket.ingress_bytes = bucket.ingress_bytes.saturating_sub(event.ingress_bytes);
+        }
+    }
+    while bucket.responses.front().is_some_and(|event| {
+        now.saturating_duration_since(event.at) >= WINDOW
+    }) {
+        if let Some(event) = bucket.responses.pop_front() {
+            bucket.response_bytes = bucket.response_bytes.saturating_sub(event.bytes);
         }
     }
 }
@@ -294,6 +358,18 @@ impl ClientQuotaState {
             .map_err(|_| QuotaRejection::ClientTableFull)?
             .charge_body(ticket, body_bytes)
     }
+
+    pub fn charge_response(
+        &self,
+        client: IpAddr,
+        class: QuotaClass,
+        response_bytes: usize,
+    ) -> Result<(), QuotaRejection> {
+        self.limiter
+            .lock()
+            .map_err(|_| QuotaRejection::ClientTableFull)?
+            .charge_response(client, class, response_bytes, Instant::now())
+    }
 }
 
 #[cfg(test)]
@@ -332,6 +408,20 @@ mod tests {
             quota.admit_request(client, QuotaClass::Search, 1, start + Duration::from_secs(1)),
             Err(QuotaRejection::IngressBytes)
         );
+    }
+
+    #[test]
+    fn response_bytes_are_charged_before_delivery_and_expire_after_sixty_seconds() {
+        let start = Instant::now();
+        let client = ip("192.0.2.14");
+        let mut quota = ClientQuota::with_capacity(4);
+        assert!(quota.admit_request(client, QuotaClass::Search, 0, start).is_ok());
+        assert!(quota.charge_response(client, QuotaClass::Search, 16 * 1024 * 1024, start).is_ok());
+        assert_eq!(
+            quota.charge_response(client, QuotaClass::Search, 1, start + Duration::from_secs(1)),
+            Err(QuotaRejection::ResponseBytes)
+        );
+        assert!(quota.charge_response(client, QuotaClass::Search, 1, start + WINDOW).is_ok());
     }
 
     #[test]

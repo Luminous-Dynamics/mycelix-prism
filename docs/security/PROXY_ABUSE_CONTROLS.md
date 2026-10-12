@@ -14,9 +14,9 @@ Rate limits are IP-based, not account identity. Users sharing NAT may share a qu
 
 ## Rolling one-minute budgets
 
-Every applicable route uses an independent, per-client sliding 60-second budget. Requests are charged before handler/upstream work; bounded request bodies are then charged by their actual byte length. Responses are bounded and counted before delivery to the client.
+Every applicable route uses an independent, per-client sliding 60-second budget. Requests are charged before handler/upstream work; bounded request bodies are then charged by their actual byte length. Response bodies are bounded and counted before delivery to the client; the budget counts the application response body before the outer HTTP compression layer.
 
-| Route class | Routes | Requests/minute per client | Ingress bytes/minute | Egress bytes/minute |
+| Route class | Routes | Requests/minute per client | Ingress bytes/minute | Response-body bytes/minute (before HTTP compression) |
 |---|---|---:|---:|---:|
 | Generic proxy | `/proxy` | 30 | 512 KiB | 64 MiB |
 | Search | `/api/ddg`, `/api/brave` | 30 | 256 KiB | 16 MiB |

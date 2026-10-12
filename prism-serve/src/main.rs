@@ -177,6 +177,7 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
     {
         Ok(resp) => {
             if resp.status().is_redirection() {
+                log::warn!("Provider redirect blocked: class=search reason=redirect_blocked");
                 return (
                     StatusCode::BAD_GATEWAY,
                     "Unexpected provider redirect blocked",
@@ -244,6 +245,7 @@ async fn brave_handler(
     {
         Ok(resp) => {
             if resp.status().is_redirection() {
+                log::warn!("Provider redirect blocked: class=search reason=redirect_blocked");
                 return (
                     StatusCode::BAD_GATEWAY,
                     "Unexpected provider redirect blocked",
@@ -305,6 +307,7 @@ async fn perplexity_handler(
     {
         Ok(resp) => {
             if resp.status().is_redirection() {
+                log::warn!("Provider redirect blocked: class=provider reason=redirect_blocked");
                 return (
                     StatusCode::BAD_GATEWAY,
                     "Unexpected provider redirect blocked",

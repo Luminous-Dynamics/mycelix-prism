@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Commercial licensing: see COMMERCIAL_LICENSE.md at repository root
 
-mod quota_middleware;
 //! CORS proxy for Prism.
 //!
 //! Fetches external URLs on behalf of the WASM app and returns
@@ -12,6 +11,8 @@ mod quota_middleware;
 //! Listens on http://127.0.0.1:8131
 //!
 //! WASM app requests: GET /proxy?url=https://example.com
+
+mod quota_middleware;
 
 use axum::{
     Router,

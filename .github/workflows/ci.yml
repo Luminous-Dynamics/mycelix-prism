@@ -13,7 +13,7 @@ on:
   push:
     branches: [main, fix/proxy-dns-pinning-redirects-20261010]
   pull_request:
-    branches: [main]
+    branches: [main, fix/proxy-dns-pinning-redirects-20261010]
 
 jobs:
   workflow-policy:

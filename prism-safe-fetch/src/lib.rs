@@ -733,6 +733,22 @@ mod tests {
     }
 
     #[test]
+    fn timeout_error_has_a_bounded_non_sensitive_display() {
+        assert_eq!(
+            SafeFetchError::Timeout.to_string(),
+            "upstream request timed out"
+        );
+    }
+
+    #[test]
+    fn redirect_rejection_display_reports_only_the_numeric_hop() {
+        assert_eq!(
+            SafeFetchError::RedirectRejected { hop: 2 }.to_string(),
+            "redirect rejected by policy at hop 2"
+        );
+    }
+
+    #[test]
     fn domain_client_requires_a_nonempty_pin_set() {
         let url = Url::parse("http://example.com/").unwrap();
         assert!(matches!(

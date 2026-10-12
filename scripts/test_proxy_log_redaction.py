@@ -56,6 +56,24 @@ class SensitiveLogPatternTests(unittest.TestCase):
         self.assertEqual(len(findings), 2)
         self.assertTrue(all("sensitive request/value field" in item for item in findings))
 
+    def test_rejects_sensitive_argument_after_raw_string_with_parentheses(self) -> None:
+        source = '''log::info!(r#"literal includes ) and " quote"#, params.q);'''
+        findings = find_sensitive_logging("proxy.rs", source)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("sensitive request/value field", findings[0])
+
+    def test_rejects_sensitive_argument_after_nested_block_comment(self) -> None:
+        source = '''log::info!("query {}", /* outer /* nested ) */ still outer ) */ params.q);'''
+        findings = find_sensitive_logging("proxy.rs", source)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("sensitive request/value field", findings[0])
+
+    def test_rejects_sensitive_argument_after_char_literal(self) -> None:
+        source = """log::info!("query {}", { let close = ')'; params.q });"""
+        findings = find_sensitive_logging("proxy.rs", source)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("sensitive request/value field", findings[0])
+
     def test_scanner_ignores_parentheses_inside_format_strings(self) -> None:
         source = 'log::warn!("provider body (length={})", summarize(body));'
         findings = find_sensitive_logging("proxy.rs", source)

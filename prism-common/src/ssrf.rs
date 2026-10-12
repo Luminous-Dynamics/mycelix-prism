@@ -278,7 +278,7 @@ mod tests {
         for url in [
             "https://notexample.com/",
             "https://apihome.arpa/",
-            "https://service-arpa/",
+            "https://service-arpa.example.com.attacker.net/",
         ] {
             assert!(
                 validate_proxy_url(url).is_ok(),

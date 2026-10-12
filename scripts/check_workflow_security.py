@@ -229,7 +229,7 @@ def validate_checkout_refs(path_label: str, content: str) -> list[str]:
             )
         elif ref_values[0] not in CHECKOUT_REF_ALLOWLIST:
             errors.append(
-                f"{path_label}:{line_number}: actions/checkout ref must be an approved immutable "
+                f"{path_label}:{line_number}: actions/checkout ref must be an approved source-head-aware "
                 f"event SHA expression; found {ref_values[0]!r}"
             )
 

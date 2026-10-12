@@ -503,6 +503,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn per_client_in_flight_cap_sheds_excess_and_recovers_after_completion() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let app = Router::new()
+            .route(
+                "/proxy",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_millis(40)).await;
+                    "ok"
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                ClientQuotaState::default(),
+                quota_middleware::enforce_client_quota,
+            ));
+        let request = || Request::get("/proxy").body(Body::empty()).unwrap();
+
+        let (first, second, third) = tokio::join!(
+            app.clone().oneshot(request()),
+            app.clone().oneshot(request()),
+            app.clone().oneshot(request()),
+        );
+        let responses = [first.unwrap(), second.unwrap(), third.unwrap()];
+        assert_eq!(
+            responses.iter().filter(|response| response.status() == StatusCode::OK).count(),
+            2,
+            "two generic-proxy requests from one client should hold permits"
+        );
+        let rejected = responses
+            .iter()
+            .find(|response| response.status() == StatusCode::TOO_MANY_REQUESTS)
+            .expect("third concurrent request should be shed");
+        assert_eq!(
+            rejected.headers().get("retry-after").and_then(|v| v.to_str().ok()),
+            Some("1")
+        );
+
+        let recovered = app.oneshot(request()).await.unwrap();
+        assert_eq!(recovered.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn oversized_provider_body_is_rejected_before_handler_execution() {
         use axum::body::Body;
         use axum::http::Request;

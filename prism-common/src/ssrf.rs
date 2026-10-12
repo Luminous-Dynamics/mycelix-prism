@@ -76,6 +76,39 @@ pub fn is_non_public_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
+// IANA's Special-Use Domain Names registry (including subdomains) is the
+// source of truth for this curated set. Review it when the registry changes.
+// Reverse-lookup zones are omitted; literal IP destinations are handled by the
+// address policy below.
+const SPECIAL_USE_DOMAIN_SUFFIXES: &[&str] = &[
+    "alt",
+    "6tisch.arpa",
+    "eap.arpa",
+    "eap-noob.arpa",
+    "home.arpa",
+    "ipv4only.arpa",
+    "resolver.arpa",
+    "service.arpa",
+    "example",
+    "example.com",
+    "example.net",
+    "example.org",
+    "invalid",
+    "local",
+    "localhost",
+    "onion",
+    "test",
+];
+
+fn is_special_use_domain(host: &str) -> bool {
+    SPECIAL_USE_DOMAIN_SUFFIXES.iter().any(|suffix| {
+        host == *suffix
+            || host
+                .strip_suffix(suffix)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
+}
+
 /// Validate that a URL is syntactically safe for a server-side proxy.
 ///
 /// This is only the first gate: callers must also resolve the hostname, reject
@@ -112,13 +145,8 @@ pub fn validate_proxy_url(raw: &str) -> Result<url::Url, &'static str> {
 
     if normalized_host.is_empty()
         || (is_domain && !normalized_host.contains('.'))
-        || normalized_host == "localhost"
-        || normalized_host.ends_with(".localhost")
-        || normalized_host.ends_with(".local")
+        || is_special_use_domain(&normalized_host)
         || normalized_host.ends_with(".internal")
-        || normalized_host.ends_with(".test")
-        || normalized_host.ends_with(".invalid")
-        || normalized_host.ends_with(".example")
         || normalized_host == "metadata.google.internal"
     {
         return Err("Access to local or reserved hostnames is forbidden");
@@ -227,10 +255,35 @@ mod tests {
             "http://database.internal/",
             "http://testhost.test/",
             "http://fixture.example/",
+            "http://example.com/",
+            "http://api.example.net/",
+            "http://api.example.org/",
+            "http://private.home.arpa/",
+            "http://HOME.ARPA./",
+            "http://dns.resolver.arpa/",
+            "http://default.service.arpa/",
+            "http://dns64.ipv4only.arpa/",
+            "http://node.alt/",
+            "http://service.onion/",
             "http://database/",
             "http://metadata/",
         ] {
             assert!(validate_proxy_url(url).is_err(), "must reject {url}");
+        }
+    }
+
+    #[test]
+    fn special_use_suffix_matching_respects_label_boundaries() {
+        // Substring matches alone must not reject unrelated globally scoped names.
+        for url in [
+            "https://notexample.com/",
+            "https://apihome.arpa/",
+            "https://service-arpa/",
+        ] {
+            assert!(
+                validate_proxy_url(url).is_ok(),
+                "non-special-use hostname must remain eligible for DNS policy: {url}"
+            );
         }
     }
 

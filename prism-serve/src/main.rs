@@ -515,19 +515,35 @@ fn build_app_with_quota(
         // Router::layer demands an Infallible service error, but
         // LoadShed/Timeout produce a boxed error — this converts it into an
         // actual response instead of failing to compile.
+        .layer(axum::middleware::from_fn_with_state(
+            quota_state.clone(),
+            quota_middleware::enforce_client_quota,
+        ))
         .layer(symthaea_rate_limit_layer!(Duration::from_secs(240)));
 
     let generic_proxy_route = Router::new()
         .route("/proxy", get(proxy_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            quota_state.clone(),
+            quota_middleware::enforce_client_quota,
+        ))
         .layer(route_limit_layer!(12, Duration::from_secs(20)));
 
     let search_routes = Router::new()
         .route("/api/ddg", get(ddg_handler))
         .route("/api/brave", get(brave_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            quota_state.clone(),
+            quota_middleware::enforce_client_quota,
+        ))
         .layer(route_limit_layer!(12, Duration::from_secs(20)));
 
     let provider_route = Router::new()
         .route("/api/perplexity", post(perplexity_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            quota_state.clone(),
+            quota_middleware::enforce_client_quota,
+        ))
         .layer(route_limit_layer!(3, Duration::from_secs(35)));
 
     Router::new()
@@ -538,11 +554,6 @@ fn build_app_with_quota(
         .merge(symthaea_route)
         // Static files with SPA fallback
         .fallback_service(ServeDir::new(dist_path).not_found_service(fallback))
-        // Keep body reads and upstream work inside the global concurrency cap.
-        .layer(axum::middleware::from_fn_with_state(
-            quota_state,
-            quota_middleware::enforce_client_quota,
-        ))
         .layer(tower::limit::ConcurrencyLimitLayer::new(100))
         .layer(DefaultBodyLimit::max(MAX_PROVIDER_REQUEST_SIZE))
         .layer(axum::middleware::from_fn(reject_oversized_request_target))

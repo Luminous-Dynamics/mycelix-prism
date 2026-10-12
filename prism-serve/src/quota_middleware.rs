@@ -45,14 +45,31 @@ pub async fn enforce_client_quota(
         return next.run(request).await;
     };
 
-    // The production listener uses into_make_service_with_connect_info.
-    // Loopback is a conservative fallback for Router::oneshot unit tests;
-    // a deployment must not omit the socket peer from the serving stack.
-    let peer = request
+    // A missing socket peer must never silently collapse all production
+    // clients into one localhost quota identity. Unit tests use Router::oneshot,
+    // which has no ConnectInfo extension, so they get a deterministic fallback.
+    let peer = match request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|info| info.0.ip())
-        .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+    {
+        Some(peer) => peer,
+        None => {
+            #[cfg(test)]
+            {
+                IpAddr::V4(Ipv4Addr::LOCALHOST)
+            }
+            #[cfg(not(test))]
+            {
+                log::error!("Proxy quota middleware received a request without ConnectInfo");
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Client identity unavailable",
+                )
+                    .into_response();
+            }
+        }
+    };
     let forwarded_for = bounded_forwarded_for(request.headers());
     let client = state.resolve_client_ip(peer, forwarded_for.as_deref());
     let target_bytes = request

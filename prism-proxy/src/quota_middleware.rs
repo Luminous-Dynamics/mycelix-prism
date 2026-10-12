@@ -13,7 +13,9 @@ use prism_common::client_quota::{
     ClientQuotaState, QuotaClass, QuotaRejection, QuotaTicket,
     MAX_PROXY_REQUEST_BODY_BYTES, MAX_PROXY_RESPONSE_BODY_BYTES,
 };
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
+#[cfg(test)]
+use std::net::Ipv4Addr;
 use std::time::Duration;
 
 struct InFlightGuard {

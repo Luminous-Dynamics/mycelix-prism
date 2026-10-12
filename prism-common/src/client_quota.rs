@@ -203,7 +203,10 @@ impl ClientQuota {
     ) -> Result<QuotaTicket, QuotaRejection> {
         let client = normalize_ip(client);
         self.clients.retain(|_, usage| {
-            usage.last_seen.is_some_and(|last| now.saturating_duration_since(last) < IDLE_TTL)
+            !usage.in_flight.is_empty()
+                || usage
+                    .last_seen
+                    .is_some_and(|last| now.saturating_duration_since(last) < IDLE_TTL)
         });
 
         if !self.clients.contains_key(&client) && self.clients.len() >= self.max_clients {
@@ -211,7 +214,6 @@ impl ClientQuota {
         }
 
         let usage = self.clients.entry(client).or_default();
-        usage.last_seen = Some(now);
         let policy = class.policy();
         if usage.in_flight.get(&class).map(HashSet::len).unwrap_or(0) >= policy.in_flight {
             return Err(QuotaRejection::InFlight);
@@ -235,6 +237,9 @@ impl ClientQuota {
         });
         bucket.ingress_bytes = bucket.ingress_bytes.saturating_add(known_bytes);
         usage.in_flight.entry(class).or_default().insert(event_id);
+        // Only admitted work refreshes idle retention. Rejected attempts must
+        // not keep an otherwise-idle client entry resident.
+        usage.last_seen = Some(now);
 
         Ok(QuotaTicket { client, class, event_id })
     }
@@ -611,6 +616,82 @@ mod tests {
             .admit_request(ip("192.0.2.21"), QuotaClass::Search, 0, start + IDLE_TTL)
             .unwrap();
         quota.release_request(second_client_ticket);
+        assert_eq!(quota.active_clients(), 1);
+    }
+
+    #[test]
+    fn active_client_entries_survive_idle_ttl_until_request_ticket_is_released() {
+        let start = Instant::now();
+        let mut quota = ClientQuota::with_capacity(3);
+        let client = ip("192.0.2.22");
+        let active = quota
+            .admit_request(client, QuotaClass::Provider, 0, start)
+            .unwrap();
+
+        let other = quota
+            .admit_request(
+                ip("192.0.2.23"),
+                QuotaClass::Search,
+                0,
+                start + IDLE_TTL,
+            )
+            .unwrap();
+        quota.release_request(other);
+
+        assert_eq!(
+            quota.admit_request(
+                client,
+                QuotaClass::Provider,
+                0,
+                start + IDLE_TTL + Duration::from_secs(1),
+            ),
+            Err(QuotaRejection::InFlight),
+            "idle cleanup must not discard a client with a live permit"
+        );
+
+        quota.release_request(active);
+        let replacement = quota
+            .admit_request(
+                client,
+                QuotaClass::Provider,
+                0,
+                start + IDLE_TTL + Duration::from_secs(2),
+            )
+            .unwrap();
+        quota.release_request(replacement);
+    }
+
+    #[test]
+    fn rejected_requests_do_not_extend_idle_client_retention() {
+        let start = Instant::now();
+        let mut quota = ClientQuota::with_capacity(1);
+        let client = ip("192.0.2.24");
+
+        for _ in 0..30 {
+            let ticket = quota
+                .admit_request(client, QuotaClass::Search, 0, start)
+                .unwrap();
+            quota.release_request(ticket);
+        }
+        assert_eq!(
+            quota.admit_request(
+                client,
+                QuotaClass::Search,
+                0,
+                start + Duration::from_secs(1),
+            ),
+            Err(QuotaRejection::RequestRate)
+        );
+
+        let replacement = quota
+            .admit_request(
+                ip("192.0.2.25"),
+                QuotaClass::Search,
+                0,
+                start + IDLE_TTL,
+            )
+            .expect("a rejected request must not extend the old entry's idle TTL");
+        quota.release_request(replacement);
         assert_eq!(quota.active_clients(), 1);
     }
 

@@ -333,15 +333,27 @@ fn build_app_with_quota(quota_state: ClientQuotaState) -> Router {
 
     let generic_proxy_route = Router::new()
         .route("/proxy", get(proxy_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            quota_state.clone(),
+            quota_middleware::enforce_client_quota,
+        ))
         .layer(route_limit_layer!(12, Duration::from_secs(20)));
 
     let search_routes = Router::new()
         .route("/api/ddg", get(ddg_handler))
         .route("/api/brave", get(brave_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            quota_state.clone(),
+            quota_middleware::enforce_client_quota,
+        ))
         .layer(route_limit_layer!(12, Duration::from_secs(20)));
 
     let provider_route = Router::new()
         .route("/api/perplexity", axum::routing::post(perplexity_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            quota_state.clone(),
+            quota_middleware::enforce_client_quota,
+        ))
         .layer(route_limit_layer!(3, Duration::from_secs(35)));
 
     let app = Router::new()
@@ -349,11 +361,6 @@ fn build_app_with_quota(quota_state: ClientQuotaState) -> Router {
         .merge(search_routes)
         .merge(provider_route)
         .route("/health", get(health))
-        // Keep bounded body reads inside the concurrency cap and before the handlers.
-        .layer(axum::middleware::from_fn_with_state(
-            quota_state,
-            quota_middleware::enforce_client_quota,
-        ))
         .layer(tower::limit::ConcurrencyLimitLayer::new(50))
         .layer(DefaultBodyLimit::max(MAX_PROVIDER_REQUEST_SIZE))
         .layer(axum::middleware::from_fn(reject_oversized_request_target))

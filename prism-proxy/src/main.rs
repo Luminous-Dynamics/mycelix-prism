@@ -1,6 +1,8 @@
 // Copyright (C) 2024-2026 Tristan Stoltz / Luminous Dynamics
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Commercial licensing: see COMMERCIAL_LICENSE.md at repository root
+
+mod quota_middleware;
 //! CORS proxy for Prism.
 //!
 //! Fetches external URLs on behalf of the WASM app and returns
@@ -18,8 +20,10 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use prism_common::client_quota::{parse_trusted_proxy_ips, ClientQuotaState};
 use prism_common::proxy_limits::MAX_REQUEST_TARGET_BYTES;
 use prism_common::ssrf::validate_proxy_url;
+use std::net::SocketAddr;
 use prism_safe_fetch::{SafeFetchError, fetch_public_get, read_limited_body};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
@@ -284,6 +288,10 @@ async fn health() -> &'static str {
 }
 
 fn build_app() -> Router {
+    build_app_with_quota(ClientQuotaState::default())
+}
+
+fn build_app_with_quota(quota_state: ClientQuotaState) -> Router {
     let allowed_origins = AllowOrigin::list([
         "http://localhost:8130"
             .parse()
@@ -310,6 +318,11 @@ fn build_app() -> Router {
         .route("/api/brave", get(brave_handler))
         .route("/api/perplexity", axum::routing::post(perplexity_handler))
         .route("/health", get(health))
+        // Keep bounded body reads inside the concurrency cap and before the handlers.
+        .layer(axum::middleware::from_fn_with_state(
+            quota_state,
+            quota_middleware::enforce_client_quota,
+        ))
         .layer(tower::limit::ConcurrencyLimitLayer::new(50))
         .layer(DefaultBodyLimit::max(MAX_PROVIDER_REQUEST_SIZE))
         .layer(axum::middleware::from_fn(reject_oversized_request_target))
@@ -319,18 +332,37 @@ fn build_app() -> Router {
 }
 
 #[tokio::main]
+fn quota_state_from_env() -> Result<ClientQuotaState, String> {
+    let raw = std::env::var("PRISM_TRUSTED_PROXY_IPS").unwrap_or_default();
+    if raw.trim().is_empty() {
+        return Ok(ClientQuotaState::default());
+    }
+    parse_trusted_proxy_ips(&raw).map(ClientQuotaState::new)
+}
+
 async fn main() {
     env_logger::init();
-    let app = build_app();
+    let quota_state = quota_state_from_env().unwrap_or_else(|error| {
+        log::error!("{}", error);
+        std::process::exit(2);
+    });
+    let app = build_app_with_quota(quota_state);
 
-    let addr = "127.0.0.1:8131";
+    // prism-proxy intentionally remains loopback-only. Public deployment belongs
+    // behind the explicitly configured ingress in front of prism-serve.
+    let addr: SocketAddr = "127.0.0.1:8131".parse().expect("constant socket address");
     log::info!("Prism proxy listening on http://{}", addr);
     println!("Prism CORS proxy on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("Failed to bind port 8131");
-    axum::serve(listener, app).await.expect("Server error");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .expect("Server error");
 }
 
 #[cfg(test)]

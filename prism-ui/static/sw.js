@@ -48,6 +48,12 @@ function shouldBypassStaticCache(request, url) {
     pragma.split(',').some((directive) => directive.trim() === 'no-cache');
 }
 
+function isContentAddressedStaticAsset(url) {
+  const filename = url.pathname.split('/').pop() || '';
+  // Require a hexadecimal fingerprint segment, not merely a long filename.
+  return /(?:^|[-_.])[a-f0-9]{6,}(?:[-_.]|$)/i.test(filename);
+}
+
 function shouldCacheStaticResponse(response, requestUrl) {
   if (!response.ok || response.type === 'opaque' || response.status === 206) return false;
 
@@ -166,24 +172,49 @@ self.addEventListener('fetch', (event) => {
     // A URL query may carry tokens or user data. Authorization-bearing requests
     // and explicit cache-bypass directives must not read from or write to cache.
     if (shouldBypassStaticCache(request, url)) {
-      event.respondWith(fetch(request));
+      event.respondWith((async () => {
+        // Remove any entry accidentally left by an older worker/version before
+        // honoring a request that explicitly bypasses cache or carries secrets.
+        const cache = await caches.open(CACHE_NAME);
+        await cache.delete(request);
+        return fetch(request);
+      })());
       return;
     }
 
+    // A content-addressed name can safely use cache-first: a different payload
+    // should have a different URL. Mutable filenames must contact the origin so
+    // changed content and newly restrictive cache headers take effect online.
+    const cacheFirst = isContentAddressedStaticAsset(url);
+
     event.respondWith((async () => {
       const cache = await caches.open(CACHE_NAME);
-      const cached = await cache.match(request);
-      if (cached) return cached;
-
-      const response = await fetch(request);
-      if (shouldCacheStaticResponse(response, url)) {
-        try {
-          await cache.put(request, response.clone());
-        } catch (_) {
-          // Storage quota or an uncacheable response must not break an online fetch.
-        }
+      if (cacheFirst) {
+        const cached = await cache.match(request);
+        if (cached) return cached;
       }
-      return response;
+
+      try {
+        const response = await fetch(request);
+        if (shouldCacheStaticResponse(response, url)) {
+          try {
+            await cache.put(request, response.clone());
+          } catch (_) {
+            // Storage quota or an uncacheable response must not break an online fetch.
+          }
+        } else {
+          // Do not leave an old cacheable response behind after the origin opts
+          // out of storage or serves a non-cacheable fallback for this URL.
+          await cache.delete(request);
+        }
+        return response;
+      } catch (error) {
+        // Mutable assets retain offline support, but never use a cached result
+        // while the origin is reachable.
+        const cached = await cache.match(request);
+        if (cached) return cached;
+        throw error;
+      }
     })());
     return;
   }

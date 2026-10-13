@@ -101,43 +101,51 @@ impl DomTree {
     }
 
     fn collect_text(&self, root: NodeId, buf: &mut String) {
-        // Use an explicit stack so adversarial nesting cannot consume the
-        // thread's call stack. The seen set also prevents cycles in manually
-        // edited trees from turning text extraction into an infinite walk.
-        let mut pending = vec![root];
-        let mut seen = HashSet::new();
+        // Cursor frames keep pending work proportional to depth rather than
+        // to the number of siblings. The active-path set detects malformed cycles.
+        let mut stack = vec![(root, 0usize)];
+        let mut ancestors = HashSet::new();
 
-        while let Some(node_id) = pending.pop() {
-            if !seen.insert(node_id) {
-                continue;
-            }
+        while let Some((node_id, next_child)) = stack.pop() {
             let Some(node) = self.get(node_id) else {
+                ancestors.remove(&node_id);
                 continue;
             };
 
-            match &node.data {
-                NodeData::Text(text) => {
-                    if !text.trim().is_empty() {
-                        if !buf.is_empty() {
-                            buf.push(' ');
-                        }
-                        buf.push_str(text.trim());
-                    }
+            if next_child == 0 {
+                if !ancestors.insert(node_id) {
+                    // This edge points back into the current traversal path.
+                    continue;
                 }
-                NodeData::Element(el) => {
-                    // Skip invisible elements and their entire subtrees.
-                    if matches!(
+                if let NodeData::Text(text) = &node.data
+                    && !text.trim().is_empty()
+                {
+                    if !buf.is_empty() {
+                        buf.push(' ');
+                    }
+                    buf.push_str(text.trim());
+                }
+            }
+
+            let child_count = match &node.data {
+                NodeData::Element(el)
+                    if !matches!(
                         el.tag.as_str(),
                         "script" | "style" | "noscript" | "svg" | "template"
-                    ) {
-                        continue;
-                    }
-                    pending.extend(node.children.iter().rev().copied());
+                    ) =>
+                {
+                    node.children.len()
                 }
-                NodeData::Document => {
-                    pending.extend(node.children.iter().rev().copied());
-                }
-                _ => {}
+                NodeData::Document => node.children.len(),
+                _ => 0,
+            };
+
+            if next_child < child_count {
+                let child_id = node.children[next_child];
+                stack.push((node_id, next_child + 1));
+                stack.push((child_id, 0));
+            } else {
+                ancestors.remove(&node_id);
             }
         }
     }

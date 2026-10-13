@@ -378,3 +378,72 @@ test('install still caches a cacheable app shell at the root URL', async () => {
   const installedCache = harness.stores.get('mycelix-prism-v4');
   assert.equal(installedCache.get(new URL('/', ORIGIN).href).label, 'cacheable app shell');
 });
+
+
+test('mutable static assets refresh from origin and replace stale cache entries', async () => {
+  const path = '/static/prism-hero.jpg';
+  const harness = makeHarness({
+    initialCaches: {
+      'mycelix-prism-v4': {
+        [path]: makeResponse('stale hero image', true, { 'Cache-Control': 'public, max-age=3600' }),
+      },
+    },
+    fetchImpl: async () => makeResponse('updated hero image', true, {
+      'Cache-Control': 'public, max-age=3600',
+    }),
+  });
+
+  const event = dispatchFetch(harness, request(path));
+  assert.equal((await event.responsePromise).label, 'updated hero image');
+  assert.equal(harness.stores.get('mycelix-prism-v4').get(new URL(path, ORIGIN).href).label, 'updated hero image');
+});
+
+test('new no-store policy removes an older cached mutable asset', async () => {
+  const path = '/static/prism-icon.svg';
+  const harness = makeHarness({
+    initialCaches: {
+      'mycelix-prism-v4': {
+        [path]: makeResponse('old cacheable icon', true, { 'Cache-Control': 'public, max-age=3600' }),
+      },
+    },
+    fetchImpl: async () => makeResponse('fresh non-cacheable icon', true, {
+      'Cache-Control': 'no-store',
+    }),
+  });
+
+  const event = dispatchFetch(harness, request(path));
+  assert.equal((await event.responsePromise).label, 'fresh non-cacheable icon');
+  assert.equal(harness.stores.get('mycelix-prism-v4').has(new URL(path, ORIGIN).href), false);
+});
+
+test('mutable static assets fall back to cache only after network failure', async () => {
+  const path = '/static/prism-hero.jpg';
+  const harness = makeHarness({
+    initialCaches: {
+      'mycelix-prism-v4': {
+        [path]: makeResponse('offline hero image'),
+      },
+    },
+    fetchImpl: async () => { throw new Error('offline'); },
+  });
+
+  const event = dispatchFetch(harness, request(path));
+  assert.equal((await event.responsePromise).label, 'offline hero image');
+  assert.deepEqual(harness.fetched, [new URL(path, ORIGIN).href]);
+});
+
+test('content-addressed assets remain cache-first for performance', async () => {
+  const path = '/static/app-a1b2c3d4.js';
+  const harness = makeHarness({
+    initialCaches: {
+      'mycelix-prism-v4': {
+        [path]: makeResponse('cached fingerprinted asset'),
+      },
+    },
+    fetchImpl: async () => { throw new Error('network should not be required'); },
+  });
+
+  const event = dispatchFetch(harness, request(path));
+  assert.equal((await event.responsePromise).label, 'cached fingerprinted asset');
+  assert.deepEqual(harness.fetched, []);
+});

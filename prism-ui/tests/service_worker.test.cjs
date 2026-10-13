@@ -245,6 +245,9 @@ test('static responses marked non-cacheable by HTTP policy are not persisted', a
     ['zero-max-age', { 'Cache-Control': 'max-age=0' }],
     ['vary-wildcard', { Vary: 'Accept-Language, *' }],
     ['partial-content', {}, 'basic', true, 206],
+    ['pragma-no-cache', { Pragma: 'no-cache' }],
+    ['expired-expires', { Expires: 'Thu, 01 Jan 1970 00:00:00 GMT' }],
+    ['invalid-expires', { Expires: '0' }],
   ];
 
   for (const [index, [name, headers, type = 'basic', ok = true, status = 200]] of cases.entries()) {
@@ -446,4 +449,20 @@ test('content-addressed assets remain cache-first for performance', async () => 
   const event = dispatchFetch(harness, request(path));
   assert.equal((await event.responsePromise).label, 'cached fingerprinted asset');
   assert.deepEqual(harness.fetched, []);
+});
+
+
+test('explicit Cache-Control lifetime takes precedence over legacy Expires', async () => {
+  const harness = makeHarness({
+    initialCaches: { 'mycelix-prism-v4': {} },
+    fetchImpl: async () => makeResponse('explicit lifetime wins', true, {
+      'Cache-Control': 'public, max-age=600',
+      Expires: 'Thu, 01 Jan 1970 00:00:00 GMT',
+      Pragma: 'no-cache',
+    }),
+  });
+
+  const event = dispatchFetch(harness, request('/static/app.js'));
+  assert.equal((await event.responsePromise).label, 'explicit lifetime wins');
+  assert.equal(harness.puts.length, 1);
 });

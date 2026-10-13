@@ -637,7 +637,7 @@ mod tests {
     fn layout_handles_deep_inline_dom_without_call_stack_growth() {
         const DEPTH: usize = 20_000;
         let html = format!(
-            "<html><body>{}deep layout{}</body></html>",
+            "<html><body><p>{}deep layout{}</p></body></html>",
             "<span>".repeat(DEPTH),
             "</span>".repeat(DEPTH),
         );

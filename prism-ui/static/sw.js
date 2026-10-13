@@ -4,7 +4,7 @@
 // Mycelix Prism — Service Worker for offline-first PWA
 // Caches core assets on install, serves from cache with network fallback.
 
-const CACHE_NAME = 'mycelix-prism-v3';
+const CACHE_NAME = 'mycelix-prism-v4';
 const PRISM_CACHE_PREFIX = 'mycelix-prism-';
 // Explicitly known legacy Prism cache from the previous service worker.
 const LEGACY_CACHE_NAMES = new Set(['prism-v2']);
@@ -20,6 +20,63 @@ const CORE_ASSETS = [
   '/static/prism-icon.svg',
   '/static/prism-index-core.bin',
 ];
+
+function cacheControlDirectives(value) {
+  return (value || '')
+    .split(',')
+    .map((directive) => directive.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+// Cache Storage deliberately does not implement HTTP freshness/privacy policy
+// for the application. Keep sensitive or explicitly non-cacheable requests out
+// of both lookup and insertion, rather than relying on Cache-Control by itself.
+function shouldBypassStaticCache(request, url) {
+  const requestDirectives = cacheControlDirectives(
+    request.headers?.get('Cache-Control'),
+  );
+  const pragma = (request.headers?.get('Pragma') || '').toLowerCase();
+
+  return url.search !== '' ||
+    Boolean(request.headers?.has('Authorization')) ||
+    requestDirectives.some((directive) =>
+      directive === 'no-store' ||
+      directive === 'no-cache' ||
+      /^max-age\s*=\s*"?0"?$/.test(directive)
+    ) ||
+    ['no-store', 'no-cache', 'reload'].includes(request.cache) ||
+    pragma.split(',').some((directive) => directive.trim() === 'no-cache');
+}
+
+function shouldCacheStaticResponse(response) {
+  if (!response.ok || response.type === 'opaque') return false;
+
+  const directives = cacheControlDirectives(
+    response.headers?.get('Cache-Control'),
+  );
+  const forbidden = new Set([
+    'no-store',
+    'no-cache',
+    'private',
+    'must-revalidate',
+    'proxy-revalidate',
+  ]);
+  if (directives.some((directive) => {
+    const [name] = directive.split('=', 1);
+    if (forbidden.has(name.trim())) return true;
+    if (name.trim() !== 'max-age') return false;
+    const value = directive.slice(directive.indexOf('=') + 1).trim().replace(/^"|"$/g, '');
+    return value !== '' && Number(value) === 0;
+  })) {
+    return false;
+  }
+
+  // A wildcard Vary makes a response unsuitable for Cache.put().
+  const vary = response.headers?.get('Vary') || '';
+  if (vary.split(',').some((name) => name.trim() === '*')) return false;
+
+  return true;
+}
 
 // Install: cache only stable-filename assets
 self.addEventListener('install', (event) => {
@@ -78,13 +135,20 @@ self.addEventListener('fetch', (event) => {
       url.pathname.endsWith('.wasm') ||
       url.pathname.endsWith('.js') ||
       url.pathname.endsWith('.css')) {
+    // A URL query may carry tokens or user data. Authorization-bearing requests
+    // and explicit cache-bypass directives must not read from or write to cache.
+    if (shouldBypassStaticCache(request, url)) {
+      event.respondWith(fetch(request));
+      return;
+    }
+
     event.respondWith((async () => {
       const cache = await caches.open(CACHE_NAME);
       const cached = await cache.match(request);
       if (cached) return cached;
 
       const response = await fetch(request);
-      if (response.ok) {
+      if (shouldCacheStaticResponse(response)) {
         try {
           await cache.put(request, response.clone());
         } catch (_) {

@@ -59,23 +59,23 @@ impl TreeSink for PrismSink {
     }
 
     fn elem_name<'a>(&'a self, target: &'a NodeId) -> ExpandedName<'a> {
-        // This is tricky: we need to return a reference into the RefCell.
-        // Since html5ever only calls this during single-threaded parsing and
-        // the node data won't move, we borrow and leak the guard for the
-        // duration. In practice, html5ever drops the ExpandedName before
-        // any mutation occurs.
-        //
-        // A safer alternative would be to store QualName outside the RefCell,
-        // but that would require a separate arena. For now, we use a raw pointer
-        // which is safe because the DomTree arena never reallocates existing nodes.
         let tree = self.tree.borrow();
         let node = tree.get(*target).expect("valid node");
         match &node.data {
             NodeData::Element(el) => {
-                // SAFETY: The DomTree arena (Vec) may reallocate on push, but
-                // elem_name is only called on already-existing nodes. The borrow
-                // is dropped before any new nodes are created in the same call.
-                let qn: *const QualName = &el.qual_name;
+                // TreeSink::ElemName borrows the name for the sink/handle
+                // lifetime, but tree is interior-mutable and its Ref guard
+                // cannot be returned. The QualName itself is boxed, so moving
+                // or growing the Vec<Node> cannot move the pointee.
+                //
+                // SAFETY: the pointee in el.qual_name is allocated separately
+                // and remains alive until the sink is consumed at the end of
+                // parsing. DomTree never removes nodes, and PrismSink's only
+                // mutation paths can append/detach nodes or change attributes
+                // and text; none replaces or mutates an existing QualName.
+                // This stability invariant is enforced by the Box in
+                // ElementData and the parser's mutation methods.
+                let qn: *const QualName = el.qual_name.as_ref();
                 unsafe { (*qn).expanded() }
             }
             _ => panic!("elem_name called on non-element"),
@@ -97,7 +97,7 @@ impl TreeSink for PrismSink {
             .borrow_mut()
             .new_node(NodeData::Element(ElementData {
                 tag: name.local.to_string(),
-                qual_name: name,
+                qual_name: Box::new(name),
                 attributes,
             }))
     }
@@ -291,6 +291,35 @@ mod tests {
         let tree = parse_html("");
         assert!(!tree.is_empty());
         assert_eq!(tree.extract_visible_text(), "");
+    }
+
+    #[test]
+    fn parse_large_flat_document_survives_repeated_arena_growth() {
+        use std::fmt::Write as _;
+
+        const ELEMENTS: usize = 8_192;
+        let mut html = String::with_capacity(ELEMENTS * 48);
+        html.push_str("<html><body>");
+        for index in 0..ELEMENTS {
+            write!(
+                &mut html,
+                "<div data-index=\"{index}\"><span>{index}</span></div>"
+            )
+            .unwrap();
+        }
+        html.push_str("</body></html>");
+
+        let tree = parse_html(&html);
+        assert_eq!(
+            tree.find_by_tag("div").len(),
+            ELEMENTS,
+            "all div nodes must survive repeated Vec arena growth"
+        );
+        assert_eq!(
+            tree.find_by_tag("span").len(),
+            ELEMENTS,
+            "all span nodes must survive repeated Vec arena growth"
+        );
     }
 
     #[test]

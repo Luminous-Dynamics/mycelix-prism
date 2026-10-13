@@ -217,6 +217,35 @@ mod tests {
     }
 
     #[test]
+    fn boxed_qualified_name_address_survives_arena_growth() {
+        let mut tree = DomTree::new();
+        let div = make_element(&mut tree, "div");
+        let original_ptr = tree
+            .get(div)
+            .unwrap()
+            .as_element()
+            .unwrap()
+            .qual_name
+            .as_ref() as *const QualName;
+
+        for _ in 0..16_384 {
+            tree.new_node(NodeData::Text("growth".to_string()));
+        }
+
+        let after_growth_ptr = tree
+            .get(div)
+            .unwrap()
+            .as_element()
+            .unwrap()
+            .qual_name
+            .as_ref() as *const QualName;
+        assert_eq!(
+            original_ptr, after_growth_ptr,
+            "Vec growth must not move qualified-name storage"
+        );
+    }
+
+    #[test]
     fn extract_visible_text_skips_script() {
         let mut tree = DomTree::new();
         let doc = tree.new_node(NodeData::Document);

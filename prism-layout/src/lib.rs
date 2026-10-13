@@ -435,8 +435,10 @@ fn flatten_dom(dom: &DomTree, config: &LayoutConfig) -> Vec<Block> {
         }
     }
 
-    // Flush any remaining inline runs (usually empty because body/block
-    // elements flush their own run scopes).
+    // Preserve trailing inline content after the last block.
+    if let Some(root_runs) = run_scopes.first_mut() {
+        flush_paragraph(root_runs, &mut blocks, 0.0, 0.0);
+    }
     blocks
 }
 
@@ -663,6 +665,20 @@ mod tests {
                 |r| matches!(&r.content, PaintContent::Text { text, .. } if text.contains("cycle-safe"))
             ),
             "valid text should remain laid out even when a child cycle exists"
+        );
+    }
+
+    #[test]
+    fn layout_preserves_trailing_inline_text_after_a_block() {
+        let dom = parse_html(
+            "<html><body><p>Block content</p><span>Trailing inline content</span></body></html>",
+        );
+        let rects = layout_dom(&dom, 800.0, 600.0);
+        assert!(
+            rects.iter().any(
+                |r| matches!(&r.content, PaintContent::Text { text, .. } if text.contains("Trailing inline content"))
+            ),
+            "inline text after the final block must be flushed into layout output"
         );
     }
 

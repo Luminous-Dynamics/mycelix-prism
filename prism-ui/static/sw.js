@@ -48,8 +48,23 @@ function shouldBypassStaticCache(request, url) {
     pragma.split(',').some((directive) => directive.trim() === 'no-cache');
 }
 
-function shouldCacheStaticResponse(response) {
+function shouldCacheStaticResponse(response, requestUrl) {
   if (!response.ok || response.type === 'opaque' || response.status === 206) return false;
+
+  // The SPA fallback can return index.html with status 200 for a missing
+  // asset path (for example /static/missing.js). Do not poison the static
+  // cache with HTML stored under an asset URL; navigation/app-shell HTML is
+  // eligible only at the root shell URL.
+  const url = typeof requestUrl === 'string'
+    ? new URL(requestUrl, self.location.origin)
+    : requestUrl;
+  const contentType = (response.headers?.get('Content-Type') || '')
+    .split(';', 1)[0]
+    .trim()
+    .toLowerCase();
+  const isHtml = contentType === 'text/html' || contentType === 'application/xhtml+xml';
+  const isAppShellUrl = url.pathname === '/' || url.pathname.endsWith('/');
+  if (isHtml && !isAppShellUrl) return false;
 
   const directives = cacheControlDirectives(
     response.headers?.get('Cache-Control'),
@@ -86,7 +101,7 @@ async function precacheCoreAssets(cache) {
     if (!response.ok) {
       throw new Error(`Failed to fetch core asset: ${asset}`);
     }
-    if (!shouldCacheStaticResponse(response)) return;
+    if (!shouldCacheStaticResponse(response, new URL(asset, self.location.origin))) return;
     await cache.put(asset, response.clone());
   }));
 }
@@ -161,7 +176,7 @@ self.addEventListener('fetch', (event) => {
       if (cached) return cached;
 
       const response = await fetch(request);
-      if (shouldCacheStaticResponse(response)) {
+      if (shouldCacheStaticResponse(response, url)) {
         try {
           await cache.put(request, response.clone());
         } catch (_) {

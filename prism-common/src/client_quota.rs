@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 const WINDOW: Duration = Duration::from_secs(60);
 const IDLE_TTL: Duration = Duration::from_secs(5 * 60);
+// Sweep the bounded table periodically rather than scanning every client on every request.
+const CLIENT_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_CLIENTS: usize = 4_096;
 
 /// Canonicalize IPv4-mapped IPv6 socket addresses to the equivalent IPv4 key.
@@ -174,6 +176,7 @@ pub struct ClientQuota {
     clients: HashMap<IpAddr, ClientUsage>,
     max_clients: usize,
     next_event_id: u64,
+    next_sweep_at: Option<Instant>,
 }
 
 impl Default for ClientQuota {
@@ -188,6 +191,7 @@ impl ClientQuota {
             clients: HashMap::new(),
             max_clients: max_clients.max(1),
             next_event_id: 1,
+            next_sweep_at: None,
         }
     }
 
@@ -202,12 +206,19 @@ impl ClientQuota {
         now: Instant,
     ) -> Result<QuotaTicket, QuotaRejection> {
         let client = normalize_ip(client);
-        self.clients.retain(|_, usage| {
-            !usage.in_flight.is_empty()
-                || usage
-                    .last_seen
-                    .is_some_and(|last| now.saturating_duration_since(last) < IDLE_TTL)
-        });
+        // The table has a hard cardinality cap, so cleanup work can be bounded
+        // to one O(max_clients) sweep per interval instead of O(max_clients)
+        // on every request. Expiry may lag by at most one sweep interval; a
+        // full table still fails closed until the next scheduled sweep.
+        if self.next_sweep_at.map_or(true, |deadline| now >= deadline) {
+            self.clients.retain(|_, usage| {
+                !usage.in_flight.is_empty()
+                    || usage
+                        .last_seen
+                        .is_some_and(|last| now.saturating_duration_since(last) < IDLE_TTL)
+            });
+            self.next_sweep_at = Some(now + CLIENT_SWEEP_INTERVAL);
+        }
 
         if !self.clients.contains_key(&client) && self.clients.len() >= self.max_clients {
             return Err(QuotaRejection::ClientTableFull);
@@ -617,6 +628,50 @@ mod tests {
             .unwrap();
         quota.release_request(second_client_ticket);
         assert_eq!(quota.active_clients(), 1);
+    }
+
+    #[test]
+    fn idle_client_cleanup_is_amortized_and_fails_closed_until_next_sweep() {
+        let start = Instant::now();
+        let mut quota = ClientQuota::with_capacity(2);
+
+        let first = quota
+            .admit_request(ip("192.0.2.26"), QuotaClass::Search, 0, start)
+            .unwrap();
+        quota.release_request(first);
+
+        // Run a sweep shortly before the first client reaches the idle TTL.
+        let second = quota
+            .admit_request(
+                ip("192.0.2.27"),
+                QuotaClass::Search,
+                0,
+                start + IDLE_TTL - Duration::from_secs(15),
+            )
+            .unwrap();
+        quota.release_request(second);
+
+        assert_eq!(
+            quota.admit_request(
+                ip("192.0.2.28"),
+                QuotaClass::Search,
+                0,
+                start + IDLE_TTL,
+            ),
+            Err(QuotaRejection::ClientTableFull),
+            "between sweeps, an expired entry may remain temporarily; saturation must fail closed"
+        );
+
+        let replacement = quota
+            .admit_request(
+                ip("192.0.2.28"),
+                QuotaClass::Search,
+                0,
+                start + IDLE_TTL + Duration::from_secs(15),
+            )
+            .expect("the next sweep should reclaim the expired idle entry");
+        quota.release_request(replacement);
+        assert_eq!(quota.active_clients(), 2);
     }
 
     #[test]

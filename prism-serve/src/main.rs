@@ -540,7 +540,7 @@ async fn symthaea_query_handler(
     if req.content.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "Empty query").into_response();
     }
-    if req.content.len() > SYMTHAEA_MAX_QUERY_CHARS {
+    if req.content.chars().count() > SYMTHAEA_MAX_QUERY_CHARS {
         return (StatusCode::PAYLOAD_TOO_LARGE, "Query too long").into_response();
     }
 
@@ -1390,6 +1390,52 @@ mod tests {
                 .get("x-content-type-options")
                 .and_then(|value| value.to_str().ok()),
             Some("nosniff")
+        );
+    }
+
+    #[tokio::test]
+    async fn symthaea_query_accepts_multibyte_content_at_character_limit() {
+        let dir = test_dist_dir();
+        let socket_path = dir.path().join("fake-symthaea-unicode.sock");
+        spawn_fake_daemon(socket_path.clone(), |_req| {
+            FakeDaemonAction::Reply(
+                serde_json::json!({
+                    "type": "response",
+                    "content": "accepted",
+                    "confidence": 0.9,
+                    "safe": true,
+                    "phi": 0.5,
+                    "processing_time_ms": 1
+                })
+                .to_string(),
+            )
+        });
+
+        let content = "é".repeat(SYMTHAEA_MAX_QUERY_CHARS);
+        assert_eq!(content.chars().count(), SYMTHAEA_MAX_QUERY_CHARS);
+        assert!(
+            content.len() > SYMTHAEA_MAX_QUERY_CHARS,
+            "fixture must be over the character limit in UTF-8 bytes"
+        );
+
+        let app = build_app(
+            dir.path().to_str().unwrap(),
+            test_symthaea_cfg(&socket_path),
+        );
+        let response = app
+            .oneshot(
+                Request::post("/api/symthaea/query")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::json!({ "content": content }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "a request within the Unicode character limit must not be rejected due to UTF-8 byte length"
         );
     }
 

@@ -188,9 +188,9 @@ fn rewrite_links_for_proxy(html: &str, _source_host: &str) -> String {
 fn proxy_url(target: &str) -> String {
     // Encode the destination as one query parameter so its own query string,
     // ampersands, fragments, and reserved characters cannot escape the value.
-    let query = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("url", target)
-        .finish();
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    serializer.append_pair("url", target);
+    let query = serializer.finish();
     // Same-origin: proxy routes served by prism-serve on the same port.
     format!("/proxy?{}", query)
 }

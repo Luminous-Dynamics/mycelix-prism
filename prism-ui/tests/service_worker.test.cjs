@@ -10,18 +10,45 @@ const WORKER_SOURCE = fs.readFileSync(
   'utf8',
 );
 
-function makeResponse(label, ok = true) {
+function makeHeaders(values = {}) {
+  const entries = new Map(
+    Object.entries(values).map(([name, value]) => [name.toLowerCase(), String(value)]),
+  );
   return {
-    label,
-    ok,
-    clone() {
-      return makeResponse(label, ok);
+    get(name) {
+      return entries.get(String(name).toLowerCase()) ?? null;
+    },
+    has(name) {
+      return entries.has(String(name).toLowerCase());
     },
   };
 }
 
-function request(url, { method = 'GET', mode = 'cors' } = {}) {
-  return { url: new URL(url, ORIGIN).href, method, mode };
+function makeResponse(label, ok = true, headerValues = {}, type = 'basic') {
+  return {
+    label,
+    ok,
+    type,
+    headers: makeHeaders(headerValues),
+    clone() {
+      return makeResponse(label, ok, headerValues, type);
+    },
+  };
+}
+
+function request(url, {
+  method = 'GET',
+  mode = 'cors',
+  headers = {},
+  cache = 'default',
+} = {}) {
+  return {
+    url: new URL(url, ORIGIN).href,
+    method,
+    mode,
+    headers: makeHeaders(headers),
+    cache,
+  };
 }
 
 function requestKey(input) {
@@ -124,7 +151,7 @@ test('activation deletes only known Prism cache namespaces', async () => {
     initialCaches: {
       'prism-v2': { '/old-route?q=secret': makeResponse('old prism data') },
       'mycelix-prism-v2': { '/old': makeResponse('older prism data') },
-      'mycelix-prism-v3': { '/': makeResponse('current app shell') },
+      'mycelix-prism-v4': { '/': makeResponse('current app shell') },
       'other-app-v1': { '/': makeResponse('other app shell') },
       'prism-other-app-cache': { '/': makeResponse('unrelated cache with similar prefix') },
     },
@@ -135,7 +162,7 @@ test('activation deletes only known Prism cache namespaces', async () => {
   await pending;
 
   assert.deepEqual(harness.deleted.sort(), ['mycelix-prism-v2', 'prism-v2']);
-  assert.ok(harness.stores.has('mycelix-prism-v3'));
+  assert.ok(harness.stores.has('mycelix-prism-v4'));
   assert.ok(harness.stores.has('other-app-v1'));
   assert.ok(harness.stores.has('prism-other-app-cache'));
 });
@@ -143,7 +170,7 @@ test('activation deletes only known Prism cache namespaces', async () => {
 test('cache-first assets never read another app cache', async () => {
   const harness = makeHarness({
     initialCaches: {
-      'mycelix-prism-v3': {},
+      'mycelix-prism-v4': {},
       'other-app-v1': { '/static/shared.js': makeResponse('foreign cached response') },
     },
     fetchImpl: async () => makeResponse('network response'),
@@ -156,14 +183,14 @@ test('cache-first assets never read another app cache', async () => {
   assert.equal(response.label, 'network response');
   assert.equal(harness.globalMatchCalls, 0);
   assert.deepEqual(harness.puts, [{
-    name: 'mycelix-prism-v3',
+    name: 'mycelix-prism-v4',
     url: new URL('/static/shared.js', ORIGIN).href,
   }]);
 });
 
 test('successful navigation does not persist the full route or query string', async () => {
   const harness = makeHarness({
-    initialCaches: { 'mycelix-prism-v3': { '/': makeResponse('app shell') } },
+    initialCaches: { 'mycelix-prism-v4': { '/': makeResponse('app shell') } },
     fetchImpl: async () => makeResponse('online route'),
   });
   const url = '/search?q=personal%20query';
@@ -172,13 +199,13 @@ test('successful navigation does not persist the full route or query string', as
   assert.equal(event.responded, true);
   assert.equal((await event.responsePromise).label, 'online route');
   assert.equal(harness.puts.some((entry) => entry.url === new URL(url, ORIGIN).href), false);
-  assert.equal(harness.stores.get('mycelix-prism-v3').has(new URL(url, ORIGIN).href), false);
+  assert.equal(harness.stores.get('mycelix-prism-v4').has(new URL(url, ORIGIN).href), false);
 });
 
 test('offline navigation falls back to Prism app shell, not another cache', async () => {
   const harness = makeHarness({
     initialCaches: {
-      'mycelix-prism-v3': { '/': makeResponse('Prism app shell') },
+      'mycelix-prism-v4': { '/': makeResponse('Prism app shell') },
       'other-app-v1': { '/': makeResponse('different app shell') },
     },
     fetchImpl: async () => { throw new Error('offline'); },
@@ -205,4 +232,69 @@ test('non-GET requests bypass the Prism cache strategy', () => {
   assert.equal(event.responded, false);
   assert.deepEqual(harness.fetched, []);
   assert.deepEqual(harness.puts, []);
+});
+
+
+test('static responses marked non-cacheable by HTTP policy are not persisted', async () => {
+  const cases = [
+    ['no-store', { 'Cache-Control': 'no-store' }],
+    ['private', { 'Cache-Control': 'public, PRIVATE, max-age=600' }],
+    ['no-cache', { 'Cache-Control': 'no-cache' }],
+    ['must-revalidate', { 'Cache-Control': 'must-revalidate' }],
+    ['zero-max-age', { 'Cache-Control': 'max-age=0' }],
+    ['vary-wildcard', { Vary: 'Accept-Language, *' }],
+  ];
+
+  for (const [index, [name, headers]] of cases.entries()) {
+    const harness = makeHarness({
+      initialCaches: { 'mycelix-prism-v4': {} },
+      fetchImpl: async () => makeResponse(name, true, headers),
+    });
+    const event = dispatchFetch(harness, request(`/static/policy-${index}.js`));
+
+    assert.equal((await event.responsePromise).label, name);
+    assert.deepEqual(harness.puts, [], `${name} response must not be persisted`);
+  }
+});
+
+test('query-bearing static URLs bypass cache lookup and insertion', async () => {
+  const queryUrl = '/static/app.js?token=secret';
+  const harness = makeHarness({
+    initialCaches: {
+      'mycelix-prism-v4': {
+        [queryUrl]: makeResponse('previously cached sensitive response'),
+      },
+    },
+    fetchImpl: async () => makeResponse('fresh network response'),
+  });
+
+  const event = dispatchFetch(harness, request(queryUrl));
+  assert.equal((await event.responsePromise).label, 'fresh network response');
+  assert.deepEqual(harness.puts, []);
+});
+
+test('authorization and explicit cache-bypass directives skip existing entries', async () => {
+  const cases = [
+    ['authorization', { headers: { Authorization: 'Bearer secret' } }],
+    ['request-no-store', { headers: { 'Cache-Control': 'no-store' } }],
+    ['request-no-cache', { headers: { 'Cache-Control': 'no-cache' } }],
+    ['pragma-no-cache', { headers: { Pragma: 'no-cache' } }],
+    ['cache-reload', { cache: 'reload' }],
+  ];
+
+  for (const [index, [name, options]] of cases.entries()) {
+    const path = `/static/bypass-${index}.js`;
+    const harness = makeHarness({
+      initialCaches: {
+        'mycelix-prism-v4': {
+          [path]: makeResponse('must not reuse cached response'),
+        },
+      },
+      fetchImpl: async () => makeResponse(name),
+    });
+    const event = dispatchFetch(harness, request(path, options));
+
+    assert.equal((await event.responsePromise).label, name);
+    assert.deepEqual(harness.puts, [], `${name} request must not populate cache`);
+  }
 });

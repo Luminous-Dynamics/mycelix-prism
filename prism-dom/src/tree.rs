@@ -207,7 +207,7 @@ mod tests {
     fn make_element(tree: &mut DomTree, tag: &str) -> NodeId {
         tree.new_node(NodeData::Element(ElementData {
             tag: tag.to_string(),
-            qual_name: QualName::new(None, ns!(html), tag.into()),
+            qual_name: Box::new(QualName::new(None, ns!(html), tag.into())),
             attributes: HashMap::new(),
         }))
     }
@@ -253,7 +253,7 @@ mod tests {
         attrs.insert("type".to_string(), "password".to_string());
         let input = tree.new_node(NodeData::Element(ElementData {
             tag: "input".to_string(),
-            qual_name: QualName::new(None, ns!(html), "input".into()),
+            qual_name: Box::new(QualName::new(None, ns!(html), "input".into())),
             attributes: attrs,
         }));
         tree.append_child(form, input);

@@ -24,14 +24,15 @@ function makeHeaders(values = {}) {
   };
 }
 
-function makeResponse(label, ok = true, headerValues = {}, type = 'basic') {
+function makeResponse(label, ok = true, headerValues = {}, type = 'basic', status = 200) {
   return {
     label,
     ok,
     type,
+    status,
     headers: makeHeaders(headerValues),
     clone() {
-      return makeResponse(label, ok, headerValues, type);
+      return makeResponse(label, ok, headerValues, type, status);
     },
   };
 }
@@ -243,12 +244,13 @@ test('static responses marked non-cacheable by HTTP policy are not persisted', a
     ['must-revalidate', { 'Cache-Control': 'must-revalidate' }],
     ['zero-max-age', { 'Cache-Control': 'max-age=0' }],
     ['vary-wildcard', { Vary: 'Accept-Language, *' }],
+    ['partial-content', {}, 'basic', true, 206],
   ];
 
-  for (const [index, [name, headers]] of cases.entries()) {
+  for (const [index, [name, headers, type = 'basic', ok = true, status = 200]] of cases.entries()) {
     const harness = makeHarness({
       initialCaches: { 'mycelix-prism-v4': {} },
-      fetchImpl: async () => makeResponse(name, true, headers),
+      fetchImpl: async () => makeResponse(name, ok, headers, type, status),
     });
     const event = dispatchFetch(harness, request(`/static/policy-${index}.js`));
 
@@ -297,4 +299,28 @@ test('authorization and explicit cache-bypass directives skip existing entries',
     assert.equal((await event.responsePromise).label, name);
     assert.deepEqual(harness.puts, [], `${name} request must not populate cache`);
   }
+});
+
+
+test('install does not persist core assets marked non-cacheable by HTTP policy', async () => {
+  const harness = makeHarness({
+    initialCaches: { 'mycelix-prism-v4': {} },
+    fetchImpl: async (input) => {
+      const path = new URL(requestKey(input), ORIGIN).pathname;
+      if (path === '/') {
+        return makeResponse('app shell marked no-store', true, { 'Cache-Control': 'no-store' });
+      }
+      return makeResponse(`core asset ${path}`, true, { 'Cache-Control': 'public, max-age=3600' });
+    },
+  });
+
+  let installPromise;
+  harness.listeners.get('install')({
+    waitUntil(promise) { installPromise = promise; },
+  });
+  await installPromise;
+
+  const installedCache = harness.stores.get('mycelix-prism-v4');
+  assert.equal(installedCache.has(new URL('/', ORIGIN).href), false);
+  assert.equal(installedCache.has(new URL('/static/prism-loading.jpg', ORIGIN).href), true);
 });

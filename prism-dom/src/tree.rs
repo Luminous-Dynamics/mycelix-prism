@@ -156,26 +156,37 @@ impl DomTree {
             return Vec::new();
         };
 
-        // Preserve the previous depth-first, document-order result while
-        // avoiding recursion and terminating safely if a public mutable tree
-        // has accidentally acquired repeated/cyclic child links.
+        // Cursor frames preserve depth-first, document-order results while
+        // keeping pending work proportional to depth. An active-path set
+        // prevents malformed cycles from recursing forever.
         let mut results = Vec::new();
-        let mut pending = vec![root];
-        let mut seen = HashSet::new();
+        let mut stack = vec![(root, 0usize)];
+        let mut ancestors = HashSet::new();
 
-        while let Some(node_id) = pending.pop() {
-            if !seen.insert(node_id) {
-                continue;
-            }
+        while let Some((node_id, next_child)) = stack.pop() {
             let Some(node) = self.get(node_id) else {
+                ancestors.remove(&node_id);
                 continue;
             };
-            if let NodeData::Element(el) = &node.data
-                && el.tag == tag
-            {
-                results.push(node_id);
+
+            if next_child == 0 {
+                if !ancestors.insert(node_id) {
+                    continue;
+                }
+                if let NodeData::Element(el) = &node.data
+                    && el.tag == tag
+                {
+                    results.push(node_id);
+                }
             }
-            pending.extend(node.children.iter().rev().copied());
+
+            if next_child < node.children.len() {
+                let child_id = node.children[next_child];
+                stack.push((node_id, next_child + 1));
+                stack.push((child_id, 0));
+            } else {
+                ancestors.remove(&node_id);
+            }
         }
 
         results

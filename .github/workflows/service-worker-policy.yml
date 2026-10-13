@@ -1,0 +1,32 @@
+name: Service worker isolation tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/service-worker-policy.yml'
+      - 'prism-ui/static/sw.js'
+      - 'prism-ui/tests/service_worker.test.cjs'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/service-worker-policy.yml'
+      - 'prism-ui/static/sw.js'
+      - 'prism-ui/tests/service_worker.test.cjs'
+
+permissions:
+  contents: read
+
+jobs:
+  service-worker-tests:
+    name: Node service-worker isolation tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the exact pull request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Run deterministic service-worker tests
+        run: node --test prism-ui/tests/service_worker.test.cjs

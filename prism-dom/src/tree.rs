@@ -4,6 +4,7 @@
 //! Arena-based DOM tree.
 
 use crate::node::{Node, NodeData, NodeId};
+use std::collections::HashSet;
 
 /// Arena-based DOM tree. All nodes are stored in a flat `Vec`; relationships
 /// are expressed via `NodeId` indices. This avoids reference counting and
@@ -99,55 +100,77 @@ impl DomTree {
         text
     }
 
-    fn collect_text(&self, node_id: NodeId, buf: &mut String) {
-        let node = &self.nodes[node_id.0];
-        match &node.data {
-            NodeData::Text(t) => {
-                if !t.trim().is_empty() {
-                    if !buf.is_empty() {
-                        buf.push(' ');
+    fn collect_text(&self, root: NodeId, buf: &mut String) {
+        // Use an explicit stack so adversarial nesting cannot consume the
+        // thread's call stack. The seen set also prevents cycles in manually
+        // edited trees from turning text extraction into an infinite walk.
+        let mut pending = vec![root];
+        let mut seen = HashSet::new();
+
+        while let Some(node_id) = pending.pop() {
+            if !seen.insert(node_id) {
+                continue;
+            }
+            let Some(node) = self.get(node_id) else {
+                continue;
+            };
+
+            match &node.data {
+                NodeData::Text(text) => {
+                    if !text.trim().is_empty() {
+                        if !buf.is_empty() {
+                            buf.push(' ');
+                        }
+                        buf.push_str(text.trim());
                     }
-                    buf.push_str(t.trim());
                 }
+                NodeData::Element(el) => {
+                    // Skip invisible elements and their entire subtrees.
+                    if matches!(
+                        el.tag.as_str(),
+                        "script" | "style" | "noscript" | "svg" | "template"
+                    ) {
+                        continue;
+                    }
+                    pending.extend(node.children.iter().rev().copied());
+                }
+                NodeData::Document => {
+                    pending.extend(node.children.iter().rev().copied());
+                }
+                _ => {}
             }
-            NodeData::Element(el) => {
-                // Skip invisible elements
-                let tag = el.tag.as_str();
-                if matches!(tag, "script" | "style" | "noscript" | "svg" | "template") {
-                    return;
-                }
-                for &child_id in &node.children {
-                    self.collect_text(child_id, buf);
-                }
-            }
-            NodeData::Document => {
-                for &child_id in &node.children {
-                    self.collect_text(child_id, buf);
-                }
-            }
-            _ => {}
         }
     }
 
     /// Find all elements matching a tag name.
     pub fn find_by_tag(&self, tag: &str) -> Vec<NodeId> {
-        let mut results = Vec::new();
-        if let Some(root) = self.root {
-            self.find_by_tag_recursive(root, tag, &mut results);
-        }
-        results
-    }
+        let Some(root) = self.root else {
+            return Vec::new();
+        };
 
-    fn find_by_tag_recursive(&self, node_id: NodeId, tag: &str, results: &mut Vec<NodeId>) {
-        let node = &self.nodes[node_id.0];
-        if let NodeData::Element(el) = &node.data
-            && el.tag == tag
-        {
-            results.push(node_id);
+        // Preserve the previous depth-first, document-order result while
+        // avoiding recursion and terminating safely if a public mutable tree
+        // has accidentally acquired repeated/cyclic child links.
+        let mut results = Vec::new();
+        let mut pending = vec![root];
+        let mut seen = HashSet::new();
+
+        while let Some(node_id) = pending.pop() {
+            if !seen.insert(node_id) {
+                continue;
+            }
+            let Some(node) = self.get(node_id) else {
+                continue;
+            };
+            if let NodeData::Element(el) = &node.data
+                && el.tag == tag
+            {
+                results.push(node_id);
+            }
+            pending.extend(node.children.iter().rev().copied());
         }
-        for &child_id in &node.children {
-            self.find_by_tag_recursive(child_id, tag, results);
-        }
+
+        results
     }
 
     /// Check if the document contains any password input fields.
@@ -214,6 +237,41 @@ mod tests {
 
     fn make_text(tree: &mut DomTree, text: &str) -> NodeId {
         tree.new_node(NodeData::Text(text.to_string()))
+    }
+
+    #[test]
+    fn iterative_tree_walkers_handle_deep_dom_without_call_stack_growth() {
+        const DEPTH: usize = 20_000;
+        let mut tree = DomTree::new();
+        let document = tree.new_node(NodeData::Document);
+        tree.set_root(document);
+
+        let mut parent = document;
+        for _ in 0..DEPTH {
+            let child = make_element(&mut tree, "div");
+            tree.append_child(parent, child);
+            parent = child;
+        }
+        let text = make_text(&mut tree, "deep content");
+        tree.append_child(parent, text);
+
+        assert_eq!(tree.find_by_tag("div").len(), DEPTH);
+        assert_eq!(tree.extract_visible_text(), "deep content");
+    }
+
+    #[test]
+    fn iterative_tree_walkers_terminate_on_repeated_child_links() {
+        let mut tree = DomTree::new();
+        let document = tree.new_node(NodeData::Document);
+        tree.set_root(document);
+        let div = make_element(&mut tree, "div");
+        tree.append_child(document, div);
+
+        // Public node access permits callers to construct a malformed cycle.
+        tree.get_mut(div).unwrap().children.push(div);
+
+        assert_eq!(tree.find_by_tag("div"), vec![div]);
+        assert_eq!(tree.extract_visible_text(), "");
     }
 
     #[test]

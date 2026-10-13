@@ -49,7 +49,7 @@ function shouldBypassStaticCache(request, url) {
 }
 
 function shouldCacheStaticResponse(response) {
-  if (!response.ok || response.type === 'opaque') return false;
+  if (!response.ok || response.type === 'opaque' || response.status === 206) return false;
 
   const directives = cacheControlDirectives(
     response.headers?.get('Cache-Control'),
@@ -78,12 +78,25 @@ function shouldCacheStaticResponse(response) {
   return true;
 }
 
-// Install: cache only stable-filename assets
+// Use explicit puts instead of Cache.addAll(), which would persist responses
+// without this worker applying Cache-Control, Vary, and status eligibility.
+async function precacheCoreAssets(cache) {
+  await Promise.all(CORE_ASSETS.map(async (asset) => {
+    const response = await fetch(asset);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch core asset: ${asset}`);
+    }
+    if (!shouldCacheStaticResponse(response)) return;
+    await cache.put(asset, response.clone());
+  }));
+}
+
+// Install: cache only stable-filename assets whose response policy permits storage.
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       console.log('[Prism SW] Caching core assets');
-      return cache.addAll(CORE_ASSETS);
+      return precacheCoreAssets(cache);
     })
   );
   self.skipWaiting();
@@ -119,7 +132,7 @@ self.addEventListener('fetch', (event) => {
 
   // HTML: network-first with the cached app shell as the offline fallback.
   // Do not persist each navigation URL: routes may contain queries, and the
-  // offline path always returns '/', so route-specific cache entries are unused.
+  // offline path always returns '/', so route-specific cached documents are unused.
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request).catch(async () => {

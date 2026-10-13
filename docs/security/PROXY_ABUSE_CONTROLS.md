@@ -23,9 +23,9 @@ Every applicable route uses an independent, per-client sliding 60-second budget.
 | Metered provider | `/api/perplexity` | 8 | 1 | 2 MiB | 16 MiB |
 | Symthaea bridge | `/api/symthaea/query` | 4 | 1 | 128 KiB | 4 MiB |
 
-The global request-body cap is 1 MiB. The proxy middleware caps a single response body at 10 MiB and bounds body reading by a deadline. The response-byte budget is separate from that per-response hard cap. The Symthaea Unix-socket bridge additionally caps one newline-delimited daemon response at 1 MiB before JSON parsing, preventing unbounded line allocation inside the handler.
+The global request-body cap is 1 MiB. The proxy middleware caps a single response body at 10 MiB and bounds body reading by a deadline. The response-byte budget is separate from that per-response hard cap. The Symthaea Unix-socket bridge additionally caps one newline-delimited daemon response at 1 MiB before JSON parsing, preventing unbounded line allocation inside the handler. Symthaea query input is limited to 2,000 Unicode scalar values (not UTF-8 bytes), and a successful daemon response must be newline-terminated before JSON parsing.
 
-The in-memory client table is capped at 4,096 active IP keys and idle entries expire after five minutes. If it cannot safely track another active client, new tracked work fails closed with HTTP 503 rather than silently escaping quotas. This state is per process and resets on restart; horizontally scaled deployments need equivalent controls at ingress or a shared rate-limit service if a global quota is required.
+The in-memory client table is capped at 4,096 tracked IP keys and idle entries expire after five minutes. To avoid scanning the entire bounded table on every request, expiry cleanup runs at most once every 30 seconds, so a newly expired entry may remain temporarily until the next sweep. If the table cannot safely track another active client between sweeps, new tracked work fails closed with HTTP 503 rather than silently escaping quotas. This state is per process and resets on restart; horizontally scaled deployments need equivalent controls at ingress or a shared rate-limit service if a global quota is required.
 
 ## Concurrency and backpressure
 

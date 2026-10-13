@@ -16,8 +16,13 @@ pub struct NodeId(pub(crate) usize);
 pub struct ElementData {
     /// Tag name, lowercased (e.g. "div", "p", "a").
     pub tag: String,
-    /// Qualified name (namespace + local) — kept for html5ever TreeSink compatibility.
-    pub qual_name: QualName,
+    /// Heap-stable qualified name for html5ever's borrowed ExpandedName API.
+    ///
+    /// `PrismSink::elem_name` must return a name while its `RefCell<DomTree>`
+    /// borrow is released. Boxing keeps the pointee stable when the Vec-backed
+    /// node arena grows. The parser's mutation paths must never replace or mutate
+    /// this value while an `elem_name` result may still be live.
+    pub qual_name: Box<QualName>,
     /// Attribute map (e.g. "class" → "main", "href" → "https://...").
     pub attributes: HashMap<String, String>,
 }

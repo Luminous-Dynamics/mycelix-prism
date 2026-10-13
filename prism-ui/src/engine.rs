@@ -6,7 +6,7 @@
 use leptos::prelude::*;
 use prism_common::{ContentZone, SafetyLevel};
 use prism_privacy::ConsentStore;
-use prism_reflex::ReflexArc;
+use prism_reflex::{PreFetchVerdict, ReflexArc};
 use prism_search::SearchEngine;
 
 use crate::state::{BrowserState, PageView, SearchMode};
@@ -498,6 +498,19 @@ fn external_hit_to_result(
     }
 }
 
+/// Preserve the pre-fetch privacy classification for Full Page mode.
+///
+/// A URL heuristic may classify a page as Private, Local, or known Public;
+/// displaying a page in an iframe is not evidence or consent to promote it.
+fn fullpage_classification(pre: &PreFetchVerdict) -> (ContentZone, SafetyLevel) {
+    let safety = if pre.zone == ContentZone::Private {
+        SafetyLevel::Yellow
+    } else {
+        SafetyLevel::Green
+    };
+    (pre.zone, safety)
+}
+
 /// Full Page mode: load URL directly in a sandboxed iframe.
 /// No proxy, no sanitization — the real site with real JS/CSS.
 /// The reflex arc pre-assesses the URL for security level.
@@ -514,11 +527,7 @@ fn navigate_fullpage(url_str: &str, state: &BrowserState, reflex: &ReflexArc) {
 
     // Pre-flight security assessment
     let pre = reflex.pre_fetch(&url, false, false);
-    let safety = if pre.zone == ContentZone::Private {
-        SafetyLevel::Yellow
-    } else {
-        SafetyLevel::Green
-    };
+    let (zone, safety) = fullpage_classification(&pre);
 
     // Consciousness update deferred (non-blocking)
     let url_for_spore = url_str.to_string();
@@ -550,7 +559,7 @@ fn navigate_fullpage(url_str: &str, state: &BrowserState, reflex: &ReflexArc) {
     };
     state.set_current_url.set(url_str.to_string());
     state.set_page_title.set(host);
-    state.set_zone.set(ContentZone::Public);
+    state.set_zone.set(zone);
     state.set_safety.set(safety);
     state.set_view.set(view.clone());
     state.push_history(url_str, url.host_str().unwrap_or(""), &view);
@@ -679,4 +688,43 @@ fn navigate_url(url_str: &str, state: &BrowserState, reflex: &ReflexArc) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod fullpage_zone_tests {
+    use super::fullpage_classification;
+    use prism_common::{ContentZone, SafetyLevel};
+    use prism_reflex::ReflexArc;
+    use url::Url;
+
+    fn classify(url: &str) -> (ContentZone, SafetyLevel) {
+        let reflex = ReflexArc::new();
+        let parsed = Url::parse(url).expect("test URL should parse");
+        let pre = reflex.pre_fetch(&parsed, false, false);
+        fullpage_classification(&pre)
+    }
+
+    #[test]
+    fn fullpage_keeps_known_private_zone_and_heightened_safety() {
+        assert_eq!(
+            classify("https://www.chase.com/accounts"),
+            (ContentZone::Private, SafetyLevel::Yellow)
+        );
+    }
+
+    #[test]
+    fn fullpage_keeps_unknown_sites_local() {
+        assert_eq!(
+            classify("https://random-blog.example.com/post"),
+            (ContentZone::Local, SafetyLevel::Green)
+        );
+    }
+
+    #[test]
+    fn fullpage_keeps_known_public_classification() {
+        assert_eq!(
+            classify("https://en.wikipedia.org/wiki/Rust"),
+            (ContentZone::Public, SafetyLevel::Green)
+        );
+    }
 }

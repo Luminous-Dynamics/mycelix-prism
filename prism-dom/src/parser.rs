@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use html5ever::tendril::*;
 use html5ever::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
-use html5ever::{Attribute, ExpandedName, QualName};
+use html5ever::{Attribute, QualName};
 use html5ever::{ParseOpts, parse_document};
 
 use crate::node::{ElementData, NodeData, NodeId};
@@ -44,7 +44,10 @@ struct PrismSink {
 impl TreeSink for PrismSink {
     type Handle = NodeId;
     type Output = Self;
-    type ElemName<'a> = ExpandedName<'a>;
+    // html5ever 0.39's ElemName trait is implemented for owned QualName.
+    // Returning a clone avoids extending a borrow through RefCell and removes
+    // the raw-pointer lifetime hazard when DomTree's Vec reallocates.
+    type ElemName<'a> = QualName;
 
     fn finish(self) -> Self::Output {
         self
@@ -58,26 +61,11 @@ impl TreeSink for PrismSink {
         self.doc
     }
 
-    fn elem_name<'a>(&'a self, target: &'a NodeId) -> ExpandedName<'a> {
-        // This is tricky: we need to return a reference into the RefCell.
-        // Since html5ever only calls this during single-threaded parsing and
-        // the node data won't move, we borrow and leak the guard for the
-        // duration. In practice, html5ever drops the ExpandedName before
-        // any mutation occurs.
-        //
-        // A safer alternative would be to store QualName outside the RefCell,
-        // but that would require a separate arena. For now, we use a raw pointer
-        // which is safe because the DomTree arena never reallocates existing nodes.
+    fn elem_name<'a>(&'a self, target: &'a NodeId) -> QualName {
         let tree = self.tree.borrow();
         let node = tree.get(*target).expect("valid node");
         match &node.data {
-            NodeData::Element(el) => {
-                // SAFETY: The DomTree arena (Vec) may reallocate on push, but
-                // elem_name is only called on already-existing nodes. The borrow
-                // is dropped before any new nodes are created in the same call.
-                let qn: *const QualName = &el.qual_name;
-                unsafe { (*qn).expanded() }
-            }
+            NodeData::Element(el) => el.qual_name.clone(),
             _ => panic!("elem_name called on non-element"),
         }
     }
@@ -291,6 +279,35 @@ mod tests {
         let tree = parse_html("");
         assert!(!tree.is_empty());
         assert_eq!(tree.extract_visible_text(), "");
+    }
+
+    #[test]
+    fn parse_large_flat_document_survives_repeated_arena_growth() {
+        use std::fmt::Write as _;
+
+        const ELEMENTS: usize = 8_192;
+        let mut html = String::with_capacity(ELEMENTS * 48);
+        html.push_str("<html><body>");
+        for index in 0..ELEMENTS {
+            write!(
+                &mut html,
+                "<div data-index=\"{index}\"><span>{index}</span></div>"
+            )
+            .unwrap();
+        }
+        html.push_str("</body></html>");
+
+        let tree = parse_html(&html);
+        assert_eq!(
+            tree.find_by_tag("div").len(),
+            ELEMENTS,
+            "all div nodes must survive repeated Vec arena growth"
+        );
+        assert_eq!(
+            tree.find_by_tag("span").len(),
+            ELEMENTS,
+            "all span nodes must survive repeated Vec arena growth"
+        );
     }
 
     #[test]

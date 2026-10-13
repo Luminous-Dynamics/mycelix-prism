@@ -102,19 +102,19 @@ impl DomTree {
 
     fn collect_text(&self, root: NodeId, buf: &mut String) {
         // Cursor frames keep pending work proportional to depth rather than
-        // to the number of siblings. The active-path set detects malformed cycles.
+        // to the number of siblings. The visited set bounds repeated/cyclic
+        // malformed links by processing each arena node at most once.
         let mut stack = vec![(root, 0usize)];
-        let mut ancestors = HashSet::new();
+        let mut visited = HashSet::new();
 
         while let Some((node_id, next_child)) = stack.pop() {
             let Some(node) = self.get(node_id) else {
-                ancestors.remove(&node_id);
                 continue;
             };
 
             if next_child == 0 {
-                if !ancestors.insert(node_id) {
-                    // This edge points back into the current traversal path.
+                if !visited.insert(node_id) {
+                    // A repeated edge or cycle must not revisit this node.
                     continue;
                 }
                 if let NodeData::Text(text) = &node.data
@@ -144,8 +144,6 @@ impl DomTree {
                 let child_id = node.children[next_child];
                 stack.push((node_id, next_child + 1));
                 stack.push((child_id, 0));
-            } else {
-                ancestors.remove(&node_id);
             }
         }
     }
@@ -157,20 +155,20 @@ impl DomTree {
         };
 
         // Cursor frames preserve depth-first, document-order results while
-        // keeping pending work proportional to depth. An active-path set
-        // prevents malformed cycles from recursing forever.
+        // keeping pending work proportional to depth. A visited set prevents
+        // repeated or cyclic links from revisiting the same arena node.
         let mut results = Vec::new();
         let mut stack = vec![(root, 0usize)];
-        let mut ancestors = HashSet::new();
+        let mut visited = HashSet::new();
 
         while let Some((node_id, next_child)) = stack.pop() {
             let Some(node) = self.get(node_id) else {
-                ancestors.remove(&node_id);
                 continue;
             };
 
             if next_child == 0 {
-                if !ancestors.insert(node_id) {
+                if !visited.insert(node_id) {
+                    // A repeated edge or cycle must not revisit this node.
                     continue;
                 }
                 if let NodeData::Element(el) = &node.data
@@ -184,8 +182,6 @@ impl DomTree {
                 let child_id = node.children[next_child];
                 stack.push((node_id, next_child + 1));
                 stack.push((child_id, 0));
-            } else {
-                ancestors.remove(&node_id);
             }
         }
 
@@ -291,6 +287,25 @@ mod tests {
 
         assert_eq!(tree.find_by_tag("div"), vec![div]);
         assert_eq!(tree.extract_visible_text(), "");
+    }
+
+    #[test]
+    fn iterative_tree_walkers_visit_repeated_child_links_once() {
+        let mut tree = DomTree::new();
+        let document = tree.new_node(NodeData::Document);
+        tree.set_root(document);
+        let div = make_element(&mut tree, "div");
+        tree.append_child(document, div);
+        let span = make_element(&mut tree, "span");
+        tree.append_child(div, span);
+        let text = make_text(&mut tree, "shared once");
+        tree.append_child(span, text);
+
+        // A malformed graph can list one arena node more than once without a cycle.
+        tree.get_mut(div).unwrap().children.push(span);
+
+        assert_eq!(tree.find_by_tag("span"), vec![span]);
+        assert_eq!(tree.extract_visible_text(), "shared once");
     }
 
     #[test]

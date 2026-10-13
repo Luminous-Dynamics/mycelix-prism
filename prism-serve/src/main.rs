@@ -466,6 +466,56 @@ struct SymthaeaQueryResponse {
     processing_time_ms: u64,
 }
 
+/// Parse the daemon's successful response without manufacturing defaults for
+/// missing fields or allowing non-finite/out-of-range numeric values.
+fn parse_symthaea_response(
+    parsed: &serde_json::Value,
+) -> Result<SymthaeaQueryResponse, &'static str> {
+    if parsed.get("type").and_then(serde_json::Value::as_str) != Some("response") {
+        return Err("unexpected_response_type");
+    }
+
+    let content = parsed
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("missing_or_invalid_content")?
+        .to_string();
+
+    let confidence = parsed
+        .get("confidence")
+        .and_then(serde_json::Value::as_f64)
+        .ok_or("missing_or_invalid_confidence")?;
+    if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
+        return Err("confidence_out_of_range");
+    }
+
+    let safe = parsed
+        .get("safe")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or("missing_or_invalid_safety_flag")?;
+
+    let phi = parsed
+        .get("phi")
+        .and_then(serde_json::Value::as_f64)
+        .ok_or("missing_or_invalid_phi")?;
+    if !phi.is_finite() || phi.abs() > f32::MAX as f64 {
+        return Err("phi_not_finite_or_representable");
+    }
+
+    let processing_time_ms = parsed
+        .get("processing_time_ms")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("missing_or_invalid_processing_time_ms")?;
+
+    Ok(SymthaeaQueryResponse {
+        content,
+        confidence: confidence as f32,
+        safe,
+        phi: phi as f32,
+        processing_time_ms,
+    })
+}
+
 async fn symthaea_query_handler(
     State(cfg): State<Option<Arc<SymthaeaConfig>>>,
     axum::Json(req): axum::Json<SymthaeaQueryRequest>,
@@ -535,29 +585,14 @@ async fn symthaea_query_handler(
         return (StatusCode::BAD_GATEWAY, "Symthaea error").into_response();
     }
 
-    // Safety is affirmative evidence, not a default. A missing or mistyped
-    // daemon flag must not be converted into a successful "safe" result.
-    let Some(safe) = parsed.get("safe").and_then(|value| value.as_bool()) else {
-        log::warn!("Symthaea response rejected: reason=missing_or_invalid_safety_flag");
-        return (StatusCode::BAD_GATEWAY, "Malformed Symthaea response").into_response();
-    };
-
-    let out = SymthaeaQueryResponse {
-        content: parsed
-            .get("content")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        confidence: parsed
-            .get("confidence")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0) as f32,
-        safe,
-        phi: parsed.get("phi").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
-        processing_time_ms: parsed
-            .get("processing_time_ms")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0),
+    // Treat the daemon reply as a typed protocol contract. No missing metric
+    // is silently filled with an empty string or zero.
+    let out = match parse_symthaea_response(&parsed) {
+        Ok(response) => response,
+        Err(reason) => {
+            log::warn!("Symthaea response rejected: reason={reason}");
+            return (StatusCode::BAD_GATEWAY, "Malformed Symthaea response").into_response();
+        }
     };
 
     axum::Json(out).into_response()
@@ -1096,6 +1131,84 @@ mod tests {
             socket_path: socket_path.to_str().unwrap().to_string(),
             bearer_token: "test-token".to_string(),
         }))
+    }
+
+    #[test]
+    fn symthaea_response_contract_rejects_missing_and_malformed_fields() {
+        let valid = serde_json::json!({
+            "type": "response",
+            "content": "answer",
+            "confidence": 0.9,
+            "safe": true,
+            "phi": 0.85,
+            "processing_time_ms": 42
+        });
+        assert!(parse_symthaea_response(&valid).is_ok());
+
+        let invalid = [
+            serde_json::json!({
+                "type": "other",
+                "content": "answer",
+                "confidence": 0.9,
+                "safe": true,
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "confidence": 0.9,
+                "safe": true,
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": "answer",
+                "confidence": "high",
+                "safe": true,
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": "answer",
+                "confidence": 1.1,
+                "safe": true,
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": "answer",
+                "confidence": 0.9,
+                "safe": "true",
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": "answer",
+                "confidence": 0.9,
+                "safe": true,
+                "phi": 1e100,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": "answer",
+                "confidence": 0.9,
+                "safe": true,
+                "phi": 0.85,
+                "processing_time_ms": "42"
+            }),
+        ];
+
+        for (index, value) in invalid.iter().enumerate() {
+            assert!(
+                parse_symthaea_response(value).is_err(),
+                "malformed response contract case {index} must fail closed"
+            );
+        }
     }
 
     #[tokio::test]

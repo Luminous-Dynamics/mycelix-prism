@@ -638,12 +638,20 @@ mod tests {
     #[test]
     fn layout_handles_deep_inline_dom_without_call_stack_growth() {
         const DEPTH: usize = 20_000;
-        let html = format!(
-            "<html><body><p>{}deep layout{}</p></body></html>",
-            "<span>".repeat(DEPTH),
-            "</span>".repeat(DEPTH),
-        );
-        let dom = parse_html(&html);
+        // Parse only a shallow shell, then build the depth directly so this
+        // regression isolates layout traversal from HTML parser behavior.
+        let mut dom = parse_html("<html><body><p><span></span></p></body></html>");
+        let first_span = *dom.find_by_tag("span").first().expect("fixture has a span");
+        let span_data = dom.get(first_span).expect("span exists").data.clone();
+        let mut parent = first_span;
+        for _ in 0..DEPTH {
+            let child = dom.new_node(span_data.clone());
+            dom.append_child(parent, child);
+            parent = child;
+        }
+        let text = dom.new_node(NodeData::Text("deep layout".to_string()));
+        dom.append_child(parent, text);
+
         let rects = layout_dom(&dom, 800.0, 600.0);
         assert!(
             rects.iter().any(

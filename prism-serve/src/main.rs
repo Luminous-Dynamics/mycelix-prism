@@ -1055,8 +1055,10 @@ mod tests {
         socket_path: std::path::PathBuf,
         respond: impl Fn(serde_json::Value) -> FakeDaemonAction + Send + 'static,
     ) {
+        // Bind before spawning so the socket is ready when this helper returns.
+        // A fixed sleep in each test cannot guarantee listener readiness under CI load.
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
         tokio::spawn(async move {
-            let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
             loop {
                 let (stream, _) = match listener.accept().await {
                     Ok(x) => x,
@@ -1117,8 +1119,6 @@ mod tests {
                 .to_string(),
             )
         });
-        // Give the fake daemon a moment to bind before the request fires.
-        tokio::time::sleep(Duration::from_millis(50)).await;
 
         let app = build_app(
             dir.path().to_str().unwrap(),
@@ -1168,7 +1168,6 @@ mod tests {
             spawn_fake_daemon(socket_path.clone(), move |_req| {
                 FakeDaemonAction::Reply(malformed.to_string())
             });
-            tokio::time::sleep(Duration::from_millis(50)).await;
 
             let app = build_app(
                 dir.path().to_str().unwrap(),
@@ -1210,7 +1209,6 @@ mod tests {
                 .to_string(),
             )
         });
-        tokio::time::sleep(Duration::from_millis(50)).await;
 
         let cfg = test_symthaea_cfg(&socket_path);
 
@@ -1247,7 +1245,6 @@ mod tests {
         let dir = test_dist_dir();
         let socket_path = dir.path().join("fake-symthaea-hang.sock");
         spawn_fake_daemon(socket_path.clone(), |_req| FakeDaemonAction::HangForever);
-        tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Rebuild with a short timeout for this test only — the production
         // 240s default would make this test take 4 minutes.

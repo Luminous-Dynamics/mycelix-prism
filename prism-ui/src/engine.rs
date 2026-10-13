@@ -164,8 +164,11 @@ fn rewrite_links_for_proxy(html: &str, _source_host: &str) -> String {
         let after_src = &remaining[idx + 5..]; // skip 'src="'
         if let Some(end) = after_src.find('"') {
             let url = &after_src[..end];
-            output.push_str("src=\"/proxy?url=");
-            output.push_str(url);
+            // Ammonia serializes ampersands in attribute values as &amp;;
+            // recover the attribute value before form-encoding the full target.
+            let target = url.replace("&amp;", "&");
+            output.push_str("src=\"");
+            output.push_str(&proxy_url(&target));
             output.push('"');
             remaining = &after_src[end + 1..];
         } else {
@@ -183,8 +186,13 @@ fn rewrite_links_for_proxy(html: &str, _source_host: &str) -> String {
 /// to bypass browser same-origin restrictions.
 /// Falls back to direct fetch if proxy is not running.
 fn proxy_url(target: &str) -> String {
+    // Encode the destination as one query parameter so its own query string,
+    // ampersands, fragments, and reserved characters cannot escape the value.
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("url", target)
+        .finish();
     // Same-origin: proxy routes served by prism-serve on the same port.
-    format!("/proxy?url={}", target)
+    format!("/proxy?{}", query)
 }
 
 pub fn is_url(input: &str) -> bool {
@@ -679,4 +687,43 @@ fn navigate_url(url_str: &str, state: &BrowserState, reflex: &ReflexArc) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod proxy_url_tests {
+    use super::*;
+
+    #[test]
+    fn proxy_url_keeps_destination_query_in_one_parameter() {
+        let target = "https://example.com/search?q=one&lang=en#section";
+        let proxy = url::Url::parse(&format!("https://prism.example{}", proxy_url(target)))
+            .expect("proxy URL should be valid");
+        let pairs: Vec<_> = proxy.query_pairs().collect();
+
+        assert_eq!(pairs.len(), 1, "destination URL must be one proxy parameter");
+        assert_eq!(pairs[0].0, "url");
+        assert_eq!(pairs[0].1, target);
+    }
+
+    #[test]
+    fn rewritten_image_url_preserves_ampersand_query_parameters() {
+        let html = r#"<img alt="thumb" src="https://cdn.example/image.png?width=400&quality=80">"#;
+        let clean = sanitize_html(html, None);
+        let rewritten = rewrite_links_for_proxy(&clean, "cdn.example");
+        let start = rewritten.find("src=\"").expect("rewritten image must have src") + 5;
+        let end = rewritten[start..]
+            .find('"')
+            .map(|offset| start + offset)
+            .expect("rewritten src must be quoted");
+        let proxy = url::Url::parse(&format!("https://prism.example{}", &rewritten[start..end]))
+            .expect("rewritten proxy URL should be valid");
+        let pairs: Vec<_> = proxy.query_pairs().collect();
+
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, "url");
+        assert_eq!(
+            pairs[0].1,
+            "https://cdn.example/image.png?width=400&quality=80"
+        );
+    }
 }

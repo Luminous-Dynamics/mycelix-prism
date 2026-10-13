@@ -480,6 +480,9 @@ fn parse_symthaea_response(
         .and_then(serde_json::Value::as_str)
         .ok_or("missing_or_invalid_content")?
         .to_string();
+    if content.trim().is_empty() {
+        return Err("empty_content");
+    }
 
     let confidence = parsed
         .get("confidence")
@@ -1163,6 +1166,22 @@ mod tests {
             }),
             serde_json::json!({
                 "type": "response",
+                "content": "",
+                "confidence": 0.9,
+                "safe": true,
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": " \t\n ",
+                "confidence": 0.9,
+                "safe": true,
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
                 "content": "answer",
                 "confidence": "high",
                 "safe": true,
@@ -1308,6 +1327,48 @@ mod tests {
                 "security headers must remain present on rejected daemon responses"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn symthaea_query_rejects_empty_daemon_content() {
+        let dir = test_dist_dir();
+        let socket_path = dir.path().join("fake-symthaea-empty-response.sock");
+        spawn_fake_daemon(socket_path.clone(), |_req| {
+            FakeDaemonAction::Reply(
+                serde_json::json!({
+                    "type": "response",
+                    "content": " \t ",
+                    "confidence": 0.9,
+                    "safe": true,
+                    "phi": 0.5,
+                    "processing_time_ms": 1
+                })
+                .to_string(),
+            )
+        });
+
+        let app = build_app(
+            dir.path().to_str().unwrap(),
+            test_symthaea_cfg(&socket_path),
+        );
+        let response = app
+            .oneshot(
+                Request::post("/api/symthaea/query")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{ "content": "hello" }"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            response
+                .headers()
+                .get("x-content-type-options")
+                .and_then(|value| value.to_str().ok()),
+            Some("nosniff")
+        );
     }
 
     #[tokio::test]

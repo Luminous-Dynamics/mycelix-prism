@@ -14,6 +14,12 @@ use leptos::prelude::*;
 use prism_common::SearchResult;
 use prism_search::SearchEngine;
 
+// Full-page sites may execute their own scripts, but must not share Prism's
+// origin: combining allow-scripts with allow-same-origin can let same-origin
+// framed content escape this sandbox. Origin storage/cookies may therefore
+// be unavailable to sites loaded in Full Page mode.
+const FULLPAGE_IFRAME_SANDBOX: &str = "allow-scripts allow-forms allow-popups";
+
 #[component]
 pub fn ContentRouter() -> impl IntoView {
     let state = expect_context::<BrowserState>();
@@ -66,7 +72,7 @@ pub fn ContentRouter() -> impl IntoView {
                         <iframe
                             class="fullpage-iframe"
                             src=url.clone()
-                            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                            sandbox=FULLPAGE_IFRAME_SANDBOX
                         ></iframe>
                         <EpistemicDrawer url=url_display />
                     </div>
@@ -448,9 +454,24 @@ fn EpistemicDrawer(url: String) -> impl IntoView {
 
                 <p class="drawer-disclaimer">
                     "Epistemic analysis based on curated knowledge base. "
-                    "Full Page mode allows scripts and cookies."
+                    "Full Page mode runs scripts in an isolated sandbox; some sites may not work "
+                    "if they require access to their normal origin storage."
                 </p>
             </div>
         </Show>
+    }
+}
+
+#[cfg(test)]
+mod iframe_sandbox_tests {
+    use super::FULLPAGE_IFRAME_SANDBOX;
+
+    #[test]
+    fn fullpage_iframe_never_combines_scripts_with_same_origin() {
+        let tokens: Vec<&str> = FULLPAGE_IFRAME_SANDBOX.split_whitespace().collect();
+
+        assert!(tokens.contains(&"allow-scripts"));
+        assert!(!tokens.contains(&"allow-same-origin"));
+        assert!(!tokens.contains(&"allow-popups-to-escape-sandbox"));
     }
 }

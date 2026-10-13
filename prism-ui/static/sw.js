@@ -63,7 +63,7 @@ function shouldCacheStaticResponse(response, requestUrl) {
     .trim()
     .toLowerCase();
   const isHtml = contentType === 'text/html' || contentType === 'application/xhtml+xml';
-  const isAppShellUrl = url.pathname === '/' || url.pathname.endsWith('/');
+  const isAppShellUrl = url.pathname === '/';
   if (isHtml && !isAppShellUrl) return false;
 
   const directives = cacheControlDirectives(

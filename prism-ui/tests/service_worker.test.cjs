@@ -332,6 +332,8 @@ test('SPA fallback HTML is never cached under a static asset URL', async () => {
     '/static/missing.css',
     '/static/missing.wasm',
     '/static/missing.bin',
+    '/static/missing.js/',
+    '/static/missing-directory/',
   ];
 
   for (const path of paths) {

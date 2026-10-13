@@ -377,6 +377,7 @@ where
     R: tokio::io::AsyncBufRead + Unpin,
 {
     let mut bytes = Vec::with_capacity(max_bytes.min(4096));
+    let mut terminated = false;
     loop {
         let (take, has_newline) = {
             let available = reader
@@ -397,8 +398,13 @@ where
         };
         reader.consume(take);
         if has_newline {
+            terminated = true;
             break;
         }
+    }
+
+    if !terminated {
+        return Err("Symthaea response line is not newline-terminated".to_string());
     }
 
     String::from_utf8(bytes).map_err(|_| "Symthaea response is not valid UTF-8".to_string())
@@ -831,6 +837,22 @@ mod tests {
         assert_eq!(
             read_bounded_line(&mut reader, 64).await.unwrap(),
             "{\"safe\":true}\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn symthaea_response_line_rejects_valid_json_without_newline_terminator() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, stream) = tokio::io::duplex(64);
+        writer.write_all(b"{\"safe\":true}").await.unwrap();
+        drop(writer);
+        let mut reader = BufReader::new(stream);
+
+        let error = read_bounded_line(&mut reader, 64).await.unwrap_err();
+        assert!(
+            error.contains("newline-terminated"),
+            "EOF before the required line delimiter must be rejected"
         );
     }
 

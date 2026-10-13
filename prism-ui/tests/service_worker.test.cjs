@@ -324,3 +324,55 @@ test('install does not persist core assets marked non-cacheable by HTTP policy',
   assert.equal(installedCache.has(new URL('/', ORIGIN).href), false);
   assert.equal(installedCache.has(new URL('/static/prism-loading.jpg', ORIGIN).href), true);
 });
+
+
+test('SPA fallback HTML is never cached under a static asset URL', async () => {
+  const paths = [
+    '/static/missing.js',
+    '/static/missing.css',
+    '/static/missing.wasm',
+    '/static/missing.bin',
+  ];
+
+  for (const path of paths) {
+    const harness = makeHarness({
+      initialCaches: { 'mycelix-prism-v4': {} },
+      fetchImpl: async () => makeResponse(
+        'SPA index returned for missing asset',
+        true,
+        { 'Content-Type': 'text/html; charset=utf-8' },
+      ),
+    });
+
+    const event = dispatchFetch(harness, request(path));
+    assert.equal((await event.responsePromise).label, 'SPA index returned for missing asset');
+    assert.deepEqual(harness.puts, [], `HTML fallback must not be stored for ${path}`);
+  }
+});
+
+test('install still caches a cacheable app shell at the root URL', async () => {
+  const harness = makeHarness({
+    initialCaches: { 'mycelix-prism-v4': {} },
+    fetchImpl: async (input) => {
+      const path = new URL(requestKey(input), ORIGIN).pathname;
+      if (path === '/') {
+        return makeResponse('cacheable app shell', true, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'public, max-age=3600',
+        });
+      }
+      return makeResponse(`core asset ${path}`, true, {
+        'Cache-Control': 'public, max-age=3600',
+      });
+    },
+  });
+
+  let installPromise;
+  harness.listeners.get('install')({
+    waitUntil(promise) { installPromise = promise; },
+  });
+  await installPromise;
+
+  const installedCache = harness.stores.get('mycelix-prism-v4');
+  assert.equal(installedCache.get(new URL('/', ORIGIN).href).label, 'cacheable app shell');
+});

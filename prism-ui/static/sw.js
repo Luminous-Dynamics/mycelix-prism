@@ -72,9 +72,29 @@ function shouldCacheStaticResponse(response, requestUrl) {
   const isAppShellUrl = url.pathname === '/';
   if (isHtml && !isAppShellUrl) return false;
 
-  const directives = cacheControlDirectives(
-    response.headers?.get('Cache-Control'),
-  );
+  const cacheControl = response.headers?.get('Cache-Control');
+  const directives = cacheControlDirectives(cacheControl);
+
+  // Older HTTP/1.0 origins may express this policy only with Pragma.
+  if (!cacheControl && (response.headers?.get('Pragma') || '')
+    .split(',')
+    .some((directive) => directive.trim().toLowerCase() === 'no-cache')) {
+    return false;
+  }
+
+  // Cache Storage does not expire entries automatically. When Cache-Control
+  // does not provide an explicit lifetime, don't persist expired/invalid
+  // Expires values as though they were fresh.
+  const hasExplicitLifetime = directives.some((directive) => {
+    const [name] = directive.split('=', 1);
+    return ['max-age', 's-maxage'].includes(name.trim());
+  });
+  const expires = response.headers?.get('Expires');
+  if (!hasExplicitLifetime && expires !== null && expires !== undefined) {
+    const expiresAt = Date.parse(expires);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
+  }
+
   const forbidden = new Set([
     'no-store',
     'no-cache',

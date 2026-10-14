@@ -511,6 +511,14 @@ fn fullpage_classification(pre: &PreFetchVerdict) -> (ContentZone, SafetyLevel) 
     (pre.zone, safety)
 }
 
+/// Convert a fail-closed pre-fetch verdict into a user-safe navigation error.
+/// The classifier may gain block rules independently of the UI; every loading
+/// mode must honor the verdict rather than treating it as metadata only.
+fn pre_fetch_block_message(pre: &PreFetchVerdict) -> Option<String> {
+    pre.blocked
+        .then(|| format!("Navigation blocked by pre-fetch policy: {}", pre.reason))
+}
+
 /// Full Page mode: load URL directly in a sandboxed iframe.
 /// No proxy, no sanitization — the real site with real JS/CSS.
 /// The reflex arc pre-assesses the URL for security level.
@@ -525,8 +533,16 @@ fn navigate_fullpage(url_str: &str, state: &BrowserState, reflex: &ReflexArc) {
         }
     };
 
-    // Pre-flight security assessment
+    // Pre-flight security assessment; a block verdict must not be bypassed
+    // by Full Page mode, which otherwise loads the destination directly.
     let pre = reflex.pre_fetch(&url, false, false);
+    if let Some(message) = pre_fetch_block_message(&pre) {
+        state.set_zone.set(pre.zone);
+        state.set_safety.set(SafetyLevel::Red);
+        state.set_loading.set(false);
+        state.set_view.set(PageView::Error { message });
+        return;
+    }
     let (zone, safety) = fullpage_classification(&pre);
 
     // Consciousness update deferred (non-blocking)
@@ -577,6 +593,16 @@ fn navigate_url(url_str: &str, state: &BrowserState, reflex: &ReflexArc) {
         }
     };
 
+    // Assess before scheduling downstream work or requesting page content.
+    let pre = reflex.pre_fetch(&url, false, false);
+    if let Some(message) = pre_fetch_block_message(&pre) {
+        state.set_zone.set(pre.zone);
+        state.set_safety.set(SafetyLevel::Red);
+        state.set_loading.set(false);
+        state.set_view.set(PageView::Error { message });
+        return;
+    }
+
     // Spore consciousness update runs after the page loads (non-blocking)
     let url_for_spore = url_str.to_string();
     let state_spore = state.clone();
@@ -601,7 +627,6 @@ fn navigate_url(url_str: &str, state: &BrowserState, reflex: &ReflexArc) {
         });
     });
 
-    let pre = reflex.pre_fetch(&url, false, false);
     let url_string = url_str.to_string();
     let state_clone = state.clone();
     let state_history = state.clone();
@@ -692,7 +717,7 @@ fn navigate_url(url_str: &str, state: &BrowserState, reflex: &ReflexArc) {
 
 #[cfg(test)]
 mod fullpage_zone_tests {
-    use super::fullpage_classification;
+    use super::{fullpage_classification, pre_fetch_block_message};
     use prism_common::{ContentZone, SafetyLevel};
     use prism_reflex::ReflexArc;
     use url::Url;
@@ -734,5 +759,25 @@ mod fullpage_zone_tests {
             classify("https://en.wikipedia.org/wiki/Rust?source=fixture&scope=local"),
             (ContentZone::Public, SafetyLevel::Green)
         );
+    }
+
+    #[test]
+    fn blocked_pre_fetch_verdict_rejects_both_navigation_modes() {
+        let blocked = PreFetchVerdict {
+            zone: ContentZone::Private,
+            blocked: true,
+            reason: "policy rule",
+        };
+        assert_eq!(
+            pre_fetch_block_message(&blocked).as_deref(),
+            Some("Navigation blocked by pre-fetch policy: policy rule")
+        );
+
+        let allowed = PreFetchVerdict {
+            zone: ContentZone::Local,
+            blocked: false,
+            reason: "default zone",
+        };
+        assert_eq!(pre_fetch_block_message(&allowed), None);
     }
 }

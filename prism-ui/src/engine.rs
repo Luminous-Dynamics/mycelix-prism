@@ -719,7 +719,7 @@ fn navigate_url(url_str: &str, state: &BrowserState, reflex: &ReflexArc) {
 mod fullpage_zone_tests {
     use super::{fullpage_classification, pre_fetch_block_message};
     use prism_common::{ContentZone, SafetyLevel};
-    use prism_reflex::ReflexArc;
+    use prism_reflex::{PreFetchVerdict, ReflexArc};
     use url::Url;
 
     fn classify(url: &str) -> (ContentZone, SafetyLevel) {

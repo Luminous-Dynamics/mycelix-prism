@@ -727,4 +727,12 @@ mod fullpage_zone_tests {
             (ContentZone::Public, SafetyLevel::Green)
         );
     }
+
+    #[test]
+    fn fullpage_host_classification_is_stable_with_query_parameters() {
+        assert_eq!(
+            classify("https://en.wikipedia.org/wiki/Rust?source=fixture&scope=local"),
+            (ContentZone::Public, SafetyLevel::Green)
+        );
+    }
 }

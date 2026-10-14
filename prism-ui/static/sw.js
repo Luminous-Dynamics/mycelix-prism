@@ -85,9 +85,11 @@ function shouldCacheStaticResponse(response, requestUrl) {
   // Cache Storage does not expire entries automatically. When Cache-Control
   // does not provide an explicit lifetime, don't persist expired/invalid
   // Expires values as though they were fresh.
+  // RFC 9111 §5.2.2.10 limits s-maxage to shared caches. This worker's
+  // CacheStorage is per-user, so only max-age overrides legacy Expires here.
   const hasExplicitLifetime = directives.some((directive) => {
     const [name] = directive.split('=', 1);
-    return ['max-age', 's-maxage'].includes(name.trim());
+    return name.trim() === 'max-age';
   });
   const expires = response.headers?.get('Expires');
   if (!hasExplicitLifetime && expires !== null && expires !== undefined) {

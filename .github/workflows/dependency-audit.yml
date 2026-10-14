@@ -1,0 +1,78 @@
+name: Rust dependency audit
+
+on:
+  push:
+    branches: [main, 'ci/**']
+    paths:
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - '**/Cargo.toml'
+      - 'deny.toml'
+      - 'flake.lock'
+      - 'flake.nix'
+      - '.github/workflows/dependency-audit.yml'
+  pull_request:
+    branches: [main, 'ci/**']
+    paths:
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - '**/Cargo.toml'
+      - 'deny.toml'
+      - 'flake.lock'
+      - 'flake.nix'
+      - '.github/workflows/dependency-audit.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-audit:
+    name: RustSec and dependency-policy checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the exact pull request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Cache Nix store
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: /nix
+          key: nix-dependency-audit-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-keys: |
+            nix-dependency-audit-${{ runner.os }}-
+
+      - name: Verify and audit the committed dependency graph
+        shell: bash
+        run: |
+          set -uo pipefail
+          test -s Cargo.lock
+          echo "Cargo.lock SHA-256: $(sha256sum Cargo.lock | cut -d ' ' -f1)"
+          nix develop --command cargo metadata --locked --format-version 1 > /tmp/prism-cargo-metadata.json
+          metadata_status=$?
+          if [ "$metadata_status" -ne 0 ]; then
+            echo "cargo metadata --locked failed (status $metadata_status)" >&2
+            exit "$metadata_status"
+          fi
+
+          audit_status=0
+          nix develop --command cargo audit --file Cargo.lock || audit_status=$?
+
+          deny_status=0
+          nix develop --command cargo deny check --locked advisories bans sources || deny_status=$?
+
+          echo "cargo audit exit status: $audit_status"
+          echo "cargo deny exit status: $deny_status"
+          if [ "$audit_status" -ne 0 ] || [ "$deny_status" -ne 0 ]; then
+            exit 1
+          fi

@@ -61,6 +61,43 @@ pub struct FetchedResponse {
     pub redirect_count: usize,
 }
 
+/// Document policy for content fetched from an untrusted upstream and served
+/// from Prism's own origin. If a browser treats the response as a document,
+/// it must receive an opaque origin and have scripts/subresources disabled.
+pub const PROXY_CONTENT_SECURITY_POLICY: &str = "default-src 'none'; sandbox";
+
+/// Force active document formats to download on top-level navigation. The
+/// generic proxy is also used for image subresources; ordinary raster-image
+/// types therefore remain inline-compatible.
+pub const PROXY_CONTENT_DISPOSITION: &str =
+    "attachment; filename=\"prism-proxy-content\"";
+
+/// Whether an upstream media type can be interpreted as an active/document
+/// format when the generic proxy is navigated directly.
+pub fn proxy_content_requires_attachment(content_type: &str) -> bool {
+    let essence = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+
+    matches!(
+        essence.as_str(),
+        "text/html"
+            | "application/xhtml+xml"
+            | "image/svg+xml"
+            | "application/xml"
+            | "text/xml"
+            | "application/pdf"
+            | "application/javascript"
+            | "text/javascript"
+            | "application/ecmascript"
+            | "text/ecmascript"
+            | "application/x-javascript"
+    )
+}
+
 /// Validate a set of DNS answers and return pinned socket addresses.
 ///
 /// Empty sets and mixed public/private sets fail closed. Port zero is
@@ -379,6 +416,53 @@ async fn fetch_public_get_with_resolver(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proxy_content_policy_downloads_active_document_media_types() {
+        for content_type in [
+            "text/html",
+            "TEXT/HTML; charset=utf-8",
+            "application/xhtml+xml",
+            "image/svg+xml",
+            "application/xml",
+            "text/xml; charset=UTF-8",
+            "application/pdf",
+            "application/javascript",
+            "text/javascript",
+            "application/ecmascript",
+            "text/ecmascript",
+            "application/x-javascript",
+        ] {
+            assert!(
+                proxy_content_requires_attachment(content_type),
+                "active/document media type should be attachment: {content_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn proxy_content_policy_keeps_raster_images_inline_compatible() {
+        for content_type in [
+            "image/png",
+            "image/jpeg; charset=binary",
+            "image/gif",
+            "image/webp",
+            "image/avif",
+        ] {
+            assert!(
+                !proxy_content_requires_attachment(content_type),
+                "ordinary image must remain embeddable: {content_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn proxy_document_csp_is_fail_closed() {
+        assert!(PROXY_CONTENT_SECURITY_POLICY.contains("sandbox"));
+        assert!(PROXY_CONTENT_SECURITY_POLICY.contains("default-src 'none'"));
+        assert!(!PROXY_CONTENT_SECURITY_POLICY.contains("allow-scripts"));
+        assert!(!PROXY_CONTENT_SECURITY_POLICY.contains("allow-same-origin"));
+    }
 
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};

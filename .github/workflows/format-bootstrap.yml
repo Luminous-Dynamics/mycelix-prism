@@ -1,8 +1,9 @@
 name: Temporary PR formatting bootstrap
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches:
+      - hardening/prism-resource-controls-observability-20261012
     paths:
       - '.github/workflows/format-bootstrap.yml'
 

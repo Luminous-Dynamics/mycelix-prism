@@ -1,6 +1,6 @@
 # Prism proxy abuse controls
 
-**Status:** implementation proposal stacked on the DNS-pinning/redirect-validation branch; not qualified until exact-head CI and review complete.
+**Status:** draft implementation. Qualification depends on the exact head of each stacked PR; older green runs do not qualify later commits.
 
 ## Deployment boundary
 
@@ -37,6 +37,21 @@ The in-memory client table is capped at 4,096 tracked IP keys and idle entries e
 | Symthaea bridge | 3 | 240 seconds |
 
 The route-level concurrency layer wraps quota middleware as well as handler execution, so bounded request-body reads and response-body accounting stay inside the per-route in-flight cap and deadline. The server also retains its process-wide concurrency cap. Excess route work is shed with HTTP 503 rather than accumulating an unbounded queue. The Symthaea bridge stays explicit and optional; these quotas do not grant it authority over Prism's trust or security decisions.
+
+## Generic proxy content isolation
+
+The generic `/proxy?url=...` endpoint returns bytes fetched from an untrusted public origin, but those bytes are served from Prism's origin. Do not let arbitrary upstream documents act as trusted same-origin content.
+
+Both proxy front ends apply the same response policy:
+
+- Preserve the upstream `Content-Type` for callers using Fetch/XHR to read data, but set `Content-Disposition: attachment` unless the media type is in the explicit passive-raster allowlist (PNG, JPEG, GIF, WebP, AVIF, APNG, BMP, and icon/JXL variants). Unknown media types fail closed and download on top-level navigation.
+- Apply `Content-Security-Policy: default-src 'none'; sandbox` to every generic proxy response. A document treated as a page receives no script permission and no `allow-same-origin`, so CSP's sandbox forces an opaque origin.
+- Set `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and `Cache-Control: no-store`.
+- Raster image subresources remain inline-compatible. Fetch/XHR callers can still inspect an attachment response body; these headers do not make untrusted data safe to inject into a DOM. Consumers must keep their own sanitization and rendering boundaries.
+
+This policy intentionally changes direct browser navigation to upstream HTML, SVG, XML, JavaScript, CSS, PDF, JSON, text, binary, and unknown media to download behavior. If Prism later needs a first-class inline viewer for one of these types, add a dedicated, separately sandboxed renderer with explicit validation instead of expanding the same-origin generic proxy's inline allowlist.
+
+The response policy is grounded in the browser's [CSP sandbox semantics](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/sandbox), [Content-Disposition behavior](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Disposition), and OWASP's [HTTP header recommendations](https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html).
 
 ## Client-visible outcomes
 

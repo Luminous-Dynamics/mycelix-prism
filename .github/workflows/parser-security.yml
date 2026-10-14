@@ -1,0 +1,62 @@
+name: Parser security regression
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main, 'ci/**']
+    paths:
+      - "prism-dom/**"
+      - ".github/workflows/parser-security.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "flake.nix"
+      - "flake.lock"
+  push:
+    branches: [security/remove-unsafe-dom-elem-name-stacked-20261014]
+
+concurrency:
+  group: prism-dom-security-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  parser-regression:
+    name: Targeted prism-dom memory-safety regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Public main has historically lacked Cargo.lock. Resolve a lock only in
+      # the ephemeral runner, then run the focused test with --locked against
+      # that exact generated file; never silently modify the submitted commit.
+      - name: Resolve an ephemeral lockfile
+        run: |
+          set -euo pipefail
+          nix develop --command cargo generate-lockfile
+          printf 'Source HEAD: %s\n' "$(git rev-parse HEAD)"
+          printf 'Cargo.lock SHA-256: '
+          sha256sum Cargo.lock | cut -d ' ' -f 1
+          {
+            echo "## Focused parser security validation"
+            echo
+            echo "- Source HEAD: `$(git rev-parse HEAD)`"
+            echo "- Cargo.lock SHA-256: `$(sha256sum Cargo.lock | cut -d ' ' -f 1)`"
+            echo "- Lockfile is ephemeral and generated from this checkout; it is not committed by CI."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Test prism-dom with the generated lock
+        run: nix develop --command cargo test -p prism-dom --locked

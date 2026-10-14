@@ -12,14 +12,14 @@ permissions:
 
 jobs:
   format-and-commit:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'hardening/prism-resource-controls-observability-20261012' }}
+    if: github.ref == 'refs/heads/hardening/prism-resource-controls-observability-20261012'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Check out exact PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 0
       - name: Install Nix
@@ -32,7 +32,7 @@ jobs:
         run: nix develop .#fmt --command cargo fmt --all
       - name: Commit formatter output to the same PR branch
         env:
-          BRANCH: ${{ github.event.pull_request.head.ref }}
+          BRANCH: ${{ github.ref_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail

@@ -14,6 +14,13 @@ use leptos::prelude::*;
 use prism_common::SearchResult;
 use prism_search::SearchEngine;
 
+// Full-page sites may execute their own scripts, but must not share Prism's
+// origin: combining allow-scripts with allow-same-origin can let same-origin
+// framed content escape this sandbox. Origin storage/cookies may therefore
+// be unavailable to sites loaded in Full Page mode.
+const FULLPAGE_IFRAME_SANDBOX: &str = "allow-scripts allow-forms allow-popups";
+const FULLPAGE_IFRAME_REFERRER_POLICY: &str = "no-referrer";
+
 #[component]
 pub fn ContentRouter() -> impl IntoView {
     let state = expect_context::<BrowserState>();
@@ -66,7 +73,8 @@ pub fn ContentRouter() -> impl IntoView {
                         <iframe
                             class="fullpage-iframe"
                             src=url.clone()
-                            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                            sandbox=FULLPAGE_IFRAME_SANDBOX
+                            referrerpolicy=FULLPAGE_IFRAME_REFERRER_POLICY
                         ></iframe>
                         <EpistemicDrawer url=url_display />
                     </div>
@@ -448,9 +456,35 @@ fn EpistemicDrawer(url: String) -> impl IntoView {
 
                 <p class="drawer-disclaimer">
                     "Epistemic analysis based on curated knowledge base. "
-                    "Full Page mode allows scripts and cookies."
+                    "Full Page mode runs scripts in an isolated sandbox; some sites may not work "
+                    "if they require access to their normal origin storage."
                 </p>
             </div>
         </Show>
+    }
+}
+
+#[cfg(test)]
+mod iframe_sandbox_tests {
+    use super::{FULLPAGE_IFRAME_REFERRER_POLICY, FULLPAGE_IFRAME_SANDBOX};
+
+    #[test]
+    fn fullpage_iframe_has_an_explicit_minimal_sandbox_allowlist() {
+        let tokens: Vec<&str> = FULLPAGE_IFRAME_SANDBOX.split_whitespace().collect();
+
+        assert_eq!(
+            tokens,
+            ["allow-scripts", "allow-forms", "allow-popups"],
+            "adding a sandbox permission requires an intentional policy change"
+        );
+        assert!(!tokens.contains(&"allow-same-origin"));
+        assert!(!tokens.contains(&"allow-popups-to-escape-sandbox"));
+        assert!(!tokens.contains(&"allow-top-navigation"));
+        assert!(!tokens.contains(&"allow-top-navigation-by-user-activation"));
+    }
+
+    #[test]
+    fn fullpage_iframe_does_not_send_a_referrer_to_external_sites() {
+        assert_eq!(FULLPAGE_IFRAME_REFERRER_POLICY, "no-referrer");
     }
 }

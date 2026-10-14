@@ -217,7 +217,7 @@ self.addEventListener('fetch', (event) => {
         // Remove any entry accidentally left by an older worker/version before
         // honoring a request that explicitly bypasses cache or carries secrets.
         const cache = await caches.open(CACHE_NAME);
-        await cache.delete(request);
+        await cache.delete(request, { ignoreVary: true });
         return fetch(request);
       })());
       return;
@@ -246,7 +246,7 @@ self.addEventListener('fetch', (event) => {
         } else {
           // Do not leave an old cacheable response behind after the origin opts
           // out of storage or serves a non-cacheable fallback for this URL.
-          await cache.delete(request);
+          await cache.delete(request, { ignoreVary: true });
         }
         return response;
       } catch (error) {

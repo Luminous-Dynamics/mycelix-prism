@@ -28,6 +28,23 @@ function cacheControlDirectives(value) {
     .filter(Boolean);
 }
 
+// Fail closed on invalid, duplicated, or zero max-age values. Treat an unusable
+// lifetime as non-cacheable rather than letting CacheStorage preserve it forever.
+function hasUnusableMaxAge(directives) {
+  const maxAge = directives.filter((directive) =>
+    directive.split('=', 1)[0].trim() === 'max-age'
+  );
+  if (maxAge.length === 0) return false;
+  if (maxAge.length !== 1) return true;
+
+  const equals = maxAge[0].indexOf('=');
+  if (equals === -1) return true;
+  const value = maxAge[0].slice(equals + 1).trim().replace(/^"|"$/g, '');
+  if (!/^\d+$/.test(value)) return true;
+  const seconds = Number(value);
+  return !Number.isSafeInteger(seconds) || seconds === 0;
+}
+
 // Cache Storage deliberately does not implement HTTP freshness/privacy policy
 // for the application. Keep sensitive or explicitly non-cacheable requests out
 // of both lookup and insertion, rather than relying on Cache-Control by itself.
@@ -40,10 +57,9 @@ function shouldBypassStaticCache(request, url) {
   return url.search !== '' ||
     Boolean(request.headers?.has('Authorization')) ||
     requestDirectives.some((directive) =>
-      directive === 'no-store' ||
-      directive === 'no-cache' ||
-      /^max-age\s*=\s*"?0"?$/.test(directive)
+      directive === 'no-store' || directive === 'no-cache'
     ) ||
+    hasUnusableMaxAge(requestDirectives) ||
     ['no-store', 'no-cache', 'reload'].includes(request.cache) ||
     pragma.split(',').some((directive) => directive.trim() === 'no-cache');
 }
@@ -107,13 +123,13 @@ function shouldCacheStaticResponse(response, requestUrl) {
     'must-revalidate',
     'proxy-revalidate',
   ]);
-  if (directives.some((directive) => {
-    const [name] = directive.split('=', 1);
-    if (forbidden.has(name.trim())) return true;
-    if (name.trim() !== 'max-age') return false;
-    const value = directive.slice(directive.indexOf('=') + 1).trim().replace(/^"|"$/g, '');
-    return value !== '' && Number(value) === 0;
-  })) {
+  if (
+    directives.some((directive) => {
+      const [name] = directive.split('=', 1);
+      return forbidden.has(name.trim());
+    }) ||
+    hasUnusableMaxAge(directives)
+  ) {
     return false;
   }
 

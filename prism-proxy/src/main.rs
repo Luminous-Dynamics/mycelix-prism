@@ -24,7 +24,10 @@ use axum::{
 use prism_common::client_quota::{ClientQuotaState, parse_trusted_proxy_ips};
 use prism_common::proxy_limits::MAX_REQUEST_TARGET_BYTES;
 use prism_common::ssrf::validate_proxy_url;
-use prism_safe_fetch::{SafeFetchError, fetch_public_get, read_limited_body};
+use prism_safe_fetch::{
+    PROXY_CONTENT_DISPOSITION, PROXY_CONTENT_SECURITY_POLICY, SafeFetchError, fetch_public_get,
+    proxy_content_requires_attachment, read_limited_body,
+};
 use std::net::SocketAddr;
 use std::time::Duration;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -96,6 +99,29 @@ struct ProxyParams {
     url: String,
 }
 
+fn proxy_response(status: u16, content_type: String, body: Vec<u8>) -> axum::response::Response {
+    // The proxy shares Prism's origin. Apply a restrictive document policy to
+    // every upstream response; active formats also download on top-level navigation.
+    let requires_attachment = proxy_content_requires_attachment(&content_type);
+    let mut response = axum::response::Response::builder()
+        .status(status)
+        .header("content-type", content_type)
+        .header("x-prism-proxied", "true")
+        .header("x-content-type-options", "nosniff")
+        .header("content-security-policy", PROXY_CONTENT_SECURITY_POLICY)
+        .header("cache-control", "no-store")
+        .header("referrer-policy", "no-referrer")
+        .header("x-frame-options", "DENY");
+
+    if requires_attachment {
+        response = response.header("content-disposition", PROXY_CONTENT_DISPOSITION);
+    }
+
+    response
+        .body(axum::body::Body::from(body))
+        .unwrap_or_else(|_| internal_error_response())
+}
+
 async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
     let validated = match validate_proxy_url(&params.url) {
         Ok(url) => url,
@@ -124,13 +150,7 @@ async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
                 response_bytes,
                 fetched.redirect_count
             );
-            axum::response::Response::builder()
-                .status(fetched.status)
-                .header("content-type", fetched.content_type)
-                .header("x-prism-proxied", "true")
-                .body(axum::body::Body::from(fetched.body))
-                .unwrap_or_else(|_| internal_error_response())
-                .into_response()
+            proxy_response(fetched.status, fetched.content_type, fetched.body).into_response()
         }
         Err(SafeFetchError::TooLarge) => {
             log::warn!("Proxy fetch failed: reason=response_too_large");
@@ -729,6 +749,87 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("http://localhost:8130"),
             "CORS headers should remain present on URI-too-long responses"
+        );
+    }
+}
+
+#[cfg(test)]
+mod proxy_response_security_tests {
+    use super::proxy_response;
+
+    #[test]
+    fn upstream_html_is_attachment_and_receives_a_sandboxed_no_store_policy() {
+        let response = proxy_response(
+            200,
+            "text/html; charset=utf-8".to_string(),
+            b"<script>document.cookie</script>".to_vec(),
+        );
+        let headers = response.headers();
+
+        assert_eq!(
+            headers
+                .get("content-disposition")
+                .and_then(|value| value.to_str().ok()),
+            Some("attachment; filename=\"prism-proxy-content\"")
+        );
+        assert_eq!(
+            headers
+                .get("content-security-policy")
+                .and_then(|value| value.to_str().ok()),
+            Some("default-src 'none'; sandbox")
+        );
+        assert_eq!(
+            headers
+                .get("x-content-type-options")
+                .and_then(|value| value.to_str().ok()),
+            Some("nosniff")
+        );
+        assert_eq!(
+            headers
+                .get("cache-control")
+                .and_then(|value| value.to_str().ok()),
+            Some("no-store")
+        );
+        assert_eq!(
+            headers
+                .get("referrer-policy")
+                .and_then(|value| value.to_str().ok()),
+            Some("no-referrer")
+        );
+        assert_eq!(
+            headers
+                .get("x-frame-options")
+                .and_then(|value| value.to_str().ok()),
+            Some("DENY")
+        );
+    }
+
+    #[test]
+    fn raster_images_remain_embeddable_but_use_restrictive_response_headers() {
+        let response = proxy_response(200, "image/png".to_string(), vec![137, 80, 78, 71]);
+        let headers = response.headers();
+
+        assert_eq!(
+            headers
+                .get("content-type")
+                .and_then(|value| value.to_str().ok()),
+            Some("image/png")
+        );
+        assert!(
+            headers.get("content-disposition").is_none(),
+            "ordinary raster images must remain usable in image elements"
+        );
+        assert_eq!(
+            headers
+                .get("content-security-policy")
+                .and_then(|value| value.to_str().ok()),
+            Some("default-src 'none'; sandbox")
+        );
+        assert_eq!(
+            headers
+                .get("cache-control")
+                .and_then(|value| value.to_str().ok()),
+            Some("no-store")
         );
     }
 }

@@ -1,22 +1,26 @@
 // Copyright (C) 2024-2026 Tristan Stoltz / Luminous Dynamics
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Commercial licensing: see COMMERCIAL_LICENSE.md at repository root
-//! Load claims from mycelix-knowledge seed data (embedded at compile time).
+//! Load optional claims from the companion mycelix-knowledge seed corpus.
 
 use crate::RawClaim;
 use prism_common::{EmpiricalLevel, MaterialityLevel, NormativeLevel};
 use serde::Deserialize;
 
-// Embed JSON files at compile time — no filesystem access needed in WASM
-const ENERGY_JSON: &str =
-    include_str!("../../../mycelix-knowledge/seed-data/claims/energy-facts.json");
-const GEO_JSON: &str =
-    include_str!("../../../mycelix-knowledge/seed-data/claims/geonames-major.json");
-const WHO_JSON: &str = include_str!("../../../mycelix-knowledge/seed-data/claims/who-health.json");
-const NOAA_JSON: &str =
-    include_str!("../../../mycelix-knowledge/seed-data/claims/noaa-climate.json");
-const FAO_JSON: &str =
-    include_str!("../../../mycelix-knowledge/seed-data/claims/fao-agriculture.json");
+// The companion knowledge corpus is optional in this standalone public repository.
+// Enabling this feature requires a full workspace checkout with the sibling
+// mycelix-knowledge/seed-data/claims tree present at compile time.
+#[cfg(feature = "workspace-seed-data")]
+const CLAIM_DATASETS: &[&str] = &[
+    include_str!("../../../mycelix-knowledge/seed-data/claims/energy-facts.json"),
+    include_str!("../../../mycelix-knowledge/seed-data/claims/geonames-major.json"),
+    include_str!("../../../mycelix-knowledge/seed-data/claims/who-health.json"),
+    include_str!("../../../mycelix-knowledge/seed-data/claims/noaa-climate.json"),
+    include_str!("../../../mycelix-knowledge/seed-data/claims/fao-agriculture.json"),
+];
+
+#[cfg(not(feature = "workspace-seed-data"))]
+const CLAIM_DATASETS: &[&str] = &[];
 
 #[derive(Deserialize)]
 struct MycelixClaim {
@@ -38,7 +42,7 @@ struct Classification {
 pub fn load_mycelix_claims() -> Vec<RawClaim> {
     let mut claims = Vec::new();
 
-    for json_str in [ENERGY_JSON, GEO_JSON, WHO_JSON, NOAA_JSON, FAO_JSON] {
+    for json_str in CLAIM_DATASETS {
         let data: Vec<MycelixClaim> = match serde_json::from_str(json_str) {
             Ok(d) => d,
             Err(e) => {
@@ -146,9 +150,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn loads_mycelix_claims() {
+    fn mycelix_claim_loader_matches_build_feature() {
         let claims = load_mycelix_claims();
-        assert!(!claims.is_empty(), "Should load mycelix claims");
+
+        #[cfg(feature = "workspace-seed-data")]
+        assert!(
+            !claims.is_empty(),
+            "Enabled companion seed corpus should load claims"
+        );
+
+        #[cfg(not(feature = "workspace-seed-data"))]
+        assert!(
+            claims.is_empty(),
+            "Standalone builds must not depend on an undeclared sibling checkout"
+        );
+
         // Should have filtered out coordinate-only claims
         for c in &claims {
             let low = c.content.to_lowercase();

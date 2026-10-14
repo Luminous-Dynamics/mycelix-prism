@@ -25,8 +25,8 @@ use prism_common::client_quota::{ClientQuotaState, parse_trusted_proxy_ips};
 use prism_common::proxy_limits::MAX_REQUEST_TARGET_BYTES;
 use prism_common::ssrf::validate_proxy_url;
 use prism_safe_fetch::{
-    PROXY_CONTENT_DISPOSITION, PROXY_CONTENT_SECURITY_POLICY, SafeFetchError,
-    fetch_public_get, proxy_content_requires_attachment, read_limited_body,
+    PROXY_CONTENT_DISPOSITION, PROXY_CONTENT_SECURITY_POLICY, SafeFetchError, fetch_public_get,
+    proxy_content_requires_attachment, read_limited_body,
 };
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -99,11 +99,7 @@ struct ProxyParams {
     url: String,
 }
 
-fn proxy_response(
-    status: u16,
-    content_type: String,
-    body: Vec<u8>,
-) -> axum::response::Response {
+fn proxy_response(status: u16, content_type: String, body: Vec<u8>) -> axum::response::Response {
     // The proxy shares Prism's origin. Apply a restrictive document policy to
     // every upstream response; active formats also download on top-level navigation.
     let requires_attachment = proxy_content_requires_attachment(&content_type);

@@ -15,7 +15,7 @@ use axum::http::StatusCode;
 use axum::http::header::HeaderValue;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use prism_common::client_quota::{parse_trusted_proxy_ips, ClientQuotaState};
+use prism_common::client_quota::{ClientQuotaState, parse_trusted_proxy_ips};
 use prism_common::proxy_limits::MAX_REQUEST_TARGET_BYTES;
 use prism_common::ssrf::validate_proxy_url;
 use prism_safe_fetch::{SafeFetchError, fetch_public_get, read_limited_body};
@@ -131,7 +131,7 @@ async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
                 .body(axum::body::Body::from(fetched.body))
                 .unwrap_or_else(|_| internal_error_response())
                 .into_response()
-        },
+        }
         Err(SafeFetchError::TooLarge) => {
             log::warn!("Proxy fetch failed: reason=response_too_large");
             (StatusCode::PAYLOAD_TOO_LARGE, "Response too large").into_response()
@@ -151,7 +151,7 @@ async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
         Err(SafeFetchError::Request(_)) => {
             log::warn!("Proxy fetch failed: reason=upstream_transport");
             (StatusCode::BAD_GATEWAY, "Upstream request failed").into_response()
-        },
+        }
     }
 }
 
@@ -323,7 +323,9 @@ async fn perplexity_handler(
                     .unwrap_or_else(|_| internal_error_response())
                     .into_response(),
                 Err(SafeFetchError::TooLarge) => {
-                    log::warn!("Provider response failed: class=provider reason=response_too_large");
+                    log::warn!(
+                        "Provider response failed: class=provider reason=response_too_large"
+                    );
                     (StatusCode::PAYLOAD_TOO_LARGE, "Provider response too large").into_response()
                 }
                 Err(SafeFetchError::Timeout) => {
@@ -369,10 +371,7 @@ const SYMTHAEA_MAX_RESPONSE_LINE_BYTES: usize = 1024 * 1024; // 1 MiB
 
 /// Read one newline-delimited daemon response without allowing an unbounded
 /// String allocation if the local service misbehaves or is compromised.
-async fn read_bounded_line<R>(
-    reader: &mut R,
-    max_bytes: usize,
-) -> Result<String, String>
+async fn read_bounded_line<R>(reader: &mut R, max_bytes: usize) -> Result<String, String>
 where
     R: tokio::io::AsyncBufRead + Unpin,
 {
@@ -680,7 +679,11 @@ fn build_app_with_quota(
             quota_state.clone(),
             quota_middleware::enforce_client_quota,
         ))
-        .layer(route_limit_layer!("generic_proxy", 12, Duration::from_secs(20)));
+        .layer(route_limit_layer!(
+            "generic_proxy",
+            12,
+            Duration::from_secs(20)
+        ));
 
     let search_routes = Router::new()
         .route("/api/ddg", get(ddg_handler))
@@ -738,11 +741,9 @@ fn validate_bind_addr(
     allow_non_loopback: bool,
 ) -> Result<SocketAddr, String> {
     let raw = configured.unwrap_or("127.0.0.1:8130");
-    let addr: SocketAddr = raw
-        .parse()
-        .map_err(|_| {
-            "PRISM_ADDR must be an IP address and port, such as 127.0.0.1:8130".to_string()
-        })?;
+    let addr: SocketAddr = raw.parse().map_err(|_| {
+        "PRISM_ADDR must be an IP address and port, such as 127.0.0.1:8130".to_string()
+    })?;
 
     if !addr.ip().is_loopback() && !allow_non_loopback {
         return Err(
@@ -775,13 +776,14 @@ async fn main() {
     let app = build_app_with_quota(&dist_path, symthaea_cfg, quota_state);
 
     let configured_addr = std::env::var("PRISM_ADDR").ok();
-    let allow_non_loopback = std::env::var("PRISM_ALLOW_NON_LOOPBACK_BIND")
-        .is_ok_and(|value| value == "1");
-    let addr = validate_bind_addr(configured_addr.as_deref(), allow_non_loopback)
-        .unwrap_or_else(|error| {
+    let allow_non_loopback =
+        std::env::var("PRISM_ALLOW_NON_LOOPBACK_BIND").is_ok_and(|value| value == "1");
+    let addr = validate_bind_addr(configured_addr.as_deref(), allow_non_loopback).unwrap_or_else(
+        |error| {
             log::error!("{}", error);
             std::process::exit(2);
-        });
+        },
+    );
 
     if !addr.ip().is_loopback() {
         log::warn!(
@@ -883,7 +885,10 @@ mod tests {
         );
         let responses = [first.unwrap(), second.unwrap(), third.unwrap()];
         assert_eq!(
-            responses.iter().filter(|response| response.status() == StatusCode::OK).count(),
+            responses
+                .iter()
+                .filter(|response| response.status() == StatusCode::OK)
+                .count(),
             2,
             "two generic-proxy requests from one client should hold permits"
         );
@@ -892,7 +897,10 @@ mod tests {
             .find(|response| response.status() == StatusCode::TOO_MANY_REQUESTS)
             .expect("third concurrent request should be shed");
         assert_eq!(
-            rejected.headers().get("retry-after").and_then(|v| v.to_str().ok()),
+            rejected
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok()),
             Some("1")
         );
 
@@ -1318,7 +1326,9 @@ mod tests {
 
         for (index, malformed) in malformed_responses.into_iter().enumerate() {
             let dir = test_dist_dir();
-            let socket_path = dir.path().join(format!("fake-symthaea-invalid-safe-{index}.sock"));
+            let socket_path = dir
+                .path()
+                .join(format!("fake-symthaea-invalid-safe-{index}.sock"));
             spawn_fake_daemon(socket_path.clone(), move |_req| {
                 FakeDaemonAction::Reply(malformed.to_string())
             });
@@ -1343,7 +1353,9 @@ mod tests {
                 "malformed safety flag case {index} must not become a successful response"
             );
             assert_eq!(
-                response.headers().get("x-content-type-options")
+                response
+                    .headers()
+                    .get("x-content-type-options")
                     .and_then(|value| value.to_str().ok()),
                 Some("nosniff"),
                 "security headers must remain present on rejected daemon responses"
@@ -1426,7 +1438,9 @@ mod tests {
             .oneshot(
                 Request::post("/api/symthaea/query")
                     .header("content-type", "application/json")
-                    .body(Body::from(serde_json::json!({ "content": content }).to_string()))
+                    .body(Body::from(
+                        serde_json::json!({ "content": content }).to_string(),
+                    ))
                     .unwrap(),
             )
             .await

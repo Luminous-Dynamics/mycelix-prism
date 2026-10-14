@@ -30,7 +30,9 @@ pub enum SafeFetchError {
     Timeout,
     /// A redirect was rejected by policy. The number is the redirect hop being
     /// rejected, starting at 1; no target URL or Location value is retained.
-    RedirectRejected { hop: usize },
+    RedirectRejected {
+        hop: usize,
+    },
     TooLarge,
 }
 
@@ -369,7 +371,9 @@ async fn fetch_public_get_with_resolver(
         });
     }
 
-    Err(SafeFetchError::RedirectRejected { hop: max_redirects.saturating_add(1) })
+    Err(SafeFetchError::RedirectRejected {
+        hop: max_redirects.saturating_add(1),
+    })
 }
 
 #[cfg(test)]
@@ -565,7 +569,10 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(response.body, b"ok");
         assert_eq!(response.final_url.host_str(), Some("target.example.com"));
-        assert_eq!(response.redirect_count, 1, "one validated redirect should be counted");
+        assert_eq!(
+            response.redirect_count, 1,
+            "one validated redirect should be counted"
+        );
         let seen = resolver.seen();
         assert_eq!(
             seen,
@@ -691,26 +698,28 @@ mod tests {
             .unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
-            let (mut socket, _) =
-                tokio::time::timeout(Duration::from_secs(2), listener.accept())
-                    .await
-                    .expect("client should connect to the local fixture")
-                    .unwrap();
+            let (mut socket, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                .await
+                .expect("client should connect to the local fixture")
+                .unwrap();
             let _request = read_fixture_headers(&mut socket).await;
             // Leave the response unanswered long enough for Reqwest's total
             // deadline to expire. This fixture never contacts a public host.
             tokio::time::sleep(Duration::from_millis(250)).await;
-            let _ = socket.write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
-            ).await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .await;
         });
 
         let resolver = FixtureResolver::new(HashMap::from([(
             "timeout.example.com".to_string(),
             vec![loopback_pin()],
         )]));
-        let initial = Url::parse(&format!("http://timeout.example.com:{}/wait", address.port()))
-            .unwrap();
+        let initial = Url::parse(&format!(
+            "http://timeout.example.com:{}/wait",
+            address.port()
+        ))
+        .unwrap();
         let result = tokio::time::timeout(
             Duration::from_secs(2),
             fetch_public_get_with_resolver(

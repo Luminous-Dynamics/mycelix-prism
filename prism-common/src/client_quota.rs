@@ -252,7 +252,11 @@ impl ClientQuota {
         // not keep an otherwise-idle client entry resident.
         usage.last_seen = Some(now);
 
-        Ok(QuotaTicket { client, class, event_id })
+        Ok(QuotaTicket {
+            client,
+            class,
+            event_id,
+        })
     }
 
     /// Release a request's in-flight slot. Middleware owns an RAII guard so
@@ -282,9 +286,18 @@ impl ClientQuota {
         ticket: QuotaTicket,
         body_bytes: usize,
     ) -> Result<(), QuotaRejection> {
-        let usage = self.clients.get_mut(&ticket.client).ok_or(QuotaRejection::StaleTicket)?;
-        let bucket = usage.buckets.get_mut(&ticket.class).ok_or(QuotaRejection::StaleTicket)?;
-        let event = bucket.events.iter_mut().find(|event| event.id == ticket.event_id)
+        let usage = self
+            .clients
+            .get_mut(&ticket.client)
+            .ok_or(QuotaRejection::StaleTicket)?;
+        let bucket = usage
+            .buckets
+            .get_mut(&ticket.class)
+            .ok_or(QuotaRejection::StaleTicket)?;
+        let event = bucket
+            .events
+            .iter_mut()
+            .find(|event| event.id == ticket.event_id)
             .ok_or(QuotaRejection::StaleTicket)?;
         let policy = ticket.class.policy();
         if body_bytes > policy.ingress_bytes.saturating_sub(bucket.ingress_bytes) {
@@ -306,7 +319,10 @@ impl ClientQuota {
         now: Instant,
     ) -> Result<(), QuotaRejection> {
         let client = normalize_ip(client);
-        let usage = self.clients.get_mut(&client).ok_or(QuotaRejection::StaleTicket)?;
+        let usage = self
+            .clients
+            .get_mut(&client)
+            .ok_or(QuotaRejection::StaleTicket)?;
         usage.last_seen = Some(now);
         let bucket = usage.buckets.entry(class).or_default();
         purge_expired(bucket, now);
@@ -315,7 +331,10 @@ impl ClientQuota {
         if response_bytes > policy.response_bytes.saturating_sub(bucket.response_bytes) {
             return Err(QuotaRejection::ResponseBytes);
         }
-        bucket.responses.push_back(ResponseEvent { at: now, bytes: response_bytes });
+        bucket.responses.push_back(ResponseEvent {
+            at: now,
+            bytes: response_bytes,
+        });
         bucket.response_bytes = bucket.response_bytes.saturating_add(response_bytes);
         Ok(())
     }
@@ -327,16 +346,20 @@ impl ClientQuota {
 }
 
 fn purge_expired(bucket: &mut Bucket, now: Instant) {
-    while bucket.events.front().is_some_and(|event| {
-        now.saturating_duration_since(event.at) >= WINDOW
-    }) {
+    while bucket
+        .events
+        .front()
+        .is_some_and(|event| now.saturating_duration_since(event.at) >= WINDOW)
+    {
         if let Some(event) = bucket.events.pop_front() {
             bucket.ingress_bytes = bucket.ingress_bytes.saturating_sub(event.ingress_bytes);
         }
     }
-    while bucket.responses.front().is_some_and(|event| {
-        now.saturating_duration_since(event.at) >= WINDOW
-    }) {
+    while bucket
+        .responses
+        .front()
+        .is_some_and(|event| now.saturating_duration_since(event.at) >= WINDOW)
+    {
         if let Some(event) = bucket.responses.pop_front() {
             bucket.response_bytes = bucket.response_bytes.saturating_sub(event.bytes);
         }
@@ -553,12 +576,19 @@ mod tests {
         let start = Instant::now();
         let client = ip("192.0.2.11");
         let mut quota = ClientQuota::with_capacity(4);
-        let ticket = quota.admit_request(client, QuotaClass::Search, 10, start).unwrap();
+        let ticket = quota
+            .admit_request(client, QuotaClass::Search, 10, start)
+            .unwrap();
         assert!(quota.charge_body(ticket, 256 * 1024 - 10).is_ok());
         quota.release_request(ticket);
 
         assert_eq!(
-            quota.admit_request(client, QuotaClass::Search, 1, start + Duration::from_secs(1)),
+            quota.admit_request(
+                client,
+                QuotaClass::Search,
+                1,
+                start + Duration::from_secs(1)
+            ),
             Err(QuotaRejection::IngressBytes)
         );
     }
@@ -568,15 +598,30 @@ mod tests {
         let start = Instant::now();
         let client = ip("192.0.2.14");
         let mut quota = ClientQuota::with_capacity(4);
-        let ticket = quota.admit_request(client, QuotaClass::Search, 0, start).unwrap();
-        assert!(quota.charge_response(client, QuotaClass::Search, 16 * 1024 * 1024, start).is_ok());
+        let ticket = quota
+            .admit_request(client, QuotaClass::Search, 0, start)
+            .unwrap();
+        assert!(
+            quota
+                .charge_response(client, QuotaClass::Search, 16 * 1024 * 1024, start)
+                .is_ok()
+        );
         quota.release_request(ticket);
 
         assert_eq!(
-            quota.charge_response(client, QuotaClass::Search, 1, start + Duration::from_secs(1)),
+            quota.charge_response(
+                client,
+                QuotaClass::Search,
+                1,
+                start + Duration::from_secs(1)
+            ),
             Err(QuotaRejection::ResponseBytes)
         );
-        assert!(quota.charge_response(client, QuotaClass::Search, 1, start + WINDOW).is_ok());
+        assert!(
+            quota
+                .charge_response(client, QuotaClass::Search, 1, start + WINDOW)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -588,12 +633,7 @@ mod tests {
 
         for n in 0..30 {
             let ticket = quota
-                .admit_request(
-                    a,
-                    QuotaClass::Search,
-                    0,
-                    start + Duration::from_millis(n),
-                )
+                .admit_request(a, QuotaClass::Search, 0, start + Duration::from_millis(n))
                 .unwrap();
             quota.release_request(ticket);
         }
@@ -659,12 +699,7 @@ mod tests {
         quota.release_request(second);
 
         assert_eq!(
-            quota.admit_request(
-                ip("192.0.2.28"),
-                QuotaClass::Search,
-                0,
-                start + IDLE_TTL,
-            ),
+            quota.admit_request(ip("192.0.2.28"), QuotaClass::Search, 0, start + IDLE_TTL,),
             Err(QuotaRejection::ClientTableFull),
             "between sweeps, an expired entry may remain temporarily; saturation must fail closed"
         );
@@ -691,12 +726,7 @@ mod tests {
             .unwrap();
 
         let other = quota
-            .admit_request(
-                ip("192.0.2.23"),
-                QuotaClass::Search,
-                0,
-                start + IDLE_TTL,
-            )
+            .admit_request(ip("192.0.2.23"), QuotaClass::Search, 0, start + IDLE_TTL)
             .unwrap();
         quota.release_request(other);
 
@@ -746,12 +776,7 @@ mod tests {
         );
 
         let replacement = quota
-            .admit_request(
-                ip("192.0.2.25"),
-                QuotaClass::Search,
-                0,
-                start + IDLE_TTL,
-            )
+            .admit_request(ip("192.0.2.25"), QuotaClass::Search, 0, start + IDLE_TTL)
             .expect("a rejected request must not extend the old entry's idle TTL");
         quota.release_request(replacement);
         assert_eq!(quota.active_clients(), 1);
@@ -776,13 +801,23 @@ mod tests {
         for index in 0..30 {
             let client = if index % 2 == 0 { ipv4 } else { mapped };
             let ticket = quota
-                .admit_request(client, QuotaClass::Search, 0, start + Duration::from_millis(index))
+                .admit_request(
+                    client,
+                    QuotaClass::Search,
+                    0,
+                    start + Duration::from_millis(index),
+                )
                 .unwrap();
             quota.release_request(ticket);
         }
 
         assert_eq!(
-            quota.admit_request(mapped, QuotaClass::Search, 0, start + Duration::from_secs(1)),
+            quota.admit_request(
+                mapped,
+                QuotaClass::Search,
+                0,
+                start + Duration::from_secs(1)
+            ),
             Err(QuotaRejection::RequestRate),
             "alternating IPv4 and IPv4-mapped IPv6 spellings must share one rolling budget"
         );
@@ -793,11 +828,7 @@ mod tests {
     fn trusted_proxy_matching_normalizes_ipv4_mapped_ipv6() {
         let trusted = HashSet::from([ip("::ffff:192.0.2.1")]);
         assert_eq!(
-            resolve_client_ip(
-                ip("192.0.2.1"),
-                Some("203.0.113.24"),
-                &trusted
-            ),
+            resolve_client_ip(ip("192.0.2.1"), Some("203.0.113.24"), &trusted),
             ip("203.0.113.24")
         );
 
@@ -809,11 +840,7 @@ mod tests {
     fn trusted_proxy_resolution_skips_trusted_hops_from_the_right() {
         let trusted = HashSet::from([ip("192.0.2.1"), ip("192.0.2.2")]);
         assert_eq!(
-            resolve_client_ip(
-                ip("192.0.2.2"),
-                Some("203.0.113.10, 192.0.2.1"),
-                &trusted
-            ),
+            resolve_client_ip(ip("192.0.2.2"), Some("203.0.113.10, 192.0.2.1"), &trusted),
             ip("203.0.113.10")
         );
     }
@@ -842,10 +869,16 @@ mod tests {
     fn path_classification_excludes_static_and_health_routes() {
         assert_eq!(QuotaClass::for_path("/health"), None);
         assert_eq!(QuotaClass::for_path("/"), None);
-        assert_eq!(QuotaClass::for_path("/proxy"), Some(QuotaClass::GenericProxy));
+        assert_eq!(
+            QuotaClass::for_path("/proxy"),
+            Some(QuotaClass::GenericProxy)
+        );
         assert_eq!(QuotaClass::for_path("/api/ddg"), Some(QuotaClass::Search));
         assert_eq!(QuotaClass::for_path("/api/brave"), Some(QuotaClass::Search));
-        assert_eq!(QuotaClass::for_path("/api/perplexity"), Some(QuotaClass::Provider));
+        assert_eq!(
+            QuotaClass::for_path("/api/perplexity"),
+            Some(QuotaClass::Provider)
+        );
         assert_eq!(
             QuotaClass::for_path("/api/symthaea/query"),
             Some(QuotaClass::Symthaea)

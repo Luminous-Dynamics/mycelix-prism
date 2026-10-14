@@ -21,7 +21,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use prism_common::client_quota::{parse_trusted_proxy_ips, ClientQuotaState};
+use prism_common::client_quota::{ClientQuotaState, parse_trusted_proxy_ips};
 use prism_common::proxy_limits::MAX_REQUEST_TARGET_BYTES;
 use prism_common::ssrf::validate_proxy_url;
 use prism_safe_fetch::{SafeFetchError, fetch_public_get, read_limited_body};
@@ -131,7 +131,7 @@ async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
                 .body(axum::body::Body::from(fetched.body))
                 .unwrap_or_else(|_| internal_error_response())
                 .into_response()
-        },
+        }
         Err(SafeFetchError::TooLarge) => {
             log::warn!("Proxy fetch failed: reason=response_too_large");
             (StatusCode::PAYLOAD_TOO_LARGE, "Response too large").into_response()
@@ -151,7 +151,7 @@ async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
         Err(SafeFetchError::Request(_)) => {
             log::warn!("Proxy fetch failed: reason=upstream_transport");
             (StatusCode::BAD_GATEWAY, "Upstream request failed").into_response()
-        },
+        }
     }
 }
 
@@ -324,7 +324,9 @@ async fn perplexity_handler(
             match read_limited_body(resp, MAX_RESPONSE_SIZE).await {
                 Ok(body) => json_response(status, axum::body::Bytes::from(body)).into_response(),
                 Err(SafeFetchError::TooLarge) => {
-                    log::warn!("Provider response failed: class=provider reason=response_too_large");
+                    log::warn!(
+                        "Provider response failed: class=provider reason=response_too_large"
+                    );
                     (StatusCode::PAYLOAD_TOO_LARGE, "Provider response too large").into_response()
                 }
                 Err(SafeFetchError::Timeout) => {
@@ -404,7 +406,11 @@ fn build_app_with_quota(quota_state: ClientQuotaState) -> Router {
             quota_state.clone(),
             quota_middleware::enforce_client_quota,
         ))
-        .layer(route_limit_layer!("generic_proxy", 12, Duration::from_secs(20)));
+        .layer(route_limit_layer!(
+            "generic_proxy",
+            12,
+            Duration::from_secs(20)
+        ));
 
     let search_routes = Router::new()
         .route("/api/ddg", get(ddg_handler))
@@ -555,7 +561,10 @@ mod tests {
             } else {
                 assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
                 assert_eq!(
-                    response.headers().get("retry-after").and_then(|v| v.to_str().ok()),
+                    response
+                        .headers()
+                        .get("retry-after")
+                        .and_then(|v| v.to_str().ok()),
                     Some("60")
                 );
                 assert_eq!(
@@ -596,7 +605,10 @@ mod tests {
         );
         let responses = [first.unwrap(), second.unwrap(), third.unwrap()];
         assert_eq!(
-            responses.iter().filter(|response| response.status() == StatusCode::OK).count(),
+            responses
+                .iter()
+                .filter(|response| response.status() == StatusCode::OK)
+                .count(),
             2,
             "two generic-proxy requests from one client should hold permits"
         );
@@ -605,7 +617,10 @@ mod tests {
             .find(|response| response.status() == StatusCode::TOO_MANY_REQUESTS)
             .expect("third concurrent request should be shed");
         assert_eq!(
-            rejected.headers().get("retry-after").and_then(|v| v.to_str().ok()),
+            rejected
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok()),
             Some("1")
         );
 

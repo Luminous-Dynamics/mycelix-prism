@@ -283,6 +283,11 @@ test('query-bearing static URLs bypass cache lookup and insertion', async () => 
   const event = dispatchFetch(harness, request(queryUrl));
   assert.equal((await event.responsePromise).label, 'fresh network response');
   assert.deepEqual(harness.puts, []);
+  assert.equal(
+    harness.stores.get('mycelix-prism-v4').has(new URL(queryUrl, ORIGIN).href),
+    false,
+    'an old query-bearing cache entry is purged before the network response is returned',
+  );
 });
 
 test('authorization and explicit cache-bypass directives skip existing entries', async () => {
@@ -290,8 +295,11 @@ test('authorization and explicit cache-bypass directives skip existing entries',
     ['authorization', { headers: { Authorization: 'Bearer secret' } }],
     ['request-no-store', { headers: { 'Cache-Control': 'no-store' } }],
     ['request-no-cache', { headers: { 'Cache-Control': 'no-cache' } }],
+    ['request-max-age-zero', { headers: { 'Cache-Control': 'max-age=0' } }],
     ['pragma-no-cache', { headers: { Pragma: 'no-cache' } }],
     ['cache-reload', { cache: 'reload' }],
+    ['cache-no-cache', { cache: 'no-cache' }],
+    ['cache-no-store', { cache: 'no-store' }],
   ];
 
   for (const [index, [name, options]] of cases.entries()) {
@@ -308,6 +316,11 @@ test('authorization and explicit cache-bypass directives skip existing entries',
 
     assert.equal((await event.responsePromise).label, name);
     assert.deepEqual(harness.puts, [], `${name} request must not populate cache`);
+    assert.equal(
+      harness.stores.get('mycelix-prism-v4').has(new URL(path, ORIGIN).href),
+      false,
+      `${name} request must purge its prior cache entry`,
+    );
   }
 });
 

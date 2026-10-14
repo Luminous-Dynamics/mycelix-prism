@@ -467,11 +467,17 @@ mod iframe_sandbox_tests {
     use super::FULLPAGE_IFRAME_SANDBOX;
 
     #[test]
-    fn fullpage_iframe_never_combines_scripts_with_same_origin() {
+    fn fullpage_iframe_has_an_explicit_minimal_sandbox_allowlist() {
         let tokens: Vec<&str> = FULLPAGE_IFRAME_SANDBOX.split_whitespace().collect();
 
-        assert!(tokens.contains(&"allow-scripts"));
+        assert_eq!(
+            tokens,
+            ["allow-scripts", "allow-forms", "allow-popups"],
+            "adding a sandbox permission requires an intentional policy change"
+        );
         assert!(!tokens.contains(&"allow-same-origin"));
         assert!(!tokens.contains(&"allow-popups-to-escape-sandbox"));
+        assert!(!tokens.contains(&"allow-top-navigation"));
+        assert!(!tokens.contains(&"allow-top-navigation-by-user-activation"));
     }
 }

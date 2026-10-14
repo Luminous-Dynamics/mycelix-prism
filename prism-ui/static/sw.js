@@ -9,9 +9,9 @@ const PRISM_CACHE_PREFIX = 'mycelix-prism-';
 // Explicitly known legacy Prism cache from the previous service worker.
 const LEGACY_CACHE_NAMES = new Set(['prism-v2']);
 
-// Only cache assets with stable filenames.
-// CSS, JS, and WASM have content-hashed names (e.g. prism-abc123.css)
-// and are cached on first fetch via the fetch handler below.
+// Some generated CSS, JS, and WASM assets have content fingerprints.
+// Cache-first is reserved for unambiguous fingerprint-like filenames; other
+// assets use network-first so ordinary names cannot be mistaken for hashes.
 const CORE_ASSETS = [
   '/',
   '/static/prism-loading.jpg',

@@ -756,3 +756,67 @@ mod tests {
         );
     }
 }
+
+
+#[cfg(test)]
+mod proxy_response_security_tests {
+    use super::proxy_response;
+
+    #[test]
+    fn upstream_html_is_attachment_and_receives_a_sandboxed_no_store_policy() {
+        let response = proxy_response(
+            200,
+            "text/html; charset=utf-8".to_string(),
+            b"<script>document.cookie</script>".to_vec(),
+        );
+        let headers = response.headers();
+
+        assert_eq!(
+            headers.get("content-disposition").and_then(|value| value.to_str().ok()),
+            Some("attachment; filename=\"prism-proxy-content\"")
+        );
+        assert_eq!(
+            headers.get("content-security-policy").and_then(|value| value.to_str().ok()),
+            Some("default-src 'none'; sandbox")
+        );
+        assert_eq!(
+            headers.get("x-content-type-options").and_then(|value| value.to_str().ok()),
+            Some("nosniff")
+        );
+        assert_eq!(
+            headers.get("cache-control").and_then(|value| value.to_str().ok()),
+            Some("no-store")
+        );
+        assert_eq!(
+            headers.get("referrer-policy").and_then(|value| value.to_str().ok()),
+            Some("no-referrer")
+        );
+        assert_eq!(
+            headers.get("x-frame-options").and_then(|value| value.to_str().ok()),
+            Some("DENY")
+        );
+    }
+
+    #[test]
+    fn raster_images_remain_embeddable_but_use_restrictive_response_headers() {
+        let response = proxy_response(200, "image/png".to_string(), vec![137, 80, 78, 71]);
+        let headers = response.headers();
+
+        assert_eq!(
+            headers.get("content-type").and_then(|value| value.to_str().ok()),
+            Some("image/png")
+        );
+        assert!(
+            headers.get("content-disposition").is_none(),
+            "ordinary raster images must remain usable in image elements"
+        );
+        assert_eq!(
+            headers.get("content-security-policy").and_then(|value| value.to_str().ok()),
+            Some("default-src 'none'; sandbox")
+        );
+        assert_eq!(
+            headers.get("cache-control").and_then(|value| value.to_str().ok()),
+            Some("no-store")
+        );
+    }
+}

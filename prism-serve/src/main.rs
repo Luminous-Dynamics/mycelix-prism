@@ -1600,7 +1600,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod proxy_response_security_tests {
     use super::proxy_response;
@@ -1615,27 +1614,39 @@ mod proxy_response_security_tests {
         let headers = response.headers();
 
         assert_eq!(
-            headers.get("content-disposition").and_then(|value| value.to_str().ok()),
+            headers
+                .get("content-disposition")
+                .and_then(|value| value.to_str().ok()),
             Some("attachment; filename=\"prism-proxy-content\"")
         );
         assert_eq!(
-            headers.get("content-security-policy").and_then(|value| value.to_str().ok()),
+            headers
+                .get("content-security-policy")
+                .and_then(|value| value.to_str().ok()),
             Some("default-src 'none'; sandbox")
         );
         assert_eq!(
-            headers.get("x-content-type-options").and_then(|value| value.to_str().ok()),
+            headers
+                .get("x-content-type-options")
+                .and_then(|value| value.to_str().ok()),
             Some("nosniff")
         );
         assert_eq!(
-            headers.get("cache-control").and_then(|value| value.to_str().ok()),
+            headers
+                .get("cache-control")
+                .and_then(|value| value.to_str().ok()),
             Some("no-store")
         );
         assert_eq!(
-            headers.get("referrer-policy").and_then(|value| value.to_str().ok()),
+            headers
+                .get("referrer-policy")
+                .and_then(|value| value.to_str().ok()),
             Some("no-referrer")
         );
         assert_eq!(
-            headers.get("x-frame-options").and_then(|value| value.to_str().ok()),
+            headers
+                .get("x-frame-options")
+                .and_then(|value| value.to_str().ok()),
             Some("DENY")
         );
     }
@@ -1646,7 +1657,9 @@ mod proxy_response_security_tests {
         let headers = response.headers();
 
         assert_eq!(
-            headers.get("content-type").and_then(|value| value.to_str().ok()),
+            headers
+                .get("content-type")
+                .and_then(|value| value.to_str().ok()),
             Some("image/png")
         );
         assert!(
@@ -1654,11 +1667,15 @@ mod proxy_response_security_tests {
             "ordinary raster images must remain usable in image elements"
         );
         assert_eq!(
-            headers.get("content-security-policy").and_then(|value| value.to_str().ok()),
+            headers
+                .get("content-security-policy")
+                .and_then(|value| value.to_str().ok()),
             Some("default-src 'none'; sandbox")
         );
         assert_eq!(
-            headers.get("cache-control").and_then(|value| value.to_str().ok()),
+            headers
+                .get("cache-control")
+                .and_then(|value| value.to_str().ok()),
             Some("no-store")
         );
     }

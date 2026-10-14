@@ -5,7 +5,7 @@ permissions:
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'ci/**']
     paths:
       - "prism-dom/**"
       - ".github/workflows/parser-security.yml"
@@ -14,7 +14,7 @@ on:
       - "flake.nix"
       - "flake.lock"
   push:
-    branches: [security/remove-unsafe-dom-elem-name-20261011]
+    branches: [security/remove-unsafe-dom-elem-name-stacked-20261014]
 
 concurrency:
   group: prism-dom-security-${{ github.event.pull_request.head.ref || github.ref_name }}

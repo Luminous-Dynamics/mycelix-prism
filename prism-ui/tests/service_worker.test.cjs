@@ -69,6 +69,7 @@ function makeHarness({ initialCaches = {}, fetchImpl = async () => makeResponse(
   }
 
   const deleted = [];
+  const deletedEntries = [];
   const puts = [];
   const fetched = [];
   let globalMatchCalls = 0;
@@ -91,6 +92,12 @@ function makeHarness({ initialCaches = {}, fetchImpl = async () => makeResponse(
           const key = requestKey(input);
           puts.push({ name, url: key });
           store.set(key, response.clone ? response.clone() : response);
+        },
+        async delete(input) {
+          const key = requestKey(input);
+          const existed = store.delete(key);
+          deletedEntries.push({ name, url: key, existed });
+          return existed;
         },
       };
     },
@@ -131,7 +138,7 @@ function makeHarness({ initialCaches = {}, fetchImpl = async () => makeResponse(
     console: { log() {}, warn() {}, error() {} },
   }, { filename: 'sw.js' });
 
-  return { listeners, stores, deleted, puts, fetched, caches, get globalMatchCalls() { return globalMatchCalls; } };
+  return { listeners, stores, deleted, deletedEntries, puts, fetched, caches, get globalMatchCalls() { return globalMatchCalls; } };
 }
 
 function dispatchFetch(harness, req) {

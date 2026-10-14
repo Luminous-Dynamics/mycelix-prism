@@ -19,6 +19,7 @@ use prism_search::SearchEngine;
 // framed content escape this sandbox. Origin storage/cookies may therefore
 // be unavailable to sites loaded in Full Page mode.
 const FULLPAGE_IFRAME_SANDBOX: &str = "allow-scripts allow-forms allow-popups";
+const FULLPAGE_IFRAME_REFERRER_POLICY: &str = "no-referrer";
 
 #[component]
 pub fn ContentRouter() -> impl IntoView {
@@ -73,6 +74,7 @@ pub fn ContentRouter() -> impl IntoView {
                             class="fullpage-iframe"
                             src=url.clone()
                             sandbox=FULLPAGE_IFRAME_SANDBOX
+                            referrerpolicy=FULLPAGE_IFRAME_REFERRER_POLICY
                         ></iframe>
                         <EpistemicDrawer url=url_display />
                     </div>
@@ -464,7 +466,7 @@ fn EpistemicDrawer(url: String) -> impl IntoView {
 
 #[cfg(test)]
 mod iframe_sandbox_tests {
-    use super::FULLPAGE_IFRAME_SANDBOX;
+    use super::{FULLPAGE_IFRAME_REFERRER_POLICY, FULLPAGE_IFRAME_SANDBOX};
 
     #[test]
     fn fullpage_iframe_has_an_explicit_minimal_sandbox_allowlist() {
@@ -479,5 +481,10 @@ mod iframe_sandbox_tests {
         assert!(!tokens.contains(&"allow-popups-to-escape-sandbox"));
         assert!(!tokens.contains(&"allow-top-navigation"));
         assert!(!tokens.contains(&"allow-top-navigation-by-user-activation"));
+    }
+
+    #[test]
+    fn fullpage_iframe_does_not_send_a_referrer_to_external_sites() {
+        assert_eq!(FULLPAGE_IFRAME_REFERRER_POLICY, "no-referrer");
     }
 }

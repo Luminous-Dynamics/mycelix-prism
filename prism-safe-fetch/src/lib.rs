@@ -825,6 +825,28 @@ mod tests {
     }
 
     #[test]
+    fn rejects_recent_iana_ipv6_special_purpose_ranges_before_pinning() {
+        // These assignments are outside ordinary public GUA and must stay
+        // denied by the fetch boundary, including the 2025 Dummy IPv6 Prefix
+        // and the SRv6 SID block in the current IANA registry.
+        for raw in [
+            "100::1",             // discard-only
+            "100:0:0:1::1",       // Dummy IPv6 Prefix (RFC 9780)
+            "64:ff9b:1::1",       // local-use IPv4/IPv6 translation
+            "5f00::1",            // SRv6 SIDs
+        ] {
+            let address: IpAddr = raw.parse().expect("valid IPv6 registry fixture");
+            assert!(
+                matches!(
+                    pinned_addrs_from_ips([address]),
+                    Err(SafeFetchError::Policy(_))
+                ),
+                "special-purpose destination {raw} must not be pinned"
+            );
+        }
+    }
+
+    #[test]
     fn pins_unique_public_answers_only() {
         let answers = vec![
             "1.1.1.1".parse().unwrap(),

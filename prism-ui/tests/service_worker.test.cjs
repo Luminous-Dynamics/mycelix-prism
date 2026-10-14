@@ -93,10 +93,10 @@ function makeHarness({ initialCaches = {}, fetchImpl = async () => makeResponse(
           puts.push({ name, url: key });
           store.set(key, response.clone ? response.clone() : response);
         },
-        async delete(input) {
+        async delete(input, options = {}) {
           const key = requestKey(input);
           const existed = store.delete(key);
-          deletedEntries.push({ name, url: key, existed });
+          deletedEntries.push({ name, url: key, existed, options });
           return existed;
         },
       };
@@ -287,6 +287,8 @@ test('query-bearing static URLs bypass cache lookup and insertion', async () => 
   const event = dispatchFetch(harness, request(queryUrl));
   assert.equal((await event.responsePromise).label, 'fresh network response');
   assert.deepEqual(harness.puts, []);
+  const purge = harness.deletedEntries.find((entry) => entry.url === new URL(queryUrl, ORIGIN).href);
+  assert.equal(purge?.options?.ignoreVary, true, 'query-bearing URLs must purge every exact-URL Vary variant');
   assert.equal(
     harness.stores.get('mycelix-prism-v4').has(new URL(queryUrl, ORIGIN).href),
     false,
@@ -327,6 +329,12 @@ test('authorization and explicit cache-bypass directives skip existing entries',
       harness.stores.get('mycelix-prism-v4').has(new URL(path, ORIGIN).href),
       false,
       `${name} request must purge its prior cache entry`,
+    );
+    const purge = harness.deletedEntries.find((entry) => entry.url === new URL(path, ORIGIN).href);
+    assert.equal(
+      purge?.options?.ignoreVary,
+      true,
+      `${name} request must purge the URL across prior Vary variants`,
     );
   }
 });
@@ -444,6 +452,8 @@ test('new no-store policy removes an older cached mutable asset', async () => {
   const event = dispatchFetch(harness, request(path));
   assert.equal((await event.responsePromise).label, 'fresh non-cacheable icon');
   assert.equal(harness.stores.get('mycelix-prism-v4').has(new URL(path, ORIGIN).href), false);
+  const purge = harness.deletedEntries.find((entry) => entry.url === new URL(path, ORIGIN).href);
+  assert.equal(purge?.options?.ignoreVary, true, 'origin privacy changes must purge every Vary variant');
 });
 
 test('mutable static assets fall back to cache only after network failure', async () => {

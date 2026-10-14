@@ -742,4 +742,16 @@ mod proxy_url_tests {
             "proxy encoding must not decode plus signs or normalize percent escapes"
         );
     }
+
+    #[test]
+    fn proxy_url_preserves_duplicate_and_empty_destination_parameters() {
+        let target = "https://example.com/path?x=1&x=2&empty=&flag#route";
+        let proxy = url::Url::parse(&format!("https://prism.example{}", proxy_url(target)))
+            .expect("proxy URL should be valid");
+        let pairs: Vec<_> = proxy.query_pairs().collect();
+
+        assert_eq!(pairs.len(), 1, "all destination parameters must remain nested");
+        assert_eq!(pairs[0].0, "url");
+        assert_eq!(pairs[0].1, target);
+    }
 }

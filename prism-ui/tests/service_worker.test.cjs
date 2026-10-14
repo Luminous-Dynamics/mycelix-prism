@@ -472,6 +472,20 @@ test('content-addressed assets remain cache-first for performance', async () => 
 });
 
 
+test('shared-cache s-maxage does not override expired Expires in private CacheStorage', async () => {
+  const harness = makeHarness({
+    initialCaches: { 'mycelix-prism-v4': {} },
+    fetchImpl: async () => makeResponse('expired legacy response', true, {
+      'Cache-Control': 'public, s-maxage=600',
+      Expires: 'Thu, 01 Jan 1970 00:00:00 GMT',
+    }),
+  });
+
+  const event = dispatchFetch(harness, request('/static/legacy-expired.js'));
+  assert.equal((await event.responsePromise).label, 'expired legacy response');
+  assert.deepEqual(harness.puts, [], 'shared-cache freshness must not override Expires here');
+});
+
 test('explicit Cache-Control lifetime takes precedence over legacy Expires', async () => {
   const harness = makeHarness({
     initialCaches: { 'mycelix-prism-v4': {} },

@@ -9,7 +9,7 @@
 //! - F: Reader mode — constrained content width, comfortable typography
 
 use prism_dom::{DomTree, NodeData, NodeId};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // ═══════════════════════════════════════════════════════════════════════
 // PUBLIC TYPES
@@ -249,102 +249,197 @@ enum Block {
     Spacer(f32),
 }
 
+/// Iterative work items for DOM-to-layout flattening.
+///
+/// Child cursors keep pending traversal work proportional to nesting depth
+/// rather than eagerly allocating one work item for every sibling.
+enum FlattenAction {
+    Visit {
+        node_id: NodeId,
+        parent_style: TextStyle,
+        runs_scope: usize,
+    },
+    VisitChildren {
+        parent_id: NodeId,
+        next_child: usize,
+        child_style: TextStyle,
+        runs_scope: usize,
+    },
+    FinishBlock {
+        runs_scope: usize,
+        margin_top: f32,
+        margin_bottom: f32,
+    },
+}
+
 /// Flatten a DOM tree into a sequence of blocks with styled text runs.
+///
+/// Use an explicit work stack rather than recursion: web documents are
+/// untrusted, and deeply nested inline markup must not exhaust the call stack.
+/// Each arena node is visited at most once to make malformed cycles or repeated
+/// child links terminate without repeatedly processing the same subtree.
 fn flatten_dom(dom: &DomTree, config: &LayoutConfig) -> Vec<Block> {
     let Some(root) = dom.root() else {
         return vec![];
     };
+
     let mut blocks = Vec::new();
     let body_style = TextStyle::body(config);
-    flatten_node(dom, root, &body_style, config, &mut blocks, &mut Vec::new());
+    let mut run_scopes: Vec<Vec<TextRun>> = vec![Vec::new()];
+    let mut visited = HashSet::new();
+    let mut work = vec![FlattenAction::Visit {
+        node_id: root,
+        parent_style: body_style,
+        runs_scope: 0,
+    }];
 
-    // Flush any remaining inline runs
-    // (handled inside flatten_node)
-    blocks
-}
-
-fn flatten_node(
-    dom: &DomTree,
-    node_id: NodeId,
-    parent_style: &TextStyle,
-    config: &LayoutConfig,
-    blocks: &mut Vec<Block>,
-    current_runs: &mut Vec<TextRun>,
-) {
-    let Some(node) = dom.get(node_id) else { return };
-
-    match &node.data {
-        NodeData::Text(text) => {
-            let trimmed = text.split_whitespace().collect::<Vec<_>>().join(" ");
-            if !trimmed.is_empty() {
-                current_runs.push(TextRun {
-                    text: trimmed,
-                    style: parent_style.clone(),
-                });
+    while let Some(action) = work.pop() {
+        match action {
+            FlattenAction::FinishBlock {
+                runs_scope,
+                margin_top,
+                margin_bottom,
+            } => {
+                let mut child_runs = run_scopes
+                    .pop()
+                    .expect("layout block run scopes must remain balanced");
+                debug_assert_eq!(runs_scope, run_scopes.len());
+                flush_paragraph(&mut child_runs, &mut blocks, margin_top, margin_bottom);
             }
-        }
-        NodeData::Element(el) => {
-            let tag = el.tag.as_str();
-            if matches!(
-                tag,
-                "script" | "style" | "noscript" | "head" | "template" | "meta" | "link" | "title"
-            ) {
-                return;
-            }
-
-            let style = style_for_tag(tag, parent_style, config, &el.attributes);
-
-            if tag == "hr" {
-                flush_paragraph(current_runs, blocks, 8.0, 8.0);
-                blocks.push(Block::Rule);
-                return;
-            }
-
-            if tag == "br" {
-                // Force line break within current paragraph
-                current_runs.push(TextRun {
-                    text: "\n".to_string(),
-                    style: style.clone(),
-                });
-                return;
-            }
-
-            // Block elements flush the current inline accumulator
-            if style.is_block {
-                flush_paragraph(current_runs, blocks, 0.0, 0.0);
-
-                // Margins for block elements
-                let (mt, mb) = block_margins(tag, &style);
-
-                let mut child_runs = Vec::new();
-
-                // Add list marker if present
-                if let Some(marker) = style.list_marker {
-                    child_runs.push(TextRun {
-                        text: marker.to_string(),
-                        style: style.clone(),
+            FlattenAction::VisitChildren {
+                parent_id,
+                next_child,
+                child_style,
+                runs_scope,
+            } => {
+                let Some(parent) = dom.get(parent_id) else {
+                    continue;
+                };
+                if next_child < parent.children.len() {
+                    let child_id = parent.children[next_child];
+                    work.push(FlattenAction::VisitChildren {
+                        parent_id,
+                        next_child: next_child + 1,
+                        child_style: child_style.clone(),
+                        runs_scope,
+                    });
+                    work.push(FlattenAction::Visit {
+                        node_id: child_id,
+                        parent_style: child_style,
+                        runs_scope,
                     });
                 }
-
-                for &child_id in &node.children {
-                    flatten_node(dom, child_id, &style, config, blocks, &mut child_runs);
+            }
+            FlattenAction::Visit {
+                node_id,
+                parent_style,
+                runs_scope,
+            } => {
+                if !visited.insert(node_id) {
+                    continue;
                 }
+                let Some(node) = dom.get(node_id) else {
+                    continue;
+                };
 
-                flush_paragraph(&mut child_runs, blocks, mt, mb);
-            } else {
-                // Inline elements: just change style, keep accumulating into current runs
-                for &child_id in &node.children {
-                    flatten_node(dom, child_id, &style, config, blocks, current_runs);
+                match &node.data {
+                    NodeData::Text(text) => {
+                        let trimmed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                        if !trimmed.is_empty() {
+                            run_scopes[runs_scope].push(TextRun {
+                                text: trimmed,
+                                style: parent_style,
+                            });
+                        }
+                    }
+                    NodeData::Element(el) => {
+                        let tag = el.tag.as_str();
+                        if matches!(
+                            tag,
+                            "script" | "style" | "noscript" | "head" | "template" | "meta" | "link" | "title"
+                        ) {
+                            continue;
+                        }
+
+                        let style = style_for_tag(tag, &parent_style, config, &el.attributes);
+
+                        if tag == "hr" {
+                            flush_paragraph(
+                                &mut run_scopes[runs_scope],
+                                &mut blocks,
+                                8.0,
+                                8.0,
+                            );
+                            blocks.push(Block::Rule);
+                            continue;
+                        }
+
+                        if tag == "br" {
+                            run_scopes[runs_scope].push(TextRun {
+                                text: "\n".to_string(),
+                                style: style.clone(),
+                            });
+                            continue;
+                        }
+
+                        if style.is_block {
+                            flush_paragraph(
+                                &mut run_scopes[runs_scope],
+                                &mut blocks,
+                                0.0,
+                                0.0,
+                            );
+                            let (margin_top, margin_bottom) = block_margins(tag, &style);
+                            let child_scope = run_scopes.len();
+                            let mut child_runs = Vec::new();
+
+                            if let Some(marker) = style.list_marker {
+                                child_runs.push(TextRun {
+                                    text: marker.to_string(),
+                                    style: style.clone(),
+                                });
+                            }
+
+                            run_scopes.push(child_runs);
+                            work.push(FlattenAction::FinishBlock {
+                                runs_scope: child_scope,
+                                margin_top,
+                                margin_bottom,
+                            });
+                            work.push(FlattenAction::VisitChildren {
+                                parent_id: node_id,
+                                next_child: 0,
+                                child_style: style,
+                                runs_scope: child_scope,
+                            });
+                        } else {
+                            work.push(FlattenAction::VisitChildren {
+                                parent_id: node_id,
+                                next_child: 0,
+                                child_style: style,
+                                runs_scope,
+                            });
+                        }
+                    }
+                    NodeData::Document => {
+                        work.push(FlattenAction::VisitChildren {
+                            parent_id: node_id,
+                            next_child: 0,
+                            child_style: parent_style,
+                            runs_scope,
+                        });
+                    }
+                    _ => {}
                 }
             }
         }
-        NodeData::Document => {
-            for &child_id in &node.children {
-                flatten_node(dom, child_id, parent_style, config, blocks, current_runs);
-            }
-        }
-        _ => {}
     }
+
+    // Preserve trailing inline content after the last block.
+    if let Some(root_runs) = run_scopes.first_mut() {
+        flush_paragraph(root_runs, &mut blocks, 0.0, 0.0);
+    }
+    blocks
 }
 
 fn flush_paragraph(runs: &mut Vec<TextRun>, blocks: &mut Vec<Block>, mt: f32, mb: f32) {
@@ -538,6 +633,61 @@ mod tests {
             |r| matches!(&r.content, PaintContent::Text { text, .. } if text.contains("Title")),
         );
         assert!(has_title, "Should find Title text");
+    }
+
+    #[test]
+    fn layout_handles_deep_inline_dom_without_call_stack_growth() {
+        const DEPTH: usize = 20_000;
+        // Parse only a shallow shell, then build the depth directly so this
+        // regression isolates layout traversal from HTML parser behavior.
+        let mut dom = parse_html("<html><body><p><span></span></p></body></html>");
+        let first_span = *dom.find_by_tag("span").first().expect("fixture has a span");
+        let span_data = dom.get(first_span).expect("span exists").data.clone();
+        let mut parent = first_span;
+        for _ in 0..DEPTH {
+            let child = dom.new_node(span_data.clone());
+            dom.append_child(parent, child);
+            parent = child;
+        }
+        let text = dom.new_node(NodeData::Text("deep layout".to_string()));
+        dom.append_child(parent, text);
+
+        let rects = layout_dom(&dom, 800.0, 600.0);
+        assert!(
+            rects.iter().any(
+                |r| matches!(&r.content, PaintContent::Text { text, .. } if text.contains("deep layout"))
+            ),
+            "deep inline text should survive layout"
+        );
+    }
+
+    #[test]
+    fn layout_terminates_on_malformed_dom_cycles() {
+        let mut dom = parse_html("<html><body><div>cycle-safe</div></body></html>");
+        let div = *dom.find_by_tag("div").first().expect("fixture has a div");
+        dom.get_mut(div).expect("div exists").children.push(div);
+
+        let rects = layout_dom(&dom, 800.0, 600.0);
+        assert!(
+            rects.iter().any(
+                |r| matches!(&r.content, PaintContent::Text { text, .. } if text.contains("cycle-safe"))
+            ),
+            "valid text should remain laid out even when a child cycle exists"
+        );
+    }
+
+    #[test]
+    fn layout_preserves_trailing_inline_text_after_a_block() {
+        let dom = parse_html(
+            "<html><body><p>Block content</p><span>Trailing inline content</span></body></html>",
+        );
+        let rects = layout_dom(&dom, 800.0, 600.0);
+        assert!(
+            rects.iter().any(
+                |r| matches!(&r.content, PaintContent::Text { text, .. } if text.contains("Trailing inline content"))
+            ),
+            "inline text after the final block must be flushed into layout output"
+        );
     }
 
     #[test]

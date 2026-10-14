@@ -4,6 +4,7 @@
 //! Arena-based DOM tree.
 
 use crate::node::{Node, NodeData, NodeId};
+use std::collections::HashSet;
 
 /// Arena-based DOM tree. All nodes are stored in a flat `Vec`; relationships
 /// are expressed via `NodeId` indices. This avoids reference counting and
@@ -99,55 +100,92 @@ impl DomTree {
         text
     }
 
-    fn collect_text(&self, node_id: NodeId, buf: &mut String) {
-        let node = &self.nodes[node_id.0];
-        match &node.data {
-            NodeData::Text(t) => {
-                if !t.trim().is_empty() {
+    fn collect_text(&self, root: NodeId, buf: &mut String) {
+        // Cursor frames keep pending work proportional to depth rather than
+        // to the number of siblings. The visited set bounds repeated/cyclic
+        // malformed links by processing each arena node at most once.
+        let mut stack = vec![(root, 0usize)];
+        let mut visited = HashSet::new();
+
+        while let Some((node_id, next_child)) = stack.pop() {
+            let Some(node) = self.get(node_id) else {
+                continue;
+            };
+
+            if next_child == 0 {
+                if !visited.insert(node_id) {
+                    // A repeated edge or cycle must not revisit this node.
+                    continue;
+                }
+                if let NodeData::Text(text) = &node.data
+                    && !text.trim().is_empty()
+                {
                     if !buf.is_empty() {
                         buf.push(' ');
                     }
-                    buf.push_str(t.trim());
+                    buf.push_str(text.trim());
                 }
             }
-            NodeData::Element(el) => {
-                // Skip invisible elements
-                let tag = el.tag.as_str();
-                if matches!(tag, "script" | "style" | "noscript" | "svg" | "template") {
-                    return;
+
+            let child_count = match &node.data {
+                NodeData::Element(el)
+                    if !matches!(
+                        el.tag.as_str(),
+                        "script" | "style" | "noscript" | "svg" | "template"
+                    ) =>
+                {
+                    node.children.len()
                 }
-                for &child_id in &node.children {
-                    self.collect_text(child_id, buf);
-                }
+                NodeData::Document => node.children.len(),
+                _ => 0,
+            };
+
+            if next_child < child_count {
+                let child_id = node.children[next_child];
+                stack.push((node_id, next_child + 1));
+                stack.push((child_id, 0));
             }
-            NodeData::Document => {
-                for &child_id in &node.children {
-                    self.collect_text(child_id, buf);
-                }
-            }
-            _ => {}
         }
     }
 
     /// Find all elements matching a tag name.
     pub fn find_by_tag(&self, tag: &str) -> Vec<NodeId> {
-        let mut results = Vec::new();
-        if let Some(root) = self.root {
-            self.find_by_tag_recursive(root, tag, &mut results);
-        }
-        results
-    }
+        let Some(root) = self.root else {
+            return Vec::new();
+        };
 
-    fn find_by_tag_recursive(&self, node_id: NodeId, tag: &str, results: &mut Vec<NodeId>) {
-        let node = &self.nodes[node_id.0];
-        if let NodeData::Element(el) = &node.data
-            && el.tag == tag
-        {
-            results.push(node_id);
+        // Cursor frames preserve depth-first, document-order results while
+        // keeping pending work proportional to depth. A visited set prevents
+        // repeated or cyclic links from revisiting the same arena node.
+        let mut results = Vec::new();
+        let mut stack = vec![(root, 0usize)];
+        let mut visited = HashSet::new();
+
+        while let Some((node_id, next_child)) = stack.pop() {
+            let Some(node) = self.get(node_id) else {
+                continue;
+            };
+
+            if next_child == 0 {
+                if !visited.insert(node_id) {
+                    // A repeated edge or cycle must not revisit this node.
+                    continue;
+                }
+                if let NodeData::Element(el) = &node.data
+                    && el.tag == tag
+                {
+                    results.push(node_id);
+                }
+            }
+
+            if next_child < node.children.len() {
+                let child_id = node.children[next_child];
+                stack.push((node_id, next_child + 1));
+                stack.push((child_id, 0));
+            }
         }
-        for &child_id in &node.children {
-            self.find_by_tag_recursive(child_id, tag, results);
-        }
+
+        results
     }
 
     /// Check if the document contains any password input fields.
@@ -214,6 +252,80 @@ mod tests {
 
     fn make_text(tree: &mut DomTree, text: &str) -> NodeId {
         tree.new_node(NodeData::Text(text.to_string()))
+    }
+
+    #[test]
+    fn iterative_tree_walkers_handle_deep_dom_without_call_stack_growth() {
+        const DEPTH: usize = 20_000;
+        let mut tree = DomTree::new();
+        let document = tree.new_node(NodeData::Document);
+        tree.set_root(document);
+
+        let mut parent = document;
+        for _ in 0..DEPTH {
+            let child = make_element(&mut tree, "div");
+            tree.append_child(parent, child);
+            parent = child;
+        }
+        let text = make_text(&mut tree, "deep content");
+        tree.append_child(parent, text);
+
+        assert_eq!(tree.find_by_tag("div").len(), DEPTH);
+        assert_eq!(tree.extract_visible_text(), "deep content");
+    }
+
+    #[test]
+    fn iterative_tree_walkers_terminate_on_repeated_child_links() {
+        let mut tree = DomTree::new();
+        let document = tree.new_node(NodeData::Document);
+        tree.set_root(document);
+        let div = make_element(&mut tree, "div");
+        tree.append_child(document, div);
+
+        // Public node access permits callers to construct a malformed cycle.
+        tree.get_mut(div).unwrap().children.push(div);
+
+        assert_eq!(tree.find_by_tag("div"), vec![div]);
+        assert_eq!(tree.extract_visible_text(), "");
+    }
+
+    #[test]
+    fn iterative_tree_walkers_visit_repeated_child_links_once() {
+        let mut tree = DomTree::new();
+        let document = tree.new_node(NodeData::Document);
+        tree.set_root(document);
+        let div = make_element(&mut tree, "div");
+        tree.append_child(document, div);
+        let span = make_element(&mut tree, "span");
+        tree.append_child(div, span);
+        let text = make_text(&mut tree, "shared once");
+        tree.append_child(span, text);
+
+        // A malformed graph can list one arena node more than once without a cycle.
+        tree.get_mut(div).unwrap().children.push(span);
+
+        assert_eq!(tree.find_by_tag("span"), vec![span]);
+        assert_eq!(tree.extract_visible_text(), "shared once");
+    }
+
+    #[test]
+    fn iterative_tree_walkers_ignore_out_of_range_child_ids() {
+        let mut tree = DomTree::new();
+        let document = tree.new_node(NodeData::Document);
+        tree.set_root(document);
+        let div = make_element(&mut tree, "div");
+        tree.append_child(document, div);
+        let text = make_text(&mut tree, "valid content");
+        tree.append_child(div, text);
+
+        // Public mutable node access can also introduce a dangling arena handle.
+        tree.get_mut(div)
+            .unwrap()
+            .children
+            .push(NodeId(usize::MAX));
+
+        assert_eq!(tree.find_by_tag("div"), vec![div]);
+        assert_eq!(tree.extract_visible_text(), "valid content");
     }
 
     #[test]

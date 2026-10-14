@@ -726,4 +726,20 @@ mod proxy_url_tests {
             "https://cdn.example/image.png?width=400&quality=80"
         );
     }
+
+    #[test]
+    fn proxy_url_round_trips_percent_escapes_and_literal_plus_signs() {
+        let target = "https://example.com/search?q=a+b&path=%2Fdocs%3F&literal=%2526&space=a%20b";
+        let proxy = url::Url::parse(&format!("https://prism.example{}", proxy_url(target)))
+            .expect("proxy URL should be valid");
+        let pairs: Vec<_> = proxy.query_pairs().collect();
+
+        assert_eq!(pairs.len(), 1, "escaped destination must remain one parameter");
+        assert_eq!(pairs[0].0, "url");
+        assert_eq!(
+            pairs[0].1,
+            target,
+            "proxy encoding must not decode plus signs or normalize percent escapes"
+        );
+    }
 }

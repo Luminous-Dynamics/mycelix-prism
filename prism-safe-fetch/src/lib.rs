@@ -69,8 +69,7 @@ pub const PROXY_CONTENT_SECURITY_POLICY: &str = "default-src 'none'; sandbox";
 /// Force active document formats to download on top-level navigation. The
 /// generic proxy is also used for image subresources; ordinary raster-image
 /// types therefore remain inline-compatible.
-pub const PROXY_CONTENT_DISPOSITION: &str =
-    "attachment; filename=\"prism-proxy-content\"";
+pub const PROXY_CONTENT_DISPOSITION: &str = "attachment; filename=\"prism-proxy-content\"";
 
 /// Only known passive raster-image formats may be displayed inline by the
 /// generic proxy. Everything else (including unknown types, HTML/XML/SVG, text,

@@ -50,8 +50,11 @@ function shouldBypassStaticCache(request, url) {
 
 function isContentAddressedStaticAsset(url) {
   const filename = url.pathname.split('/').pop() || '';
-  // Require a hexadecimal fingerprint segment, not merely a long filename.
-  return /(?:^|[-_.])[a-f0-9]{6,}(?:[-_.]|$)/i.test(filename);
+  // Prefer cache speed only for a fingerprint-like segment with both hex
+  // letters and digits. Words such as "facade" are hexadecimal too, but are
+  // not content hashes; false negatives cost performance, false positives serve stale code.
+  const fingerprint = filename.match(/(?:^|[-_.])([a-f0-9]{8,})(?:[-_.]|$)/i)?.[1];
+  return Boolean(fingerprint && /[a-f]/i.test(fingerprint) && /[0-9]/.test(fingerprint));
 }
 
 function shouldCacheStaticResponse(response, requestUrl) {

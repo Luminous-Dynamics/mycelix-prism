@@ -472,6 +472,28 @@ test('content-addressed assets remain cache-first for performance', async () => 
 });
 
 
+test('hex-like ordinary filenames do not get cache-first treatment', async () => {
+  for (const path of ['/static/prism-facade.js', '/static/prism-feedface.js']) {
+    const harness = makeHarness({
+      initialCaches: {
+        'mycelix-prism-v4': {
+          [path]: makeResponse('stale cached script'),
+        },
+      },
+      fetchImpl: async () => makeResponse('fresh network script'),
+    });
+
+    const event = dispatchFetch(harness, request(path));
+    assert.equal((await event.responsePromise).label, 'fresh network script', path);
+    assert.deepEqual(harness.fetched, [new URL(path, ORIGIN).href], path);
+    assert.equal(
+      harness.stores.get('mycelix-prism-v4').get(new URL(path, ORIGIN).href).label,
+      'fresh network script',
+      path,
+    );
+  }
+});
+
 test('shared-cache s-maxage does not override expired Expires in private CacheStorage', async () => {
   const harness = makeHarness({
     initialCaches: { 'mycelix-prism-v4': {} },

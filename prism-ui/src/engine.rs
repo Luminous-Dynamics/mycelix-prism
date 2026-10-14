@@ -762,7 +762,7 @@ mod fullpage_zone_tests {
     }
 
     #[test]
-    fn blocked_pre_fetch_verdict_rejects_both_navigation_modes() {
+    fn blocked_pre_fetch_verdict_produces_a_fail_closed_message() {
         let blocked = PreFetchVerdict {
             zone: ContentZone::Private,
             blocked: true,

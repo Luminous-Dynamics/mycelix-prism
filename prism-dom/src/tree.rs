@@ -309,6 +309,26 @@ mod tests {
     }
 
     #[test]
+    fn iterative_tree_walkers_ignore_out_of_range_child_ids() {
+        let mut tree = DomTree::new();
+        let document = tree.new_node(NodeData::Document);
+        tree.set_root(document);
+        let div = make_element(&mut tree, "div");
+        tree.append_child(document, div);
+        let text = make_text(&mut tree, "valid content");
+        tree.append_child(div, text);
+
+        // Public mutable node access can also introduce a dangling arena handle.
+        tree.get_mut(div)
+            .unwrap()
+            .children
+            .push(NodeId(usize::MAX));
+
+        assert_eq!(tree.find_by_tag("div"), vec![div]);
+        assert_eq!(tree.extract_visible_text(), "valid content");
+    }
+
+    #[test]
     fn extract_visible_text_skips_script() {
         let mut tree = DomTree::new();
         let doc = tree.new_node(NodeData::Document);

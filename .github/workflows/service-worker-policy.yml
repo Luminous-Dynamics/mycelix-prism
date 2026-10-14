@@ -2,7 +2,7 @@ name: Service worker isolation tests
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'ci/**']
     paths:
       - '.github/workflows/service-worker-policy.yml'
       - 'prism-ui/static/sw.js'

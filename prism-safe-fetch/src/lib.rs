@@ -26,6 +26,13 @@ const DNS_TIMEOUT: Duration = Duration::from_secs(5);
 pub enum SafeFetchError {
     Policy(String),
     Request(String),
+    /// An upstream HTTP exchange or DNS resolution exceeded its deadline.
+    Timeout,
+    /// A redirect was rejected by policy. The number is the redirect hop being
+    /// rejected, starting at 1; no target URL or Location value is retained.
+    RedirectRejected {
+        hop: usize,
+    },
     TooLarge,
 }
 
@@ -33,6 +40,10 @@ impl std::fmt::Display for SafeFetchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Policy(message) | Self::Request(message) => f.write_str(message),
+            Self::Timeout => f.write_str("upstream request timed out"),
+            Self::RedirectRejected { hop } => {
+                write!(f, "redirect rejected by policy at hop {hop}")
+            }
             Self::TooLarge => f.write_str("response exceeds configured byte limit"),
         }
     }
@@ -46,6 +57,8 @@ pub struct FetchedResponse {
     pub content_type: String,
     pub body: Vec<u8>,
     pub final_url: Url,
+    /// Number of redirect hops validated and followed before the final response.
+    pub redirect_count: usize,
 }
 
 /// Validate a set of DNS answers and return pinned socket addresses.
@@ -84,7 +97,7 @@ where
 async fn resolve_public_host(host: &str, port: u16) -> Result<Vec<SocketAddr>, SafeFetchError> {
     let resolved = tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host((host, port)))
         .await
-        .map_err(|_| SafeFetchError::Policy("hostname resolution timed out".into()))?
+        .map_err(|_| SafeFetchError::Timeout)?
         .map_err(|_| SafeFetchError::Policy("hostname resolution failed".into()))?;
 
     pinned_addrs_from_ips(resolved.map(|address| address.ip()))
@@ -253,11 +266,13 @@ pub async fn read_limited_body(
         .unwrap_or(0);
     let mut body = Vec::with_capacity(initial_capacity);
 
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| SafeFetchError::Request("failed while reading response body".into()))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        if error.is_timeout() {
+            SafeFetchError::Timeout
+        } else {
+            SafeFetchError::Request("failed while reading response body".into())
+        }
+    })? {
         append_limited_chunk(&mut body, &chunk, max_bytes)?;
     }
 
@@ -298,28 +313,40 @@ async fn fetch_public_get_with_resolver(
     let validated = validate_proxy_url(initial_url.as_str())
         .map_err(|reason| SafeFetchError::Policy(reason.to_string()))?;
     let mut current = normalize_domain_host(validated)?;
+    let mut redirect_count = 0usize;
 
     for hop in 0..=max_redirects {
-        let client = client_for_url(&current, user_agent, timeout, resolver).await?;
-        let response = client
-            .get(current.clone())
-            .send()
-            .await
-            .map_err(|_| SafeFetchError::Request("upstream request failed".into()))?;
+        let client = match client_for_url(&current, user_agent, timeout, resolver).await {
+            Ok(client) => client,
+            Err(SafeFetchError::Policy(_)) if hop > 0 => {
+                // The current hostname was introduced by a redirect, so DNS
+                // policy failures belong to that redirect hop.
+                return Err(SafeFetchError::RedirectRejected { hop });
+            }
+            Err(error) => return Err(error),
+        };
+        let response = client.get(current.clone()).send().await.map_err(|error| {
+            if error.is_timeout() {
+                SafeFetchError::Timeout
+            } else {
+                SafeFetchError::Request("upstream request failed".into())
+            }
+        })?;
 
         if is_redirect(response.status()) {
+            let rejected_hop = hop + 1;
             if hop == max_redirects {
-                return Err(SafeFetchError::Policy("redirect hop limit exceeded".into()));
+                return Err(SafeFetchError::RedirectRejected { hop: rejected_hop });
             }
             let location = response
                 .headers()
                 .get(LOCATION)
                 .and_then(|value| value.to_str().ok())
-                .ok_or_else(|| {
-                    SafeFetchError::Policy("redirect response lacked a valid Location".into())
-                })?
+                .ok_or(SafeFetchError::RedirectRejected { hop: rejected_hop })?
                 .to_string();
-            current = validate_redirect_target(&current, &location)?;
+            current = validate_redirect_target(&current, &location)
+                .map_err(|_| SafeFetchError::RedirectRejected { hop: rejected_hop })?;
+            redirect_count = redirect_count.saturating_add(1);
             // Drop this response without reading its body; the next hop gets
             // a newly resolved and pinned client before any outbound request.
             drop(response);
@@ -340,10 +367,13 @@ async fn fetch_public_get_with_resolver(
             content_type,
             body,
             final_url: current,
+            redirect_count,
         });
     }
 
-    Err(SafeFetchError::Policy("redirect hop limit exceeded".into()))
+    Err(SafeFetchError::RedirectRejected {
+        hop: max_redirects.saturating_add(1),
+    })
 }
 
 #[cfg(test)]
@@ -539,6 +569,10 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(response.body, b"ok");
         assert_eq!(response.final_url.host_str(), Some("target.example.com"));
+        assert_eq!(
+            response.redirect_count, 1,
+            "one validated redirect should be counted"
+        );
         let seen = resolver.seen();
         assert_eq!(
             seen,
@@ -638,8 +672,8 @@ mod tests {
         .await;
 
         assert!(
-            matches!(result, Err(SafeFetchError::Policy(_))),
-            "a public origin must not redirect the proxy to loopback"
+            matches!(result, Err(SafeFetchError::RedirectRejected { hop: 1 })),
+            "a public origin must not redirect the proxy to loopback; rejection must carry the hop number"
         );
         assert_eq!(
             resolver.seen(),
@@ -653,6 +687,74 @@ mod tests {
             "the private redirect target must receive no connection"
         );
         origin_server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fetch_classifies_upstream_deadline_as_timeout() {
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                .await
+                .expect("client should connect to the local fixture")
+                .unwrap();
+            let _request = read_fixture_headers(&mut socket).await;
+            // Leave the response unanswered long enough for Reqwest's total
+            // deadline to expire. This fixture never contacts a public host.
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .await;
+        });
+
+        let resolver = FixtureResolver::new(HashMap::from([(
+            "timeout.example.com".to_string(),
+            vec![loopback_pin()],
+        )]));
+        let initial = Url::parse(&format!(
+            "http://timeout.example.com:{}/wait",
+            address.port()
+        ))
+        .unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            fetch_public_get_with_resolver(
+                initial,
+                "prism-safe-fetch-test",
+                Duration::from_millis(50),
+                32,
+                0,
+                &resolver,
+            ),
+        )
+        .await
+        .expect("fetch state machine should respect its shorter upstream timeout");
+
+        assert!(
+            matches!(result, Err(SafeFetchError::Timeout)),
+            "transport timeout must be distinguishable from an ordinary transport error"
+        );
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn timeout_error_has_a_bounded_non_sensitive_display() {
+        assert_eq!(
+            SafeFetchError::Timeout.to_string(),
+            "upstream request timed out"
+        );
+    }
+
+    #[test]
+    fn redirect_rejection_display_reports_only_the_numeric_hop() {
+        assert_eq!(
+            SafeFetchError::RedirectRejected { hop: 2 }.to_string(),
+            "redirect rejected by policy at hop 2"
+        );
     }
 
     #[test]

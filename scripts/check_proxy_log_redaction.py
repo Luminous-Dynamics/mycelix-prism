@@ -27,7 +27,9 @@ UPSTREAM_ERROR_ECHO_RE = re.compile(
 
 DEFAULT_FILES = (
     Path("prism-proxy/src/main.rs"),
+    Path("prism-proxy/src/quota_middleware.rs"),
     Path("prism-serve/src/main.rs"),
+    Path("prism-serve/src/quota_middleware.rs"),
 )
 
 

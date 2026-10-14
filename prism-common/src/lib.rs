@@ -8,6 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod client_quota;
 pub mod proxy_limits;
 pub mod ssrf;
 

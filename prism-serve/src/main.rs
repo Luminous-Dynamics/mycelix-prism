@@ -1,10 +1,13 @@
 // Copyright (C) 2024-2026 Tristan Stoltz / Luminous Dynamics
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Commercial licensing: see COMMERCIAL_LICENSE.md at repository root
+
 //! Unified Prism server: static files + CORS proxy on a single port.
 //!
 //! Serves the WASM app from dist/ and proxies external API requests,
 //! eliminating the need for a separate proxy service and port.
+
+mod quota_middleware;
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Query, State};
@@ -12,9 +15,11 @@ use axum::http::StatusCode;
 use axum::http::header::HeaderValue;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use prism_common::client_quota::{ClientQuotaState, parse_trusted_proxy_ips};
 use prism_common::proxy_limits::MAX_REQUEST_TARGET_BYTES;
 use prism_common::ssrf::validate_proxy_url;
 use prism_safe_fetch::{SafeFetchError, fetch_public_get, read_limited_body};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -111,21 +116,42 @@ async fn proxy_handler(Query(params): Query<ProxyParams>) -> impl IntoResponse {
     )
     .await
     {
-        Ok(fetched) => axum::response::Response::builder()
-            .status(fetched.status)
-            .header("content-type", fetched.content_type)
-            .header("x-prism-proxied", "true")
-            .body(axum::body::Body::from(fetched.body))
-            .unwrap_or_else(|_| internal_error_response())
-            .into_response(),
+        Ok(fetched) => {
+            let response_bytes = fetched.body.len();
+            log::info!(
+                "Proxy fetch completed: status={} response_bytes={} redirects={}",
+                fetched.status,
+                response_bytes,
+                fetched.redirect_count
+            );
+            axum::response::Response::builder()
+                .status(fetched.status)
+                .header("content-type", fetched.content_type)
+                .header("x-prism-proxied", "true")
+                .body(axum::body::Body::from(fetched.body))
+                .unwrap_or_else(|_| internal_error_response())
+                .into_response()
+        }
         Err(SafeFetchError::TooLarge) => {
+            log::warn!("Proxy fetch failed: reason=response_too_large");
             (StatusCode::PAYLOAD_TOO_LARGE, "Response too large").into_response()
         }
-        Err(SafeFetchError::Policy(reason)) => {
-            log::warn!("Blocked proxy destination or redirect: {}", reason);
-            (StatusCode::FORBIDDEN, reason).into_response()
+        Err(SafeFetchError::Policy(_)) => {
+            log::warn!("Proxy fetch blocked: reason=destination_policy");
+            (StatusCode::FORBIDDEN, "Destination blocked by proxy policy").into_response()
         }
-        Err(SafeFetchError::Request(reason)) => (StatusCode::BAD_GATEWAY, reason).into_response(),
+        Err(SafeFetchError::RedirectRejected { hop }) => {
+            log::warn!("Proxy redirect rejected: reason=policy hop={}", hop);
+            (StatusCode::FORBIDDEN, "Redirect rejected by proxy policy").into_response()
+        }
+        Err(SafeFetchError::Timeout) => {
+            log::warn!("Proxy fetch failed: reason=upstream_timeout");
+            (StatusCode::GATEWAY_TIMEOUT, "Upstream request timed out").into_response()
+        }
+        Err(SafeFetchError::Request(_)) => {
+            log::warn!("Proxy fetch failed: reason=upstream_transport");
+            (StatusCode::BAD_GATEWAY, "Upstream request failed").into_response()
+        }
     }
 }
 
@@ -151,6 +177,7 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
     {
         Ok(resp) => {
             if resp.status().is_redirection() {
+                log::warn!("Provider redirect blocked: class=search reason=redirect_blocked");
                 return (
                     StatusCode::BAD_GATEWAY,
                     "Unexpected provider redirect blocked",
@@ -165,14 +192,27 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
                     .unwrap_or_else(|_| internal_error_response())
                     .into_response(),
                 Err(SafeFetchError::TooLarge) => {
+                    log::warn!("Provider response failed: class=search reason=response_too_large");
                     (StatusCode::PAYLOAD_TOO_LARGE, "Provider response too large").into_response()
                 }
+                Err(SafeFetchError::Timeout) => {
+                    log::warn!("Provider response failed: class=search reason=timeout");
+                    (StatusCode::GATEWAY_TIMEOUT, "Provider response timed out").into_response()
+                }
                 Err(_) => {
+                    log::warn!("Provider response failed: class=search reason=read_failure");
                     (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response()
                 }
             }
         }
-        Err(_) => (StatusCode::BAD_GATEWAY, "DuckDuckGo request failed").into_response(),
+        Err(error) if error.is_timeout() => {
+            log::warn!("Provider request failed: class=search reason=timeout");
+            (StatusCode::GATEWAY_TIMEOUT, "Provider request timed out").into_response()
+        }
+        Err(_) => {
+            log::warn!("Provider request failed: class=search reason=transport");
+            (StatusCode::BAD_GATEWAY, "DuckDuckGo request failed").into_response()
+        }
     }
 }
 
@@ -205,6 +245,7 @@ async fn brave_handler(
     {
         Ok(resp) => {
             if resp.status().is_redirection() {
+                log::warn!("Provider redirect blocked: class=search reason=redirect_blocked");
                 return (
                     StatusCode::BAD_GATEWAY,
                     "Unexpected provider redirect blocked",
@@ -220,14 +261,27 @@ async fn brave_handler(
                     .unwrap_or_else(|_| internal_error_response())
                     .into_response(),
                 Err(SafeFetchError::TooLarge) => {
+                    log::warn!("Provider response failed: class=search reason=response_too_large");
                     (StatusCode::PAYLOAD_TOO_LARGE, "Provider response too large").into_response()
                 }
+                Err(SafeFetchError::Timeout) => {
+                    log::warn!("Provider response failed: class=search reason=timeout");
+                    (StatusCode::GATEWAY_TIMEOUT, "Provider response timed out").into_response()
+                }
                 Err(_) => {
+                    log::warn!("Provider response failed: class=search reason=read_failure");
                     (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response()
                 }
             }
         }
-        Err(_) => (StatusCode::BAD_GATEWAY, "Brave request failed").into_response(),
+        Err(error) if error.is_timeout() => {
+            log::warn!("Provider request failed: class=search reason=timeout");
+            (StatusCode::GATEWAY_TIMEOUT, "Provider request timed out").into_response()
+        }
+        Err(_) => {
+            log::warn!("Provider request failed: class=search reason=transport");
+            (StatusCode::BAD_GATEWAY, "Brave request failed").into_response()
+        }
     }
 }
 
@@ -253,6 +307,7 @@ async fn perplexity_handler(
     {
         Ok(resp) => {
             if resp.status().is_redirection() {
+                log::warn!("Provider redirect blocked: class=provider reason=redirect_blocked");
                 return (
                     StatusCode::BAD_GATEWAY,
                     "Unexpected provider redirect blocked",
@@ -268,14 +323,29 @@ async fn perplexity_handler(
                     .unwrap_or_else(|_| internal_error_response())
                     .into_response(),
                 Err(SafeFetchError::TooLarge) => {
+                    log::warn!(
+                        "Provider response failed: class=provider reason=response_too_large"
+                    );
                     (StatusCode::PAYLOAD_TOO_LARGE, "Provider response too large").into_response()
                 }
+                Err(SafeFetchError::Timeout) => {
+                    log::warn!("Provider response failed: class=provider reason=timeout");
+                    (StatusCode::GATEWAY_TIMEOUT, "Provider response timed out").into_response()
+                }
                 Err(_) => {
+                    log::warn!("Provider response failed: class=provider reason=read_failure");
                     (StatusCode::BAD_GATEWAY, "Failed to read provider response").into_response()
                 }
             }
         }
-        Err(_) => (StatusCode::BAD_GATEWAY, "Perplexity request failed").into_response(),
+        Err(error) if error.is_timeout() => {
+            log::warn!("Provider request failed: class=provider reason=timeout");
+            (StatusCode::GATEWAY_TIMEOUT, "Provider request timed out").into_response()
+        }
+        Err(_) => {
+            log::warn!("Provider request failed: class=provider reason=transport");
+            (StatusCode::BAD_GATEWAY, "Perplexity request failed").into_response()
+        }
     }
 }
 
@@ -297,6 +367,48 @@ async fn perplexity_handler(
 
 const SYMTHAEA_MAX_QUERY_CHARS: usize = 2000;
 
+const SYMTHAEA_MAX_RESPONSE_LINE_BYTES: usize = 1024 * 1024; // 1 MiB
+
+/// Read one newline-delimited daemon response without allowing an unbounded
+/// String allocation if the local service misbehaves or is compromised.
+async fn read_bounded_line<R>(reader: &mut R, max_bytes: usize) -> Result<String, String>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    let mut bytes = Vec::with_capacity(max_bytes.min(4096));
+    let mut terminated = false;
+    loop {
+        let (take, has_newline) = {
+            let available = reader
+                .fill_buf()
+                .await
+                .map_err(|_| "failed to read Symthaea response".to_string())?;
+            if available.is_empty() {
+                break;
+            }
+
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let take = newline.map_or(available.len(), |index| index + 1);
+            if bytes.len().saturating_add(take) > max_bytes {
+                return Err("Symthaea response line exceeds size limit".to_string());
+            }
+            bytes.extend_from_slice(&available[..take]);
+            (take, newline.is_some())
+        };
+        reader.consume(take);
+        if has_newline {
+            terminated = true;
+            break;
+        }
+    }
+
+    if !terminated {
+        return Err("Symthaea response line is not newline-terminated".to_string());
+    }
+
+    String::from_utf8(bytes).map_err(|_| "Symthaea response is not valid UTF-8".to_string())
+}
+
 /// Concurrency-limit + load-shed + timeout stack for the Symthaea route.
 /// A macro rather than a function because the ServiceBuilder stack's type
 /// is awkward to name explicitly; HandleErrorLayer is mandatory here —
@@ -309,6 +421,7 @@ macro_rules! symthaea_rate_limit_layer {
         tower::ServiceBuilder::new()
             .layer(axum::error_handling::HandleErrorLayer::new(
                 |_: axum::BoxError| async {
+                    log::warn!("Symthaea route unavailable: reason=capacity_or_deadline");
                     (
                         StatusCode::SERVICE_UNAVAILABLE,
                         "Symthaea is busy, try again shortly",
@@ -358,6 +471,59 @@ struct SymthaeaQueryResponse {
     processing_time_ms: u64,
 }
 
+/// Parse the daemon's successful response without manufacturing defaults for
+/// missing fields or allowing non-finite/out-of-range numeric values.
+fn parse_symthaea_response(
+    parsed: &serde_json::Value,
+) -> Result<SymthaeaQueryResponse, &'static str> {
+    if parsed.get("type").and_then(serde_json::Value::as_str) != Some("response") {
+        return Err("unexpected_response_type");
+    }
+
+    let content = parsed
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("missing_or_invalid_content")?
+        .to_string();
+    if content.trim().is_empty() {
+        return Err("empty_content");
+    }
+
+    let confidence = parsed
+        .get("confidence")
+        .and_then(serde_json::Value::as_f64)
+        .ok_or("missing_or_invalid_confidence")?;
+    if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
+        return Err("confidence_out_of_range");
+    }
+
+    let safe = parsed
+        .get("safe")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or("missing_or_invalid_safety_flag")?;
+
+    let phi = parsed
+        .get("phi")
+        .and_then(serde_json::Value::as_f64)
+        .ok_or("missing_or_invalid_phi")?;
+    if !phi.is_finite() || phi.abs() > f32::MAX as f64 {
+        return Err("phi_not_finite_or_representable");
+    }
+
+    let processing_time_ms = parsed
+        .get("processing_time_ms")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("missing_or_invalid_processing_time_ms")?;
+
+    Ok(SymthaeaQueryResponse {
+        content,
+        confidence: confidence as f32,
+        safe,
+        phi: phi as f32,
+        processing_time_ms,
+    })
+}
+
 async fn symthaea_query_handler(
     State(cfg): State<Option<Arc<SymthaeaConfig>>>,
     axum::Json(req): axum::Json<SymthaeaQueryRequest>,
@@ -373,7 +539,7 @@ async fn symthaea_query_handler(
     if req.content.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "Empty query").into_response();
     }
-    if req.content.len() > SYMTHAEA_MAX_QUERY_CHARS {
+    if req.content.chars().count() > SYMTHAEA_MAX_QUERY_CHARS {
         return (StatusCode::PAYLOAD_TOO_LARGE, "Query too long").into_response();
     }
 
@@ -401,12 +567,7 @@ async fn symthaea_query_handler(
             .await
             .map_err(|e| format!("write failed: {e}"))?;
         let mut reader = BufReader::new(stream);
-        let mut response_line = String::new();
-        reader
-            .read_line(&mut response_line)
-            .await
-            .map_err(|e| format!("read failed: {e}"))?;
-        Ok(response_line)
+        read_bounded_line(&mut reader, SYMTHAEA_MAX_RESPONSE_LINE_BYTES).await
     }
     .await;
 
@@ -432,22 +593,14 @@ async fn symthaea_query_handler(
         return (StatusCode::BAD_GATEWAY, "Symthaea error").into_response();
     }
 
-    let out = SymthaeaQueryResponse {
-        content: parsed
-            .get("content")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        confidence: parsed
-            .get("confidence")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0) as f32,
-        safe: parsed.get("safe").and_then(|v| v.as_bool()).unwrap_or(true),
-        phi: parsed.get("phi").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
-        processing_time_ms: parsed
-            .get("processing_time_ms")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0),
+    // Treat the daemon reply as a typed protocol contract. No missing metric
+    // is silently filled with an empty string or zero.
+    let out = match parse_symthaea_response(&parsed) {
+        Ok(response) => response,
+        Err(reason) => {
+            log::warn!("Symthaea response rejected: reason={reason}");
+            return (StatusCode::BAD_GATEWAY, "Malformed Symthaea response").into_response();
+        }
     };
 
     axum::Json(out).into_response()
@@ -461,6 +614,29 @@ async fn health() -> &'static str {
 // SERVER SETUP
 // ═══════════════════════════════════════════════════════════════
 
+/// Bounded route stacks shed excess work instead of letting one expensive API
+/// queue behind the entire process.
+macro_rules! route_limit_layer {
+    ($class:literal, $capacity:expr, $timeout:expr) => {
+        tower::ServiceBuilder::new()
+            .layer(axum::error_handling::HandleErrorLayer::new(
+                |_: axum::BoxError| async {
+                    log::warn!(
+                        "Proxy route unavailable: class={} reason=capacity_or_deadline",
+                        $class
+                    );
+                    (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Route capacity reached; retry shortly",
+                    )
+                },
+            ))
+            .load_shed()
+            .concurrency_limit($capacity)
+            .timeout($timeout)
+    };
+}
+
 /// Build the unified Prism router: API proxy routes + static file serving.
 ///
 /// `symthaea_cfg` is `None` when the bridge isn't configured (tests, or a
@@ -468,6 +644,14 @@ async fn health() -> &'static str {
 /// — the route itself handles that by returning 503, so this is purely an
 /// explicit opt-in rather than a hard dependency.
 fn build_app(dist_path: &str, symthaea_cfg: Option<Arc<SymthaeaConfig>>) -> Router {
+    build_app_with_quota(dist_path, symthaea_cfg, ClientQuotaState::default())
+}
+
+fn build_app_with_quota(
+    dist_path: &str,
+    symthaea_cfg: Option<Arc<SymthaeaConfig>>,
+    quota_state: ClientQuotaState,
+) -> Router {
     let fallback = ServeFile::new(format!("{}/index.html", dist_path));
 
     let symthaea_route = axum::Router::new()
@@ -483,14 +667,45 @@ fn build_app(dist_path: &str, symthaea_cfg: Option<Arc<SymthaeaConfig>>) -> Rout
         // Router::layer demands an Infallible service error, but
         // LoadShed/Timeout produce a boxed error — this converts it into an
         // actual response instead of failing to compile.
+        .layer(axum::middleware::from_fn_with_state(
+            quota_state.clone(),
+            quota_middleware::enforce_client_quota,
+        ))
         .layer(symthaea_rate_limit_layer!(Duration::from_secs(240)));
 
-    Router::new()
-        // Proxy API routes (same-origin, no CORS issues)
+    let generic_proxy_route = Router::new()
         .route("/proxy", get(proxy_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            quota_state.clone(),
+            quota_middleware::enforce_client_quota,
+        ))
+        .layer(route_limit_layer!(
+            "generic_proxy",
+            12,
+            Duration::from_secs(20)
+        ));
+
+    let search_routes = Router::new()
         .route("/api/ddg", get(ddg_handler))
         .route("/api/brave", get(brave_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            quota_state.clone(),
+            quota_middleware::enforce_client_quota,
+        ))
+        .layer(route_limit_layer!("search", 12, Duration::from_secs(20)));
+
+    let provider_route = Router::new()
         .route("/api/perplexity", post(perplexity_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            quota_state.clone(),
+            quota_middleware::enforce_client_quota,
+        ))
+        .layer(route_limit_layer!("provider", 3, Duration::from_secs(35)));
+
+    Router::new()
+        .merge(generic_proxy_route)
+        .merge(search_routes)
+        .merge(provider_route)
         .route("/health", get(health))
         .merge(symthaea_route)
         // Static files with SPA fallback
@@ -513,6 +728,32 @@ fn build_app(dist_path: &str, symthaea_cfg: Option<Arc<SymthaeaConfig>>) -> Rout
         .layer(CompressionLayer::new())
 }
 
+fn quota_state_from_env() -> Result<ClientQuotaState, String> {
+    let raw = std::env::var("PRISM_TRUSTED_PROXY_IPS").unwrap_or_default();
+    if raw.trim().is_empty() {
+        return Ok(ClientQuotaState::default());
+    }
+    parse_trusted_proxy_ips(&raw).map(ClientQuotaState::new)
+}
+
+fn validate_bind_addr(
+    configured: Option<&str>,
+    allow_non_loopback: bool,
+) -> Result<SocketAddr, String> {
+    let raw = configured.unwrap_or("127.0.0.1:8130");
+    let addr: SocketAddr = raw.parse().map_err(|_| {
+        "PRISM_ADDR must be an IP address and port, such as 127.0.0.1:8130".to_string()
+    })?;
+
+    if !addr.ip().is_loopback() && !allow_non_loopback {
+        return Err(
+            "Non-loopback PRISM_ADDR requires PRISM_ALLOW_NON_LOOPBACK_BIND=1 and trusted ingress"
+                .to_string(),
+        );
+    }
+    Ok(addr)
+}
+
 #[tokio::main]
 async fn main() {
     env_logger::init();
@@ -528,19 +769,39 @@ async fn main() {
         );
     }
 
-    let app = build_app(&dist_path, symthaea_cfg);
+    let quota_state = quota_state_from_env().unwrap_or_else(|error| {
+        log::error!("{}", error);
+        std::process::exit(2);
+    });
+    let app = build_app_with_quota(&dist_path, symthaea_cfg, quota_state);
 
-    let addr = std::env::var("PRISM_ADDR").unwrap_or_else(|_| "0.0.0.0:8130".to_string());
+    let configured_addr = std::env::var("PRISM_ADDR").ok();
+    let allow_non_loopback =
+        std::env::var("PRISM_ALLOW_NON_LOOPBACK_BIND").is_ok_and(|value| value == "1");
+    let addr = validate_bind_addr(configured_addr.as_deref(), allow_non_loopback).unwrap_or_else(
+        |error| {
+            log::error!("{}", error);
+            std::process::exit(2);
+        },
+    );
 
+    if !addr.ip().is_loopback() {
+        log::warn!(
+            "Non-loopback bind enabled; use trusted ingress/auth. CORS is not access control."
+        );
+    }
     log::info!("Prism unified server on {} (dist: {})", addr, dist_path);
     println!("Prism serving on http://{}", addr);
 
-    let listener = tokio::net::TcpListener::bind(&addr)
+    let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("Failed to bind Prism server address");
-    axum::serve(listener, app)
-        .await
-        .expect("Prism server error");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .expect("Prism server error");
 }
 
 #[cfg(test)]
@@ -549,6 +810,179 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn symthaea_response_line_is_bounded_before_parsing() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, stream) = tokio::io::duplex(64);
+        writer.write_all(b"12345678901234567890\n").await.unwrap();
+        drop(writer);
+        let mut reader = BufReader::new(stream);
+
+        let error = read_bounded_line(&mut reader, 8).await.unwrap_err();
+        assert!(
+            error.contains("size limit"),
+            "oversized daemon response should fail with a bounded-read error"
+        );
+    }
+
+    #[tokio::test]
+    async fn symthaea_response_line_accepts_a_bounded_complete_json_line() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, stream) = tokio::io::duplex(64);
+        writer.write_all(b"{\"safe\":true}\n").await.unwrap();
+        drop(writer);
+        let mut reader = BufReader::new(stream);
+
+        assert_eq!(
+            read_bounded_line(&mut reader, 64).await.unwrap(),
+            "{\"safe\":true}\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn symthaea_response_line_rejects_valid_json_without_newline_terminator() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, stream) = tokio::io::duplex(64);
+        writer.write_all(b"{\"safe\":true}").await.unwrap();
+        drop(writer);
+        let mut reader = BufReader::new(stream);
+
+        let error = read_bounded_line(&mut reader, 64).await.unwrap_err();
+        assert!(
+            error.contains("newline-terminated"),
+            "EOF before the required line delimiter must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn per_client_in_flight_cap_sheds_excess_and_recovers_after_completion() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let app = Router::new()
+            .route(
+                "/proxy",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_millis(40)).await;
+                    "ok"
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                ClientQuotaState::default(),
+                quota_middleware::enforce_client_quota,
+            ));
+        let request = || Request::get("/proxy").body(Body::empty()).unwrap();
+
+        let (first, second, third) = tokio::join!(
+            app.clone().oneshot(request()),
+            app.clone().oneshot(request()),
+            app.clone().oneshot(request()),
+        );
+        let responses = [first.unwrap(), second.unwrap(), third.unwrap()];
+        assert_eq!(
+            responses
+                .iter()
+                .filter(|response| response.status() == StatusCode::OK)
+                .count(),
+            2,
+            "two generic-proxy requests from one client should hold permits"
+        );
+        let rejected = responses
+            .iter()
+            .find(|response| response.status() == StatusCode::TOO_MANY_REQUESTS)
+            .expect("third concurrent request should be shed");
+        assert_eq!(
+            rejected
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok()),
+            Some("1")
+        );
+
+        let recovered = app.oneshot(request()).await.unwrap();
+        assert_eq!(recovered.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn oversized_content_length_is_rejected_before_body_read() {
+        let dir = test_dist_dir();
+        let app = build_app(dir.path().to_str().unwrap(), None);
+        let response = app
+            .oneshot(
+                Request::post("/api/perplexity")
+                    .header("content-type", "application/json")
+                    .header(
+                        "content-length",
+                        (prism_common::client_quota::MAX_PROXY_REQUEST_BODY_BYTES + 1).to_string(),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(
+            response
+                .headers()
+                .get("x-content-type-options")
+                .and_then(|value| value.to_str().ok()),
+            Some("nosniff")
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_provider_body_is_rejected_before_handler_execution() {
+        let dir = test_dist_dir();
+        let app = build_app(dir.path().to_str().unwrap(), None);
+        let body = vec![b'x'; prism_common::client_quota::MAX_PROXY_REQUEST_BODY_BYTES + 1];
+        let response = app
+            .oneshot(
+                Request::post("/api/perplexity")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[test]
+    fn server_bind_defaults_to_loopback() {
+        assert_eq!(
+            validate_bind_addr(None, false).unwrap(),
+            "127.0.0.1:8130".parse::<SocketAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn server_bind_rejects_non_loopback_without_explicit_opt_in() {
+        for value in ["0.0.0.0:8130", "192.0.2.10:8130", "[::]:8130"] {
+            assert!(
+                validate_bind_addr(Some(value), false).is_err(),
+                "must reject accidental public/private bind {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn server_bind_allows_non_loopback_only_with_explicit_opt_in() {
+        assert_eq!(
+            validate_bind_addr(Some("0.0.0.0:8130"), true).unwrap(),
+            "0.0.0.0:8130".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(
+            validate_bind_addr(Some("127.0.0.1:8130"), false).unwrap(),
+            "127.0.0.1:8130".parse::<SocketAddr>().unwrap()
+        );
+    }
 
     fn test_dist_dir() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -689,8 +1123,10 @@ mod tests {
         socket_path: std::path::PathBuf,
         respond: impl Fn(serde_json::Value) -> FakeDaemonAction + Send + 'static,
     ) {
+        // Bind before spawning so the socket is ready when this helper returns.
+        // A fixed sleep in each test cannot guarantee listener readiness under CI load.
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
         tokio::spawn(async move {
-            let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
             loop {
                 let (stream, _) = match listener.accept().await {
                     Ok(x) => x,
@@ -730,6 +1166,100 @@ mod tests {
         }))
     }
 
+    #[test]
+    fn symthaea_response_contract_rejects_missing_and_malformed_fields() {
+        let valid = serde_json::json!({
+            "type": "response",
+            "content": "answer",
+            "confidence": 0.9,
+            "safe": true,
+            "phi": 0.85,
+            "processing_time_ms": 42
+        });
+        assert!(parse_symthaea_response(&valid).is_ok());
+
+        let invalid = [
+            serde_json::json!({
+                "type": "other",
+                "content": "answer",
+                "confidence": 0.9,
+                "safe": true,
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "confidence": 0.9,
+                "safe": true,
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": "",
+                "confidence": 0.9,
+                "safe": true,
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": " \t\n ",
+                "confidence": 0.9,
+                "safe": true,
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": "answer",
+                "confidence": "high",
+                "safe": true,
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": "answer",
+                "confidence": 1.1,
+                "safe": true,
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": "answer",
+                "confidence": 0.9,
+                "safe": "true",
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": "answer",
+                "confidence": 0.9,
+                "safe": true,
+                "phi": 1e100,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": "answer",
+                "confidence": 0.9,
+                "safe": true,
+                "phi": 0.85,
+                "processing_time_ms": "42"
+            }),
+        ];
+
+        for (index, value) in invalid.iter().enumerate() {
+            assert!(
+                parse_symthaea_response(value).is_err(),
+                "malformed response contract case {index} must fail closed"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn symthaea_query_round_trips_through_fake_daemon() {
         let dir = test_dist_dir();
@@ -751,8 +1281,6 @@ mod tests {
                 .to_string(),
             )
         });
-        // Give the fake daemon a moment to bind before the request fires.
-        tokio::time::sleep(Duration::from_millis(50)).await;
 
         let app = build_app(
             dir.path().to_str().unwrap(),
@@ -777,6 +1305,155 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn symthaea_query_rejects_missing_or_invalid_safety_flag() {
+        let malformed_responses = [
+            serde_json::json!({
+                "type": "response",
+                "content": "unqualified answer",
+                "confidence": 0.9,
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+            serde_json::json!({
+                "type": "response",
+                "content": "unqualified answer",
+                "confidence": 0.9,
+                "safe": "true",
+                "phi": 0.85,
+                "processing_time_ms": 42
+            }),
+        ];
+
+        for (index, malformed) in malformed_responses.into_iter().enumerate() {
+            let dir = test_dist_dir();
+            let socket_path = dir
+                .path()
+                .join(format!("fake-symthaea-invalid-safe-{index}.sock"));
+            spawn_fake_daemon(socket_path.clone(), move |_req| {
+                FakeDaemonAction::Reply(malformed.to_string())
+            });
+
+            let app = build_app(
+                dir.path().to_str().unwrap(),
+                test_symthaea_cfg(&socket_path),
+            );
+            let response = app
+                .oneshot(
+                    Request::post("/api/symthaea/query")
+                        .header("content-type", "application/json")
+                        .body(Body::from(r#"{ "content": "hello" }"#))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_GATEWAY,
+                "malformed safety flag case {index} must not become a successful response"
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("x-content-type-options")
+                    .and_then(|value| value.to_str().ok()),
+                Some("nosniff"),
+                "security headers must remain present on rejected daemon responses"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn symthaea_query_rejects_empty_daemon_content() {
+        let dir = test_dist_dir();
+        let socket_path = dir.path().join("fake-symthaea-empty-response.sock");
+        spawn_fake_daemon(socket_path.clone(), |_req| {
+            FakeDaemonAction::Reply(
+                serde_json::json!({
+                    "type": "response",
+                    "content": " \t ",
+                    "confidence": 0.9,
+                    "safe": true,
+                    "phi": 0.5,
+                    "processing_time_ms": 1
+                })
+                .to_string(),
+            )
+        });
+
+        let app = build_app(
+            dir.path().to_str().unwrap(),
+            test_symthaea_cfg(&socket_path),
+        );
+        let response = app
+            .oneshot(
+                Request::post("/api/symthaea/query")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{ "content": "hello" }"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            response
+                .headers()
+                .get("x-content-type-options")
+                .and_then(|value| value.to_str().ok()),
+            Some("nosniff")
+        );
+    }
+
+    #[tokio::test]
+    async fn symthaea_query_accepts_multibyte_content_at_character_limit() {
+        let dir = test_dist_dir();
+        let socket_path = dir.path().join("fake-symthaea-unicode.sock");
+        spawn_fake_daemon(socket_path.clone(), |_req| {
+            FakeDaemonAction::Reply(
+                serde_json::json!({
+                    "type": "response",
+                    "content": "accepted",
+                    "confidence": 0.9,
+                    "safe": true,
+                    "phi": 0.5,
+                    "processing_time_ms": 1
+                })
+                .to_string(),
+            )
+        });
+
+        let content = "é".repeat(SYMTHAEA_MAX_QUERY_CHARS);
+        assert_eq!(content.chars().count(), SYMTHAEA_MAX_QUERY_CHARS);
+        assert!(
+            content.len() > SYMTHAEA_MAX_QUERY_CHARS,
+            "fixture must be over the character limit in UTF-8 bytes"
+        );
+
+        let app = build_app(
+            dir.path().to_str().unwrap(),
+            test_symthaea_cfg(&socket_path),
+        );
+        let response = app
+            .oneshot(
+                Request::post("/api/symthaea/query")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "content": content }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "a request within the Unicode character limit must not be rejected due to UTF-8 byte length"
+        );
+    }
+
+    #[tokio::test]
     async fn symthaea_query_rejects_empty_and_oversized_content() {
         let dir = test_dist_dir();
         let socket_path = dir.path().join("fake-symthaea-2.sock");
@@ -788,7 +1465,6 @@ mod tests {
                 .to_string(),
             )
         });
-        tokio::time::sleep(Duration::from_millis(50)).await;
 
         let cfg = test_symthaea_cfg(&socket_path);
 
@@ -825,7 +1501,6 @@ mod tests {
         let dir = test_dist_dir();
         let socket_path = dir.path().join("fake-symthaea-hang.sock");
         spawn_fake_daemon(socket_path.clone(), |_req| FakeDaemonAction::HangForever);
-        tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Rebuild with a short timeout for this test only — the production
         // 240s default would make this test take 4 minutes.

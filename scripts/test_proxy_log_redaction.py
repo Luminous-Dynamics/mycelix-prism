@@ -131,6 +131,22 @@ class SensitiveLogPatternTests(unittest.TestCase):
         );"""
         self.assertEqual(find_sensitive_logging("proxy.rs", source), [])
 
+    def test_quota_middleware_files_are_in_the_scanned_source_set(self) -> None:
+        from check_proxy_log_redaction import DEFAULT_FILES
+
+        scanned = {path.as_posix() for path in DEFAULT_FILES}
+        self.assertIn("prism-proxy/src/quota_middleware.rs", scanned)
+        self.assertIn("prism-serve/src/quota_middleware.rs", scanned)
+
+    def test_quota_middleware_sensitive_values_are_rejected(self) -> None:
+        for source in (
+            'log::warn!("request body {}", body);',
+            'log::info!("provider key {}", api_key);',
+            'tracing::debug!("query {}", params.q);',
+        ):
+            with self.subTest(source=source):
+                self.assertTrue(find_sensitive_logging("quota_middleware.rs", source))
+
     def test_current_proxy_sources_pass(self) -> None:
         root = Path(__file__).resolve().parents[1]
         self.assertEqual(check_tree(root), [])

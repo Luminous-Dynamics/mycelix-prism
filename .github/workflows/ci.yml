@@ -6,12 +6,12 @@ permissions:
 
 # Cancel superseded work for the same PR/ref; keep lock resolution tied to one source head.
 concurrency:
-  group: prism-ci-${{ github.event.pull_request.head.ref || github.ref_name }}
+  group: prism-ci-${{ github.event.pull_request.number || github.ref_name }}-${{ github.event_name }}
   cancel-in-progress: true
 
 on:
   push:
-    branches: [main, fix/proxy-dns-pinning-redirects-20261010]
+    branches: [main, fix/proxy-dns-pinning-redirects-20261010, 'security/**']
   pull_request:
     branches: [main, fix/proxy-dns-pinning-redirects-20261010]
 
@@ -188,7 +188,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           test "$CHECK_OUTCOME" = success && test "$NEXTEST_OUTCOME" = success && test "$MSRV_OUTCOME" = success
 
-  # rustfmt uses the light shell and does not require Cargo.lock.
+    # rustfmt uses the light shell and does not require Cargo.lock.
   format:
     name: cargo fmt (Rust 1.99.0 · nix develop .#fmt)
     runs-on: ubuntu-latest

@@ -829,6 +829,11 @@ mod tests {
         // These assignments are outside ordinary public GUA and must stay
         // denied by the fetch boundary, including the 2025 Dummy IPv6 Prefix
         // and the SRv6 SID block in the current IANA registry.
+        assert!(
+            pinned_addrs_from_ips(["2606:4700:4700::1111".parse().unwrap()]).is_ok(),
+            "a globally routable IPv6 control must remain pinnable"
+        );
+
         for raw in [
             "100::1",             // discard-only
             "100:0:0:1::1",       // Dummy IPv6 Prefix (RFC 9780)

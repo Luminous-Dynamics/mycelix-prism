@@ -72,8 +72,10 @@ pub const PROXY_CONTENT_SECURITY_POLICY: &str = "default-src 'none'; sandbox";
 pub const PROXY_CONTENT_DISPOSITION: &str =
     "attachment; filename=\"prism-proxy-content\"";
 
-/// Whether an upstream media type can be interpreted as an active/document
-/// format when the generic proxy is navigated directly.
+/// Only known passive raster-image formats may be displayed inline by the
+/// generic proxy. Everything else (including unknown types, HTML/XML/SVG, text,
+/// stylesheets, scripts, and binary data) becomes an attachment for top-level
+/// navigation. Fetch/XHR clients can still read the body normally.
 pub fn proxy_content_requires_attachment(content_type: &str) -> bool {
     let essence = content_type
         .split(';')
@@ -82,19 +84,18 @@ pub fn proxy_content_requires_attachment(content_type: &str) -> bool {
         .trim()
         .to_ascii_lowercase();
 
-    matches!(
+    !matches!(
         essence.as_str(),
-        "text/html"
-            | "application/xhtml+xml"
-            | "image/svg+xml"
-            | "application/xml"
-            | "text/xml"
-            | "application/pdf"
-            | "application/javascript"
-            | "text/javascript"
-            | "application/ecmascript"
-            | "text/ecmascript"
-            | "application/x-javascript"
+        "image/png"
+            | "image/jpeg"
+            | "image/gif"
+            | "image/webp"
+            | "image/avif"
+            | "image/apng"
+            | "image/bmp"
+            | "image/x-icon"
+            | "image/vnd.microsoft.icon"
+            | "image/jxl"
     )
 }
 
@@ -418,7 +419,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn proxy_content_policy_downloads_active_document_media_types() {
+    fn proxy_content_policy_defaults_unknown_and_non_raster_types_to_attachment() {
         for content_type in [
             "text/html",
             "TEXT/HTML; charset=utf-8",
@@ -432,26 +433,37 @@ mod tests {
             "application/ecmascript",
             "text/ecmascript",
             "application/x-javascript",
+            "text/plain",
+            "text/css",
+            "application/json",
+            "application/octet-stream",
+            "application/x-unregistered",
+            "",
         ] {
             assert!(
                 proxy_content_requires_attachment(content_type),
-                "active/document media type should be attachment: {content_type}"
+                "non-allowlisted type must become an attachment: {content_type}"
             );
         }
     }
 
     #[test]
-    fn proxy_content_policy_keeps_raster_images_inline_compatible() {
+    fn proxy_content_policy_keeps_allowlisted_raster_images_inline_compatible() {
         for content_type in [
             "image/png",
             "image/jpeg; charset=binary",
             "image/gif",
             "image/webp",
             "image/avif",
+            "image/apng",
+            "image/bmp",
+            "image/x-icon",
+            "image/vnd.microsoft.icon",
+            "image/jxl",
         ] {
             assert!(
                 !proxy_content_requires_attachment(content_type),
-                "ordinary image must remain embeddable: {content_type}"
+                "allowlisted raster format must remain embeddable: {content_type}"
             );
         }
     }

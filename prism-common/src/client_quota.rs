@@ -519,6 +519,12 @@ mod tests {
 
         quota.release_request(first);
         quota.release_request(first);
+
+        // Releasing the first ticket once frees one slot; releasing it again
+        // must not release the still-active second ticket as well.
+        let third = quota
+            .admit_request(client, QuotaClass::GenericProxy, 0, start)
+            .expect("one slot should be free after the first release");
         assert_eq!(
             quota.admit_request(client, QuotaClass::GenericProxy, 0, start),
             Err(QuotaRejection::InFlight),
@@ -526,10 +532,11 @@ mod tests {
         );
 
         quota.release_request(second);
-        let third = quota
+        quota.release_request(third);
+        let fourth = quota
             .admit_request(client, QuotaClass::GenericProxy, 0, start)
             .unwrap();
-        quota.release_request(third);
+        quota.release_request(fourth);
         assert_eq!(
             quota
                 .clients

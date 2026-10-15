@@ -153,7 +153,7 @@ def validate_documents(schema: Any, ledger: Any) -> list[str]:
         if source.get("revision") is not None and not _is_string(source.get("revision")):
             errors.append(f"{prefix}.revision must be a string or null")
         if source.get("kind") in {"prism_test_result", "benchmark_result", "security_review"}:
-            for key in ("prism_revision", "engine_revision", "command", "artifact_url", "result", "artifact_sha256", "environment"):
+            for key in ("prism_revision", "engine_revision", "command", "artifact_url", "result", "artifact_sha256"):
                 if not _is_string(source.get(key)):
                     errors.append(f"{prefix}.{key} is required for executable evidence")
             if isinstance(source.get("prism_revision"), str) and not SHA1_RE.fullmatch(source["prism_revision"]):

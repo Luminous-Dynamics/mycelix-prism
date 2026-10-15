@@ -866,7 +866,8 @@ mod tests {
             directory.join("corpus.jsonl"),
             concat!(
                 "{\"_id\":\"d1\",\"title\":\"Ocean\",\"text\":\"Ocean chemistry changes pH.\"}\n",
-                "{\"_id\":\"d2\",\"title\":\"Quantum\",\"text\":\"Quantum entanglement physics.\"}\n"
+                "{\"_id\":\"d2\",\"title\":\"Quantum\",",
+                "\"text\":\"Quantum entanglement physics.\"}\n"
             ),
         )?;
         fs::write(

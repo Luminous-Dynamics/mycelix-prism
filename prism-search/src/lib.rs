@@ -13,13 +13,12 @@
 #![allow(clippy::needless_range_loop)]
 
 use prism_common::{EmpiricalLevel, MaterialityLevel, NormativeLevel, SearchResult};
-use serde::{Deserialize, Serialize};
-
 pub mod binary_hv;
+mod precomputed;
+pub use precomputed::PrecomputedIndexError;
 use binary_hv::BinaryHV;
 
 /// Epistemic knowledge search engine.
-#[derive(Serialize, Deserialize)]
 pub struct SearchEngine {
     claims: Vec<ClaimEntry>,
     vectors: Vec<BinaryHV>,
@@ -27,7 +26,6 @@ pub struct SearchEngine {
     word_df: std::collections::HashMap<String, usize>,
 }
 
-#[derive(Serialize, Deserialize)]
 struct ClaimEntry {
     content: String,
     sources: Vec<String>,
@@ -47,58 +45,10 @@ impl SearchEngine {
         }
     }
 
-    /// Deserialize a pre-computed index, preserving corruption as an explicit error.
-    ///
-    /// Prefer this API for release artifacts and untrusted index files. Falling
-    /// back to an empty index can make corruption look like a successful search
-    /// with zero results, so callers should handle the error visibly.
-    pub fn try_from_precomputed(bytes: &[u8]) -> Result<Self, String> {
-        let mut engine: Self =
-            bincode::deserialize(bytes).map_err(|error| error.to_string())?;
-
-        if engine.claims.len() != engine.vectors.len() {
-            return Err(format!(
-                "precomputed index has {} claims but {} vectors",
-                engine.claims.len(),
-                engine.vectors.len()
-            ));
-        }
-
-        // Word frequencies and vectors are derived state. Recompute them from
-        // the claims and reject stale/mismatched serialized artifacts rather
-        // than trusting internally inconsistent ranking data.
-        let stored_word_df = engine.word_df.clone();
-        let stored_vectors = engine.vectors.clone();
-        engine.rebuild_index();
-
-        if engine.word_df != stored_word_df {
-            return Err("precomputed index document frequencies do not match its claims".into());
-        }
-        if engine.vectors != stored_vectors {
-            return Err("precomputed index vectors do not match its claims and corpus statistics".into());
-        }
-
-        Ok(engine)
-    }
-
-    /// Compatibility wrapper that logs a failure and returns an empty engine.
-    ///
-    /// New callers should prefer try_from_precomputed() and handle the error
-    /// explicitly; this wrapper remains to avoid breaking existing integrations.
-    pub fn from_precomputed(bytes: &[u8]) -> Self {
-        match Self::try_from_precomputed(bytes) {
-            Ok(engine) => engine,
-            Err(e) => {
-                log::error!("Failed to deserialize precomputed index; returning empty index: {}", e);
-                Self::new()
-            }
-        }
-    }
-
     /// Create a search engine pre-loaded with claims from prism-ingest.
     ///
     /// If the `precomputed-index` feature is enabled and `prism-index.bin` exists,
-    /// deserializes the pre-built index instead of computing from scratch.
+    /// decodes the versioned, bounded pre-built index instead of computing from scratch.
     pub fn with_seed_claims() -> Self {
         #[cfg(feature = "precomputed-index")]
         {
@@ -660,7 +610,7 @@ mod tests {
         engine.add_claim("ocean acidification", EmpiricalLevel::E2, &[], &[]);
         engine.add_claim("quantum entanglement", EmpiricalLevel::E3, &[], &[]);
 
-        let bytes = bincode::serialize(&engine).expect("serialize valid index");
+        let bytes = engine.to_precomputed().expect("serialize valid versioned index");
         let loaded = SearchEngine::try_from_precomputed(&bytes)
             .expect("valid derived state should round-trip");
 
@@ -674,9 +624,7 @@ mod tests {
         let mut engine = SearchEngine::new();
         engine.add_claim("ocean acidification", EmpiricalLevel::E2, &[], &[]);
         engine.vectors.pop();
-
-        let bytes = bincode::serialize(&engine).expect("serialize malformed index");
-        assert!(SearchEngine::try_from_precomputed(&bytes).is_err());
+        assert!(engine.to_precomputed().is_err());
     }
 
     #[test]
@@ -684,9 +632,7 @@ mod tests {
         let mut engine = SearchEngine::new();
         engine.add_claim("ocean acidification", EmpiricalLevel::E2, &[], &[]);
         engine.word_df.insert("forged-frequency".into(), 42);
-
-        let bytes = bincode::serialize(&engine).expect("serialize malformed index");
-        assert!(SearchEngine::try_from_precomputed(&bytes).is_err());
+        assert!(engine.to_precomputed().is_err());
     }
 
     #[test]

@@ -170,7 +170,7 @@ fn render_annotations(
             </div>"##,
             e_class = e_class,
             e_label = e_label,
-            sim_pct = sim_pct,
+            sim_label = sim_label,
             spore_note = spore_note,
             sentence_short = escape_html(&sentence[..sentence.len().min(100)]),
             claim = escape_html(&result.content),

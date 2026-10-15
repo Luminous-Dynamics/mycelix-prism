@@ -711,7 +711,7 @@ fn print_report(report: &EvaluationReport) -> Result<(), Box<dyn Error>> {
             "blake3": fingerprint.blake3
         })).collect::<Vec<_>>(),
         "timing": {
-            "data_load_ms": report.data_load_ms
+            "data_load_ms": report.data_load_ms,
             "hdc_index_build_ms": report.index_build_ms,
             "bm25_index_build_ms": report.bm25_build_ms,
             "hdc_query_latency_ms": {

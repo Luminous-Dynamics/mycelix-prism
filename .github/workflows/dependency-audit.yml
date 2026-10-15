@@ -71,7 +71,7 @@ jobs:
           nix develop --command cargo audit --file Cargo.lock || audit_status=$?
 
           deny_status=0
-          nix develop --command cargo deny check --locked advisories bans sources || deny_status=$?
+          nix develop --command cargo deny --locked check advisories bans sources || deny_status=$?
 
           echo "cargo audit exit status: $audit_status"
           echo "cargo deny exit status: $deny_status"

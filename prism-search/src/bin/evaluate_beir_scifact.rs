@@ -852,7 +852,8 @@ mod tests {
     }
 
     #[test]
-    fn end_to_end_fixture_run_fingerprints_inputs_and_returns_metrics() -> Result<(), Box<dyn Error>> {
+    fn end_to_end_fixture_run_fingerprints_inputs_and_returns_metrics(
+    ) -> Result<(), Box<dyn Error>> {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();

@@ -15,6 +15,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from engine_ledger_schema import validate_json_schema
+
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "docs/engine-strategy/capability-ledger.schema.json"
 LEDGER_PATH = ROOT / "docs/engine-strategy/capability-ledger.json"
@@ -63,6 +65,36 @@ def _valid_date(value: Any) -> bool:
         return False
 
 
+
+def _schema_node(schema: Any, *path: str) -> Any:
+    node = schema
+    for component in path:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(component)
+    return node
+
+
+def _validate_schema_vocabularies(schema: Any) -> list[str]:
+    """Prevent schema enums and semantic-validator vocabularies from drifting."""
+    declarations = {
+        ("properties", "evidence_sources", "items", "properties", "kind"): SOURCE_KINDS,
+        ("properties", "engines", "items", "properties", "role"): ENGINE_ROLES,
+        ("properties", "engines", "items", "properties", "identity", "properties", "revision_kind"): REVISION_KINDS,
+        ("properties", "engines", "items", "properties", "integration_status"): INTEGRATION_STATUSES,
+        ("properties", "engines", "items", "properties", "capabilities", "items", "properties", "upstream_evidence"): UPSTREAM_STATUSES,
+        ("properties", "engines", "items", "properties", "capabilities", "items", "properties", "prism_status"): PRISM_STATUSES,
+    }
+    errors: list[str] = []
+    for path, expected in declarations.items():
+        node = _schema_node(schema, *path)
+        actual = node.get("enum") if isinstance(node, dict) else None
+        if not isinstance(actual, list) or set(actual) != expected or len(actual) != len(expected):
+            field = path[-1]
+            errors.append(f"schema enum for {field} does not match validator vocabulary")
+    return errors
+
+
 def validate_documents(schema: Any, ledger: Any) -> list[str]:
     """Return all detected contract/integrity violations; no network is used."""
     errors: list[str] = []
@@ -73,8 +105,12 @@ def validate_documents(schema: Any, ledger: Any) -> list[str]:
 
     if schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
         errors.append("schema must declare JSON Schema draft 2020-12")
-    if schema.get("properties", {}).get("schema_version", {}).get("const") != "1.0.0":
+    schema_properties = schema.get("properties")
+    schema_version_schema = schema_properties.get("schema_version") if isinstance(schema_properties, dict) else None
+    if not isinstance(schema_version_schema, dict) or schema_version_schema.get("const") != "1.0.0":
         errors.append("schema must declare schema_version 1.0.0")
+    errors.extend(_validate_schema_vocabularies(schema))
+    errors.extend(validate_json_schema(schema, ledger))
     if ledger.get("schema_version") != "1.0.0":
         errors.append("ledger schema_version must be 1.0.0")
     if not _valid_date(ledger.get("reviewed_at")):
@@ -231,10 +267,11 @@ def main() -> int:
     source_count = len(ledger["evidence_sources"])
     capability_count = sum(len(engine["capabilities"]) for engine in ledger["engines"])
     print(
-        f"PASS: engine ledger structure and evidence references are valid "
+        f"PASS: schema-subset validation and evidence invariants are valid "
         f"({engine_count} engines, {capability_count} capability records, {source_count} evidence sources)"
     )
-    print("NOTE: this validates ledger integrity, not browser builds, capabilities, or security.")
+    print("NOTE: the validator enforces only the JSON Schema keywords used by this contract; it is not a general JSON Schema implementation.")
+    print("NOTE: ledger integrity is not proof of browser builds, capabilities, or security.")
     return 0
 
 

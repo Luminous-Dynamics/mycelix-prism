@@ -82,6 +82,50 @@ class EngineLedgerValidatorTests(unittest.TestCase):
         errors = validate_documents(self.schema, ledger)
         self.assertTrue(any("engine_revision does not match" in error for error in errors))
 
+
+    def test_rejects_unknown_top_level_field(self) -> None:
+        ledger = copy.deepcopy(self.ledger)
+        ledger["unreviewed_assumption"] = True
+        errors = validate_documents(self.schema, ledger)
+        self.assertTrue(any("forbidden additional property: unreviewed_assumption" in error for error in errors))
+
+    def test_rejects_unknown_nested_field(self) -> None:
+        ledger = copy.deepcopy(self.ledger)
+        ledger["engines"][0]["capabilities"][0]["confidence_score"] = 0.99
+        errors = validate_documents(self.schema, ledger)
+        self.assertTrue(any("forbidden additional property: confidence_score" in error for error in errors))
+
+    def test_rejects_missing_schema_required_field(self) -> None:
+        ledger = copy.deepcopy(self.ledger)
+        del ledger["decision"]
+        errors = validate_documents(self.schema, ledger)
+        self.assertTrue(any("missing required property: decision" in error for error in errors))
+
+    def test_rejects_non_canonical_schema_date(self) -> None:
+        ledger = copy.deepcopy(self.ledger)
+        ledger["reviewed_at"] = "2026-10-15T00:00:00"
+        errors = validate_documents(self.schema, ledger)
+        self.assertTrue(any("$.reviewed_at does not match format date" in error for error in errors))
+
+    def test_rejects_invalid_uri_even_if_string(self) -> None:
+        ledger = copy.deepcopy(self.ledger)
+        ledger["evidence_sources"][0]["url"] = "not a uri"
+        errors = validate_documents(self.schema, ledger)
+        self.assertTrue(any(".url does not match format uri" in error for error in errors))
+
+    def test_rejects_unsupported_schema_keyword(self) -> None:
+        schema = copy.deepcopy(self.schema)
+        schema["properties"]["decision"]["x-unimplemented-rule"] = True
+        errors = validate_documents(schema, self.ledger)
+        self.assertTrue(any("unsupported schema keyword: x-unimplemented-rule" in error for error in errors))
+
+    def test_rejects_schema_status_vocabulary_drift(self) -> None:
+        schema = copy.deepcopy(self.schema)
+        status_enum = schema["properties"]["engines"]["items"]["properties"]["capabilities"]["items"]["properties"]["prism_status"]["enum"]
+        status_enum.append("works-on-my-machine")
+        errors = validate_documents(schema, self.ledger)
+        self.assertTrue(any("schema enum for prism_status does not match validator vocabulary" in error for error in errors))
+
     def test_rejects_unknown_status(self) -> None:
         ledger = copy.deepcopy(self.ledger)
         ledger["engines"][0]["capabilities"][0]["prism_status"] = "probably-works"

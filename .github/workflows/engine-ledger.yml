@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - "docs/engine-strategy/**"
+      - "scripts/validate_engine_test_capsule.py"
+      - "scripts/test_engine_test_capsule.py"
       - "scripts/validate_engine_capability_ledger.py"
       - "scripts/engine_ledger_schema.py"
       - "scripts/test_engine_capability_ledger.py"
@@ -13,6 +15,8 @@ on:
     branches: [main]
     paths:
       - "docs/engine-strategy/**"
+      - "scripts/validate_engine_test_capsule.py"
+      - "scripts/test_engine_test_capsule.py"
       - "scripts/validate_engine_capability_ledger.py"
       - "scripts/engine_ledger_schema.py"
       - "scripts/test_engine_capability_ledger.py"
@@ -41,5 +45,10 @@ jobs:
       - name: Run positive and negative invariant tests
         run: python3 scripts/test_engine_capability_ledger.py
 
-      - name: Validate schema subset, ledger invariants and evidence references
+      - name: Validate engine ledger schema subset
         run: python3 scripts/validate_engine_capability_ledger.py
+
+      - name: Test and validate result-capsule contract
+        run: |
+          python3 scripts/test_engine_test_capsule.py
+          python3 scripts/validate_engine_test_capsule.py --check-schema

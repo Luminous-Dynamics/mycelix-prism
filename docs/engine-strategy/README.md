@@ -22,6 +22,12 @@ A separate [standard-library-only validator](../../scripts/validate_engine_capab
 
 The critical fail-closed rule is that a capability marked `verified` requires a passed Prism test-result artifact tied to an exact engine revision and a full Prism commit SHA. An upstream source link or a passing build alone cannot elevate it to verified. The current ledger deliberately contains **no verified browser capabilities**: this research pass did not run a Ladybird/Servo host or WPT workload.
 
+### Reproducible result capsules
+
+The next layer is a versioned [test-result capsule schema](test-capsule.schema.json), checked by a [semantic validator](../../scripts/validate_engine_test_capsule.py) and adversarial [regression tests](../../scripts/test_engine_test_capsule.py). A capsule binds exact Prism, engine and suite revisions to a manifest digest, environment/toolchain fingerprints, command, individual case IDs, input/output digests, and explicit `passed`, `failed`, `timeout`, `unsupported`, `skipped`, or `not_run` outcomes. The validator recomputes the summary counts, rejects duplicate case IDs and refuses to classify any skipped, unsupported or not-run case as an overall pass.
+
+The capsule is a result contract, **not evidence that a browser test has run**. Each future run must enumerate every case declared by the pinned manifest. Hash the exact emitted artifact bytes and record that SHA-256 with its artifact location in the ledger; do not hash a separately reserialized JSON object and assume byte identity. Signed workflow attestations can establish artifact provenance, but not whether its expected behavior was correct. Raw page bodies, credentials, cookies and private browsing histories must not be included by default. See [GitHub's artifact documentation](https://docs.github.com/en/actions/concepts/workflows-and-actions/workflow-artifacts) and [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785.html) for related provenance and deterministic-serialization principles.
+
 Status meanings:
 - **pinned_source_reviewed / official_docs_reviewed:** upstream evidence was inspected; runtime integration is still a separate field.
 - **implemented_in_source_only:** Prism source contains relevant code, but this does not establish end-to-end browser behavior.

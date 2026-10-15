@@ -1,7 +1,6 @@
 # Prism dependency policy.
 # License policy is deliberately separate until the full lockfile license inventory
 # has been reviewed; this file does not claim that every dependency is license-cleared.
-version = 2
 
 [advisories]
 # Do not suppress known RustSec advisories without an explicit, reviewed rationale.

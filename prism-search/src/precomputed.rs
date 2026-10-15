@@ -761,5 +761,4 @@ mod tests {
             proptest::prop_assert!(result.is_ok());
         }
     }
-
 }

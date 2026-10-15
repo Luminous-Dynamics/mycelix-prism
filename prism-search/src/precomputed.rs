@@ -769,6 +769,47 @@ mod tests {
             engine.to_precomputed(),
             Err(PrecomputedIndexError::InvalidCount("total indexed words"))
         );
+        drop(engine);
+
+        // Construct a structurally valid, correctly checksummed artifact without
+        // using the writer (which must reject the aggregate first). This directly
+        // exercises the untrusted decoder's work-budget enforcement.
+        let mut payload = Writer::default();
+        payload.write_count(claim_count, MAX_CLAIMS, "claims").unwrap();
+        for _ in 0..claim_count {
+            payload
+                .write_string(&content, MAX_CONTENT_BYTES, "claim content", true)
+                .unwrap();
+            payload.write_count(0, MAX_SOURCES_PER_CLAIM, "sources").unwrap();
+            payload.write_u8(empirical_to_wire(EmpiricalLevel::E2)).unwrap();
+            payload.write_u8(normative_to_wire(NormativeLevel::N2)).unwrap();
+            payload.write_u8(materiality_to_wire(MaterialityLevel::M2)).unwrap();
+            payload.write_count(0, MAX_TAGS_PER_CLAIM, "tags").unwrap();
+        }
+        payload.write_count(claim_count, MAX_CLAIMS, "vectors").unwrap();
+        let zero_vector = [0_u8; BinaryHV::BYTES];
+        for _ in 0..claim_count {
+            payload.write_bytes(&zero_vector).unwrap();
+        }
+        payload
+            .write_count(1, MAX_WORD_DF_ENTRIES, "word frequencies")
+            .unwrap();
+        payload.write_string("ocean", MAX_WORD_BYTES, "word", true).unwrap();
+        payload.write_u64(claim_count as u64).unwrap();
+
+        let digest = blake3::hash(&payload.bytes);
+        let mut bytes = Vec::with_capacity(HEADER_LEN + payload.bytes.len());
+        bytes.extend_from_slice(MAGIC);
+        bytes.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&0_u16.to_le_bytes());
+        bytes.extend_from_slice(&(payload.bytes.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(digest.as_bytes());
+        bytes.extend_from_slice(&payload.bytes);
+
+        assert_eq!(
+            SearchEngine::try_from_precomputed(&bytes),
+            Err(PrecomputedIndexError::InvalidCount("total indexed words"))
+        );
     }
 
     #[test]

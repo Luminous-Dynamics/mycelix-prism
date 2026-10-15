@@ -11,7 +11,8 @@
       "p95",
       "IQR",
       "MAD",
-      "raw samples"
+      "raw samples",
+      "first-half/second-half medians"
     ],
     "cold_run_rule": "Each cold-start sample uses a fresh process. Warm-state benchmarks declare their warmup and reuse policy.",
     "environment_capture": [
@@ -28,10 +29,13 @@
       "command",
       "raw artifact SHA-256"
     ],
-    "regression_policy": "Do not activate numeric performance gates until at least 30 valid baseline samples exist on the same reference environment. A provisional regression threshold is >5% median or >10% p95 against that baseline, and must exceed measured noise; confirm with a repeated run before blocking.",
+    "regression_policy": "Do not activate numeric performance gates until at least 30 valid baseline samples and 30 valid matched blocks exist on the same reference environment. A provisional regression signal is >5% median or >10% p95 versus that baseline, and must exceed measured noise; confirm with an independent repeated campaign before blocking.",
     "comparison_policy": "Matched hardware, engine revision, workload revision, viewport, power state and runner methodology are mandatory. Publish per-workload results and raw samples; never compare across benchmark versions as if equivalent.",
     "result_policy": "Performance claims require correct output first. WPT correctness, privacy, security, crash stability, latency, throughput, memory and energy are separate evidence classes.",
-    "privacy_policy": "No page bodies, cookies, credentials or visited-URL histories in benchmark artifacts by default; fixtures are synthetic/local and opt-in evidence is explicit."
+    "privacy_policy": "No page bodies, cookies, credentials or visited-URL histories in benchmark artifacts by default; fixtures are synthetic/local and opt-in evidence is explicit.",
+    "minimum_paired_blocks_for_regression_gates": 30,
+    "comparison_design": "Default to matched blocks on one reference host. Within each block run baseline and candidate in randomized AB/BA order with a published deterministic seed and no overlapping benchmark processes; define state resets and cache policy in the suite manifest. Keep cold-start and warm-state measurements separate. If pairing is infeasible, label the comparison unpaired and require independent repeated confirmation before gating.",
+    "drift_policy": "Retain monotonic sample order; report first-half and second-half medians, robust dispersion and every raw sample. If temporal drift is distinguishable from within-run dispersion or if power/thermal/background state changes, mark the campaign unstable and repeat. Do not average drift away or post-hoc discard outliers; any numeric drift cutoff must be suite-specific and pre-registered."
   },
   "suites": [
     {

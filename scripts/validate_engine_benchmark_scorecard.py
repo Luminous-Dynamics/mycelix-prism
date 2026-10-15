@@ -39,6 +39,13 @@ def validate_scorecard(schema: Any, scorecard: Any) -> list[str]:
         warmups = protocol.get("warmup_runs")
         measured = protocol.get("measured_runs")
         minimum = protocol.get("minimum_baseline_samples_for_regression_gates")
+        paired_blocks = protocol.get("minimum_paired_blocks_for_regression_gates")
+        if isinstance(paired_blocks, bool) or not isinstance(paired_blocks, int) or paired_blocks < 30:
+            errors.append("minimum paired blocks must be at least 30 before regression gating")
+        for policy_name in ("comparison_design", "drift_policy"):
+            policy_text = protocol.get(policy_name)
+            if not isinstance(policy_text, str) or not policy_text.strip():
+                errors.append(f"{policy_name} must be a non-empty reproducibility policy")
         if isinstance(warmups, bool) or not isinstance(warmups, int) or warmups < 0:
             errors.append("warmup_runs must be a non-negative integer")
         if isinstance(measured, bool) or not isinstance(measured, int) or measured < 10:
@@ -49,9 +56,9 @@ def validate_scorecard(schema: Any, scorecard: Any) -> list[str]:
         if (
             not isinstance(report_stats, list)
             or any(not isinstance(item, str) for item in report_stats)
-            or not {"median", "p95", "IQR", "MAD", "raw samples"}.issubset(set(report_stats))
+            or not {"median", "p95", "IQR", "MAD", "raw samples", "first-half/second-half medians"}.issubset(set(report_stats))
         ):
-            errors.append("report_statistics must retain median, p95, IQR, MAD and raw samples")
+            errors.append("report_statistics must retain median, p95, IQR, MAD, raw samples and first-half/second-half medians")
 
     suites = scorecard.get("suites")
     if not isinstance(suites, list):

@@ -48,6 +48,21 @@ class BenchmarkScorecardTests(unittest.TestCase):
         scorecard["measurement_protocol"]["minimum_baseline_samples_for_regression_gates"] = 5
         self.assertTrue(any("at least 30" in e for e in validate_scorecard(SCHEMA, scorecard)))
 
+    def test_requires_paired_blocks_before_regression_gating(self) -> None:
+        scorecard = copy.deepcopy(SCORECARD)
+        scorecard["measurement_protocol"]["minimum_paired_blocks_for_regression_gates"] = 5
+        self.assertTrue(any("at least 30 paired blocks" in e for e in validate_scorecard(SCHEMA, scorecard)))
+
+    def test_requires_first_half_second_half_statistics(self) -> None:
+        scorecard = copy.deepcopy(SCORECARD)
+        scorecard["measurement_protocol"]["report_statistics"].remove("first-half/second-half medians")
+        self.assertTrue(any("first-half/second-half medians" in e for e in validate_scorecard(SCHEMA, scorecard)))
+
+    def test_requires_explicit_drift_policy(self) -> None:
+        scorecard = copy.deepcopy(SCORECARD)
+        scorecard["measurement_protocol"]["drift_policy"] = "   "
+        self.assertTrue(any("drift_policy must be a non-empty reproducibility policy" in e for e in validate_scorecard(SCHEMA, scorecard)))
+
     def test_requires_tail_and_variability_statistics(self) -> None:
         scorecard = copy.deepcopy(SCORECARD)
         scorecard["measurement_protocol"]["report_statistics"] = ["mean"]

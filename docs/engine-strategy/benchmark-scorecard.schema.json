@@ -36,7 +36,10 @@
         "regression_policy",
         "comparison_policy",
         "result_policy",
-        "privacy_policy"
+        "privacy_policy",
+        "minimum_paired_blocks_for_regression_gates",
+        "comparison_design",
+        "drift_policy"
       ],
       "properties": {
         "warmup_runs": {
@@ -79,6 +82,18 @@
           "minLength": 1
         },
         "privacy_policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minimum_paired_blocks_for_regression_gates": {
+          "type": "integer",
+          "minimum": 30
+        },
+        "comparison_design": {
+          "type": "string",
+          "minLength": 1
+        },
+        "drift_policy": {
           "type": "string",
           "minLength": 1
         }

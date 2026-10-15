@@ -86,8 +86,7 @@
           "minLength": 1
         },
         "minimum_paired_blocks_for_regression_gates": {
-          "type": "integer",
-          "minimum": 30
+          "type": "integer"
         },
         "comparison_design": {
           "type": "string",

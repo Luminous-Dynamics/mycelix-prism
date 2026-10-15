@@ -247,7 +247,15 @@ def validate_documents(schema: Any, ledger: Any) -> list[str]:
                 if evidence_id not in source_by_id:
                     errors.append(f"{cap_prefix} references unknown evidence id: {evidence_id}")
 
+            target_prism_revision = cap.get("verification_target_prism_revision")
+            if target_prism_revision is not None and (
+                not isinstance(target_prism_revision, str) or not SHA1_RE.fullmatch(target_prism_revision)
+            ):
+                errors.append(f"{cap_prefix}.verification_target_prism_revision must be null or a full lowercase 40-character commit SHA")
+
             if prism_status == "verified":
+                if not isinstance(target_prism_revision, str) or not SHA1_RE.fullmatch(target_prism_revision):
+                    errors.append(f"{cap_prefix} cannot be verified without an exact verification_target_prism_revision")
                 if engine.get("integration_status") not in {"partially_existing", "integrated"}:
                     errors.append(f"{cap_prefix} cannot be verified while engine integration is not implemented")
                 test_sources = [
@@ -263,6 +271,8 @@ def validate_documents(schema: Any, ledger: Any) -> list[str]:
                 for source in test_sources:
                     if source.get("engine_revision") != revision:
                         errors.append(f"{cap_prefix} test evidence engine_revision does not match this engine identity")
+                    if source.get("prism_revision") != target_prism_revision:
+                        errors.append(f"{cap_prefix} test evidence prism_revision does not match verification_target_prism_revision")
 
     return errors
 

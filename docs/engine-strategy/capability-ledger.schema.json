@@ -259,7 +259,8 @@
                 "upstream_evidence",
                 "prism_status",
                 "evidence_ids",
-                "notes"
+                "notes",
+                "verification_target_prism_revision"
               ],
               "properties": {
                 "capability_id": {
@@ -297,6 +298,13 @@
                 "notes": {
                   "type": "string",
                   "minLength": 1
+                },
+                "verification_target_prism_revision": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9a-f]{40}$"
                 }
               }
             }

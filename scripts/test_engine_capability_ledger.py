@@ -65,6 +65,7 @@ class EngineLedgerValidatorTests(unittest.TestCase):
         engine["integration_status"] = "integrated"
         cap = engine["capabilities"][0]
         cap["prism_status"] = "verified"
+        cap["verification_target_prism_revision"] = "a" * 40
         cap["evidence_ids"].append("synthetic-passing-test")
         ledger["evidence_sources"].append({
             "id": "synthetic-passing-test",
@@ -135,6 +136,37 @@ class EngineLedgerValidatorTests(unittest.TestCase):
         status_enum.append("works-on-my-machine")
         errors = validate_documents(schema, self.ledger)
         self.assertTrue(any("schema enum for prism_status does not match validator vocabulary" in error for error in errors))
+
+    def test_rejects_test_evidence_for_stale_prism_revision(self) -> None:
+        ledger = copy.deepcopy(self.ledger)
+        engine = ledger["engines"][0]
+        engine["integration_status"] = "integrated"
+        cap = engine["capabilities"][0]
+        cap["prism_status"] = "verified"
+        cap["verification_target_prism_revision"] = "b" * 40
+        cap["evidence_ids"].append("synthetic-current-engine-old-prism")
+        ledger["evidence_sources"].append({
+            "id": "synthetic-current-engine-old-prism",
+            "kind": "prism_test_result",
+            "url": "https://example.invalid/capsule.json",
+            "reviewed_at": "2026-10-15",
+            "revision": None,
+            "claim_scope": "synthetic validator fixture only; not real browser evidence",
+            "prism_revision": "a" * 40,
+            "engine_revision": engine["identity"]["revision"],
+            "command": "synthetic test fixture",
+            "artifact_url": "https://example.invalid/capsule.json",
+            "artifact_sha256": "c" * 64,
+            "capsule_schema_version": "1.0.0",
+            "environment": {
+                "os": "linux", "architecture": "x86_64", "runner_image": "synthetic-test-runner",
+                "toolchain": "synthetic fixture", "toolchain_lock_sha256": "d" * 64,
+                "gpu_backend": "not-applicable"
+            },
+            "result": "passed",
+        })
+        errors = validate_documents(self.schema, ledger)
+        self.assertTrue(any("test evidence prism_revision does not match verification_target_prism_revision" in error for error in errors))
 
     def test_rejects_passed_test_evidence_without_artifact_digest(self) -> None:
         ledger = copy.deepcopy(self.ledger)

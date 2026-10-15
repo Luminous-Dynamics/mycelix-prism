@@ -1,6 +1,5 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Luminous-Dynamics/mycelix-prism/blob/docs/prism-ladybird-positioning-and-ci-fix/docs/engine-strategy/capability-ledger.schema.json",
   "title": "Prism Engine Capability Evidence Ledger",
   "description": "Separates upstream source/documentation evidence from Prism integration and runtime-test status. Source presence is not integration proof.",
   "type": "object",
@@ -48,7 +47,10 @@
               "pinned_source",
               "official_project_documentation",
               "standard_or_specification",
-              "prism_source"
+              "prism_source",
+              "prism_test_result",
+              "benchmark_result",
+              "security_review"
             ]
           },
           "url": {
@@ -68,8 +70,55 @@
           "claim_scope": {
             "type": "string",
             "minLength": 1
+          },
+          "prism_revision": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "engine_revision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifact_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "result": {
+            "type": "string",
+            "minLength": 1
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "prism_test_result",
+                    "benchmark_result",
+                    "security_review"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "required": [
+                "prism_revision",
+                "engine_revision",
+                "command",
+                "artifact_url",
+                "result"
+              ]
+            }
+          }
+        ]
       }
     },
     "engines": {

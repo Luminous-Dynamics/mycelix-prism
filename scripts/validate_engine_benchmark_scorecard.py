@@ -12,6 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "docs/engine-strategy/benchmark-scorecard.schema.json"
 SCORECARD_PATH = ROOT / "docs/engine-strategy/benchmark-scorecard.json"
 ALLOWED_CLASS = {"correctness", "conformance", "security", "privacy", "performance", "resource", "reliability", "industry-comparator"}
+REQUIRED_POLICY_NONINTERFERENCE_METRICS = (
+    "unauthorized_side_effects",
+    "unconsented_cross_zone_flows",
+    "post_revocation_completions",
+    "policy_evaluation_fail_open_count",
+)
 
 
 def _allowed(value: Any, allowed: set[str]) -> bool:
@@ -96,9 +102,39 @@ def validate_scorecard(schema: Any, scorecard: Any) -> list[str]:
             if direction == "must_equal" and target is None:
                 errors.append(f"{mpath} must_equal metric needs an explicit target")
     ids = {s.get("id") for s in suites if isinstance(s, dict) and isinstance(s.get("id"), str)}
-    for required in ("local-fixture-correctness", "wpt-supported-subset", "broker-negative-controls", "local-only-egress"):
+    for required in ("local-fixture-correctness", "wpt-supported-subset", "broker-negative-controls", "local-only-egress", "policy-noninterference"):
         if required not in ids:
             errors.append(f"required P0 suite missing: {required}")
+    privacy_suite = next(
+        (suite for suite in suites if isinstance(suite, dict) and suite.get("id") == "policy-noninterference"),
+        None,
+    )
+    if privacy_suite is not None:
+        raw_metrics = privacy_suite.get("metrics")
+        metrics_by_id: dict[str, dict[str, Any]] = {}
+        if isinstance(raw_metrics, list):
+            for metric in raw_metrics:
+                if isinstance(metric, dict) and isinstance(metric.get("metric_id"), str):
+                    metrics_by_id[metric["metric_id"]] = metric
+        for required_metric_id in REQUIRED_POLICY_NONINTERFERENCE_METRICS:
+            metric = metrics_by_id.get(required_metric_id)
+            if not isinstance(metric, dict):
+                errors.append(f"required policy-noninterference metric missing: {required_metric_id}")
+                continue
+            target = metric.get("target_value")
+            if (
+                metric.get("direction") != "must_equal"
+                or isinstance(target, bool)
+                or not isinstance(target, (int, float))
+                or target != 0
+                or metric.get("target_stage") != "activation_gate"
+                or metric.get("gate_when_activated") is not True
+            ):
+                errors.append(
+                    f"policy-noninterference metric {required_metric_id} must remain a zero-tolerance "
+                    "activation gate (must_equal 0 with gate_when_activated=true)"
+                )
+
     return errors
 
 

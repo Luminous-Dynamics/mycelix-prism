@@ -58,6 +58,24 @@ class BenchmarkScorecardTests(unittest.TestCase):
         scorecard["suites"] = [s for s in scorecard["suites"] if s["id"] != "local-only-egress"]
         self.assertTrue(any("required P0 suite missing" in e for e in validate_scorecard(SCHEMA, scorecard)))
 
+    def test_requires_policy_noninterference_suite(self) -> None:
+        scorecard = copy.deepcopy(SCORECARD)
+        scorecard["suites"] = [s for s in scorecard["suites"] if s["id"] != "policy-noninterference"]
+        self.assertTrue(any("required P0 suite missing: policy-noninterference" in e for e in validate_scorecard(SCHEMA, scorecard)))
+
+    def test_requires_all_policy_noninterference_metrics(self) -> None:
+        scorecard = copy.deepcopy(SCORECARD)
+        suite = next(s for s in scorecard["suites"] if s["id"] == "policy-noninterference")
+        suite["metrics"] = [m for m in suite["metrics"] if m["metric_id"] != "unconsented_cross_zone_flows"]
+        self.assertTrue(any("required policy-noninterference metric missing: unconsented_cross_zone_flows" in e for e in validate_scorecard(SCHEMA, scorecard)))
+
+    def test_rejects_weakened_policy_noninterference_gate(self) -> None:
+        scorecard = copy.deepcopy(SCORECARD)
+        suite = next(s for s in scorecard["suites"] if s["id"] == "policy-noninterference")
+        metric = next(m for m in suite["metrics"] if m["metric_id"] == "post_revocation_completions")
+        metric["target_value"] = 1
+        self.assertTrue(any("must remain a zero-tolerance activation gate" in e for e in validate_scorecard(SCHEMA, scorecard)))
+
     def test_rejects_non_string_suite_class_without_crashing(self) -> None:
         scorecard = copy.deepcopy(SCORECARD)
         scorecard["suites"][0]["class"] = {"bad": "type"}

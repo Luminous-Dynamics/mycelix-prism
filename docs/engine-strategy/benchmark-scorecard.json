@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
-  "reviewed_at": "2026-10-15",
-  "decision": "Adopt correctness-first, reproducible performance budgets. Numerical latency/memory budgets are provisional engineering hypotheses until the Ladybird vertical slice is measured on a pinned reference machine. No external benchmark score target is set before the required APIs and workloads are genuinely supported.",
+  "reviewed_at": "2026-10-16",
+  "decision": "Adopt correctness-first, reproducible performance budgets and observable noninterference gates. Denial alone is not proof of privacy: zero side effects, consent-scoped cross-zone flow, and effective revocation must be measured. Numerical latency/memory budgets remain provisional hypotheses until the Ladybird vertical slice is measured on a pinned reference machine. No external benchmark score target is set before the required APIs and workloads are genuinely supported.",
   "measurement_protocol": {
     "warmup_runs": 2,
     "measured_runs": 10,
@@ -161,6 +161,63 @@
       "references": [
         "https://github.com/Luminous-Dynamics/mycelix-prism/issues/37",
         "https://github.com/WebAssembly/WASI/blob/main/docs/DesignPrinciples.md"
+      ]
+    },
+    {
+      "id": "policy-noninterference",
+      "class": "privacy",
+      "source": "Adversarial broker requests with before/after snapshots of broker-owned state, share queues, privileged-action records and observable egress",
+      "readiness": "ci_now",
+      "priority": "P0",
+      "status": "protocol_only",
+      "metrics": [
+        {
+          "metric_id": "unauthorized_side_effects",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "side effects",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "Denied, malformed, expired or unauthorized requests cause zero durable state changes, share-queue writes, privileged actions or outbound flows.",
+          "gate_when_activated": true
+        },
+        {
+          "metric_id": "unconsented_cross_zone_flows",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "flows",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "No PRIVATE or LOCAL data reaches a PUBLIC sink without explicit consent bound to the data scope, recipient, purpose and expiry.",
+          "gate_when_activated": true
+        },
+        {
+          "metric_id": "post_revocation_completions",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "operations",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "After revocation acknowledgement, no queued or in-flight operation relying on the revoked authority completes. Operations committed before the defined revocation boundary must be separately identified, not counted as post-revocation.",
+          "gate_when_activated": true
+        },
+        {
+          "metric_id": "policy_evaluation_fail_open_count",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "decisions",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "Unknown or malformed policy, policy timeout, schema/version mismatch or unavailable policy service yields deny/no-op, never implicit allow.",
+          "gate_when_activated": true
+        }
+      ],
+      "method": "For allowed, denied, malformed, expired, revoked and policy-failure requests, capture pre/post state digests, share-queue writes, privileged-action traces and observable network/IPC flows. Preserve raw event traces and capsule references. A side-effect channel that cannot be observed makes the result blocked/unclassified; missing telemetry is never interpreted as zero.",
+      "notes": "This is a future activation contract, not evidence that the current runtime enforces the property. A deny response alone is insufficient; a passing result must reconcile observable side-effect channels and state transitions.",
+      "references": [
+        "https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final",
+        "https://github.com/WebAssembly/WASI/blob/main/docs/DesignPrinciples.md",
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/36"
       ]
     },
     {

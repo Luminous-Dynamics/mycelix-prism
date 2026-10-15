@@ -207,8 +207,14 @@ mod tests {
             vec![result("beta claim"), result("alpha claim"), result("zeta claim")],
         );
 
-        let forward_contents = forward.iter().map(|item| item.content.as_str()).collect::<Vec<_>>();
-        let reverse_contents = reverse.iter().map(|item| item.content.as_str()).collect::<Vec<_>>();
+        let forward_contents = forward
+            .iter()
+            .map(|item| item.content.as_str())
+            .collect::<Vec<_>>();
+        let reverse_contents = reverse
+            .iter()
+            .map(|item| item.content.as_str())
+            .collect::<Vec<_>>();
         assert_eq!(forward_contents, reverse_contents);
         assert_eq!(forward_contents, vec!["alpha claim", "beta claim", "zeta claim"]);
     }

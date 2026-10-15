@@ -20,7 +20,7 @@ use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::error::Error;
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -30,6 +30,9 @@ const NDCG_CUTOFF: usize = 10;
 const EXPECTED_CANONICAL_CORPUS_DOCUMENTS: usize = 5_183;
 const EXPECTED_CANONICAL_QUERY_RECORDS: usize = 1_109;
 const EXPECTED_CANONICAL_TEST_QUERIES: usize = 300;
+const MAX_CORPUS_FILE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_QUERIES_FILE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_QRELS_FILE_BYTES: usize = 8 * 1024 * 1024;
 const CORPUS_SOURCE_PREFIX: &str = "beir-scifact-id:";
 
 #[derive(Debug, Deserialize)]
@@ -270,6 +273,27 @@ fn fingerprint(path: &str, raw: &[u8]) -> Fingerprint {
     }
 }
 
+/// Read one input with a hard byte budget, stopping after at most limit + 1
+/// bytes. Metadata prechecks alone would be racy and would not bound the read.
+fn read_bounded<R: Read>(
+    reader: R,
+    label: &str,
+    max_bytes: usize,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    let read_limit = u64::try_from(max_bytes)?
+        .checked_add(1)
+        .ok_or_else(|| invalid_data("input byte limit overflow"))?;
+    let mut bytes = Vec::new();
+    reader.take(read_limit).read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        return Err(invalid_data(format!(
+            "{label} exceeds the {max_bytes}-byte input limit"
+        ))
+        .into());
+    }
+    Ok(bytes)
+}
+
 fn parse_qrels(text: &str) -> Result<Qrels, Box<dyn Error>> {
     let mut lines = text.lines().enumerate().filter(|(_, line)| !line.trim().is_empty());
     let (_, header) = lines.next().ok_or_else(|| invalid_data("qrels file is empty"))?;
@@ -492,9 +516,21 @@ fn run(dataset_dir: &Path) -> Result<EvaluationReport, Box<dyn Error>> {
     let qrels_path = dataset_dir.join("qrels").join("test.tsv");
 
     let load_started = Instant::now();
-    let corpus_raw = fs::read(&corpus_path)?;
-    let queries_raw = fs::read(&queries_path)?;
-    let qrels_raw = fs::read(&qrels_path)?;
+    let corpus_raw = read_bounded(
+        fs::File::open(&corpus_path)?,
+        "corpus.jsonl",
+        MAX_CORPUS_FILE_BYTES,
+    )?;
+    let queries_raw = read_bounded(
+        fs::File::open(&queries_path)?,
+        "queries.jsonl",
+        MAX_QUERIES_FILE_BYTES,
+    )?;
+    let qrels_raw = read_bounded(
+        fs::File::open(&qrels_path)?,
+        "qrels/test.tsv",
+        MAX_QRELS_FILE_BYTES,
+    )?;
     let corpus_records = read_jsonl::<TextRecord>(&corpus_raw, "corpus.jsonl")?;
     let query_records = read_jsonl::<QueryRecord>(&queries_raw, "queries.jsonl")?;
     let qrels_text = std::str::from_utf8(&qrels_raw)
@@ -747,6 +783,17 @@ mod tests {
             .iter()
             .map(|(id, grade)| ((*id).to_string(), *grade))
             .collect()
+    }
+
+    #[test]
+    fn bounded_reader_accepts_exact_limit_and_rejects_over_limit() {
+        use std::io::Cursor;
+
+        assert_eq!(
+            read_bounded(Cursor::new(b"1234"), "fixture", 4).unwrap(),
+            b"1234"
+        );
+        assert!(read_bounded(Cursor::new(b"12345"), "fixture", 4).is_err());
     }
 
     #[test]

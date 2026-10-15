@@ -218,7 +218,7 @@ impl SearchEngine {
         }
 
         let mut cursor = Cursor::new(payload);
-        let claim_count = cursor.read_count(MAX_CLAIMS, "claims", 15)?;
+        let claim_count = cursor.read_count(MAX_CLAIMS, "claims", 16)?;
         let mut claims = Vec::with_capacity(claim_count);
         for _ in 0..claim_count {
             let content = cursor.read_string(MAX_CONTENT_BYTES, "claim content", true)?;
@@ -572,7 +572,7 @@ mod tests {
 
     fn vector_count_offset(bytes: &[u8]) -> usize {
         let mut cursor = Cursor::new(&bytes[TEST_HEADER_LEN..]);
-        let claims = cursor.read_count(MAX_CLAIMS, "claims", 15).unwrap();
+        let claims = cursor.read_count(MAX_CLAIMS, "claims", 16).unwrap();
         for _ in 0..claims {
             cursor.read_string(MAX_CONTENT_BYTES, "content", true).unwrap();
             let sources = cursor.read_count(MAX_SOURCES_PER_CLAIM, "sources", 4).unwrap();
@@ -592,7 +592,7 @@ mod tests {
 
     fn first_word_frequency_offset(bytes: &[u8]) -> usize {
         let mut cursor = Cursor::new(&bytes[TEST_HEADER_LEN..]);
-        let claims = cursor.read_count(MAX_CLAIMS, "claims", 15).unwrap();
+        let claims = cursor.read_count(MAX_CLAIMS, "claims", 16).unwrap();
         for _ in 0..claims {
             cursor.read_string(MAX_CONTENT_BYTES, "content", true).unwrap();
             let sources = cursor.read_count(MAX_SOURCES_PER_CLAIM, "sources", 4).unwrap();
@@ -743,4 +743,23 @@ mod tests {
             Err(PrecomputedIndexError::InconsistentWordFrequencies)
         ));
     }
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(128))]
+
+        #[test]
+        fn payload_byte_mutations_never_panic(
+            offset_seed in proptest::prelude::any::<usize>(),
+            replacement in proptest::prelude::any::<u8>(),
+        ) {
+            let mut bytes = sample_index().to_precomputed().unwrap();
+            let payload_len = bytes.len() - TEST_HEADER_LEN;
+            let offset = TEST_HEADER_LEN + (offset_seed % payload_len);
+            bytes[offset] = replacement;
+            reseal(&mut bytes);
+
+            let result = std::panic::catch_unwind(|| SearchEngine::try_from_precomputed(&bytes));
+            proptest::prop_assert!(result.is_ok());
+        }
+    }
+
 }

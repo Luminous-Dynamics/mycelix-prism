@@ -157,11 +157,13 @@ fn merge_unique_results(
         }
     }
 
-    // Re-rank by composite score.
+    // Re-rank by composite score, with a content tie-break so equal-score
+    // results do not inherit arbitrary DHT arrival order.
     merged.sort_by(|a, b| {
         b.rank_score()
             .partial_cmp(&a.rank_score())
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.content.cmp(&b.content))
     });
     merged
 }
@@ -192,6 +194,23 @@ mod tests {
             age_days: None,
             tags: Vec::new(),
         }
+    }
+
+    #[test]
+    fn equal_score_results_have_deterministic_content_order() {
+        let forward = merge_unique_results(
+            Vec::new(),
+            vec![result("zeta claim"), result("alpha claim"), result("beta claim")],
+        );
+        let reverse = merge_unique_results(
+            Vec::new(),
+            vec![result("beta claim"), result("alpha claim"), result("zeta claim")],
+        );
+
+        let forward_contents = forward.iter().map(|item| item.content.as_str()).collect::<Vec<_>>();
+        let reverse_contents = reverse.iter().map(|item| item.content.as_str()).collect::<Vec<_>>();
+        assert_eq!(forward_contents, reverse_contents);
+        assert_eq!(forward_contents, vec!["alpha claim", "beta claim", "zeta claim"]);
     }
 
     #[test]

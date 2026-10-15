@@ -550,8 +550,18 @@ mod tests {
 
     fn sample_index() -> SearchEngine {
         let mut engine = SearchEngine::new();
-        engine.add_claim("ocean acidification", EmpiricalLevel::E2, &["source://ocean"], &["climate"]);
-        engine.add_claim("quantum entanglement", EmpiricalLevel::E3, &["source://quantum"], &["physics"]);
+        engine.add_claim(
+            "ocean acidification",
+            EmpiricalLevel::E2,
+            &["source://ocean"],
+            &["climate"],
+        );
+        engine.add_claim(
+            "quantum entanglement",
+            EmpiricalLevel::E3,
+            &["source://quantum"],
+            &["physics"],
+        );
         engine
     }
 
@@ -708,7 +718,8 @@ mod tests {
     fn rejects_inconsistent_vectors_even_with_valid_digest() {
         let mut bytes = sample_index().to_precomputed().unwrap();
         let offset = vector_count_offset(&bytes);
-        let vectors_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        let vectors_len =
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
         let first_vector = offset + 4;
         assert!(vectors_len > 0);
         bytes[first_vector] ^= 1;

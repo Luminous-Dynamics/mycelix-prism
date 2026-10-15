@@ -28,6 +28,12 @@ class EngineLedgerValidatorTests(unittest.TestCase):
         errors = validate_documents(self.schema, ledger)
         self.assertTrue(any("references unknown evidence id" in error for error in errors))
 
+    def test_rejects_non_string_evidence_reference(self) -> None:
+        ledger = copy.deepcopy(self.ledger)
+        ledger["engines"][0]["capabilities"][0]["evidence_ids"].append({"unexpected": "object"})
+        errors = validate_documents(self.schema, ledger)
+        self.assertTrue(any("list of unique strings" in error for error in errors))
+
     def test_rejects_duplicate_evidence_id(self) -> None:
         ledger = copy.deepcopy(self.ledger)
         ledger["evidence_sources"].append(copy.deepcopy(ledger["evidence_sources"][0]))

@@ -180,6 +180,7 @@
               "not_implemented",
               "research_only",
               "partially_existing",
+              "integrated",
               "not_applicable"
             ]
           },

@@ -52,3 +52,8 @@ jobs:
         run: |
           python3 scripts/test_engine_test_capsule.py
           python3 scripts/validate_engine_test_capsule.py --check-schema
+
+      - name: Test and validate benchmark scorecard
+        run: |
+          python3 scripts/test_engine_benchmark_scorecard.py
+          python3 scripts/validate_engine_benchmark_scorecard.py

@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Fail-closed structural and semantic checks for Prism's benchmark scorecard."""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+SCHEMA_PATH = ROOT / "docs/engine-strategy/benchmark-scorecard.schema.json"
+SCORECARD_PATH = ROOT / "docs/engine-strategy/benchmark-scorecard.json"
+ALLOWED_CLASS = {"correctness", "conformance", "security", "privacy", "performance", "resource", "reliability", "industry-comparator"}
+
+
+def validate_scorecard(schema: Any, scorecard: Any) -> list[str]:
+    from engine_ledger_schema import validate_instance, validate_schema_definition
+
+    errors = validate_schema_definition(schema)
+    if errors:
+        return [f"schema contract error: {e}" for e in errors]
+    errors = validate_instance(scorecard, schema)
+    if not isinstance(scorecard, dict):
+        return errors or ["scorecard root must be an object"]
+
+    protocol = scorecard.get("measurement_protocol")
+    if isinstance(protocol, dict):
+        warmups = protocol.get("warmup_runs")
+        measured = protocol.get("measured_runs")
+        minimum = protocol.get("minimum_baseline_samples_for_regression_gates")
+        if isinstance(warmups, bool) or not isinstance(warmups, int) or warmups < 0:
+            errors.append("warmup_runs must be a non-negative integer")
+        if isinstance(measured, bool) or not isinstance(measured, int) or measured < 10:
+            errors.append("measured_runs must be at least 10")
+        if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 30:
+            errors.append("minimum baseline samples must be at least 30 before regression gating")
+        report_stats = protocol.get("report_statistics")
+        if not isinstance(report_stats, list) or not {"median", "p95", "IQR", "MAD", "raw samples"}.issubset(set(report_stats)):
+            errors.append("report_statistics must retain median, p95, IQR, MAD and raw samples")
+
+    suites = scorecard.get("suites")
+    if not isinstance(suites, list):
+        return errors + ["suites must be a list"]
+    suite_ids: set[str] = set()
+    metric_keys: set[tuple[str, str]] = set()
+    for index, suite in enumerate(suites):
+        prefix = f"suites[{index}]"
+        if not isinstance(suite, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        suite_id = suite.get("id")
+        if isinstance(suite_id, str):
+            if suite_id in suite_ids:
+                errors.append(f"duplicate suite id: {suite_id}")
+            suite_ids.add(suite_id)
+        if suite.get("class") not in ALLOWED_CLASS:
+            errors.append(f"{prefix}.class is not allowed")
+        metrics = suite.get("metrics")
+        if not isinstance(metrics, list):
+            errors.append(f"{prefix}.metrics must be a list")
+            continue
+        seen_metrics: set[str] = set()
+        for mindex, metric in enumerate(metrics):
+            mpath = f"{prefix}.metrics[{mindex}]"
+            if not isinstance(metric, dict):
+                errors.append(f"{mpath} must be an object")
+                continue
+            metric_id = metric.get("metric_id")
+            if isinstance(metric_id, str):
+                if metric_id in seen_metrics:
+                    errors.append(f"duplicate metric id {metric_id} within suite {suite_id}")
+                seen_metrics.add(metric_id)
+                metric_keys.add((suite_id, metric_id))
+            direction = metric.get("direction")
+            target = metric.get("target_value")
+            stage = metric.get("target_stage")
+            gate = metric.get("release_gate")
+            if direction == "baseline_only":
+                if target is not None or stage != "baseline_only" or gate is True:
+                    errors.append(f"{mpath} baseline-only metrics must not invent a score target or release gate")
+            elif target is None:
+                errors.append(f"{mpath} needs a numeric target unless it is explicitly baseline_only")
+            if stage == "provisional" and gate is True:
+                errors.append(f"{mpath} provisional target cannot be an active release gate")
+            if direction == "must_equal" and target is None:
+                errors.append(f"{mpath} must_equal metric needs an explicit target")
+    ids = {s.get("id") for s in suites if isinstance(s, dict)}
+    for required in ("local-fixture-correctness", "wpt-supported-subset", "broker-negative-controls", "local-only-egress"):
+        if required not in ids:
+            errors.append(f"required P0 suite missing: {required}")
+    return errors
+
+
+def main() -> int:
+    try:
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        scorecard = json.loads(SCORECARD_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"ERROR: cannot read benchmark contract: {exc}", file=sys.stderr)
+        return 2
+    errors = validate_scorecard(schema, scorecard)
+    if errors:
+        for error in errors:
+            print(f"ERROR: {error}", file=sys.stderr)
+        print(f"FAIL: {len(errors)} benchmark scorecard invariant(s) violated", file=sys.stderr)
+        return 1
+    metric_count = sum(len(s["metrics"]) for s in scorecard["suites"])
+    print(f"PASS: benchmark scorecard structurally valid ({len(scorecard['suites'])} suites, {metric_count} metrics)")
+    print("NOTE: targets are protocol entries, not measured scores; blocked suites have not run.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

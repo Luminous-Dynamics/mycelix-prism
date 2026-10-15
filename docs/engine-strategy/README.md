@@ -153,3 +153,16 @@ Expose a machine-readable ledger per engine revision: implemented, tested, unsup
 - **Prism-native engine:** allowed as a future, evidence-gated program; never require a wholesale rewrite as the price of ownership.
 - **Core innovation:** own the sovereignty, provenance, policy and testing architecture while steadily increasing component ownership based on proven advantage.
 - **Proof standard:** standards/WPT for behavior, adversarial tests for security boundaries, matched measurements for performance, pinned commits and inputs for reproducibility.
+
+
+## Benchmark targets and promotion gates
+
+The versioned [benchmark scorecard](benchmark-scorecard.json) and [schema](benchmark-scorecard.schema.json) define what Prism should measure, when the measurement becomes applicable, and which targets are provisional versus release gates. The scorecard is not a result report and all suite statuses currently say `protocol_only` or `not_applicable_yet`.
+
+The first gates are correctness and sovereignty: deterministic supported fixtures must pass; broker negative controls must fail closed; local-only/offline tests must show zero unexpected outbound requests. These precede performance claims. WPT is a separate conformance lane and its supported-subset pass rate must be reported honestly, not represented as whole-browser parity.
+
+Performance measurement uses two warm-ups and ten measured samples by default, reports median, p95, IQR, MAD and raw samples, and requires at least 30 valid same-environment baseline samples before activating numeric regression gates. The provisional regression signal is a greater-than-5% median or greater-than-10% p95 regression against that pinned baseline which exceeds measured noise; confirm on a repeat run before blocking. Numeric latency/resource budgets are provisional and must be recalibrated on a declared reference machine after the first Ladybird-backed vertical slice.
+
+Target hypotheses include p95 cold-start to usable frame ≤3,000 ms, p95 small local fixture navigation-to-correct-render ≤500 ms, p95 supported input-to-visible-update ≤100 ms, p95 process-tree RSS ≤500 MiB, and ≤5% p95 host-adapter overhead against standalone Ladybird on matched workloads. These are engineering goals, **not measured results**, and should not become release gates until the scorecard's calibration criteria are satisfied.
+
+Speedometer 3.1, JetStream 2.2 and MotionMark 1.3 are listed as future industry comparators with no invented score targets. Speedometer needs realistic interactive web-app/API support, JetStream needs JavaScript/WebAssembly runtime support, and MotionMark needs relevant graphics/animation APIs. For each, report the official suite version, detailed workloads, raw outputs and environment; do not publish misleading partial scores.

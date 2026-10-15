@@ -77,6 +77,16 @@ class EngineLedgerValidatorTests(unittest.TestCase):
             "engine_revision": "b" * 40,
             "command": "fixture test",
             "artifact_url": "https://example.invalid/artifact",
+            "artifact_sha256": "c" * 64,
+            "capsule_schema_version": "1.0.0",
+            "environment": {
+                "os": "linux",
+                "architecture": "x86_64",
+                "runner_image": "synthetic-test-runner",
+                "toolchain": "synthetic fixture",
+                "toolchain_lock_sha256": "d" * 64,
+                "gpu_backend": "not-applicable"
+            },
             "result": "passed"
         })
         errors = validate_documents(self.schema, ledger)

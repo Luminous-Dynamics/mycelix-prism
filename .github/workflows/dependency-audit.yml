@@ -67,6 +67,11 @@ jobs:
             exit "$metadata_status"
           fi
 
+          # Keep wildcard policy strict without treating path-only workspace
+          # dependencies (which have no version requirement) as registry wildcards.
+          python3 scripts/check_cargo_wildcard_requirements.py --self-test
+          python3 scripts/check_cargo_wildcard_requirements.py
+
           audit_status=0
           nix develop --command cargo audit --file Cargo.lock || audit_status=$?
 

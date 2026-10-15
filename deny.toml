@@ -5,12 +5,18 @@
 [advisories]
 # Do not suppress known RustSec advisories without an explicit, reviewed rationale.
 ignore = []
+# Keep all known unmaintained/unsound advisories blocking; no IDs are suppressed.
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
 
 [bans]
 # Report duplicate versions for intentional review; avoid hiding unexpected graph growth.
 multiple-versions = "warn"
-# Wildcard version requirements are not acceptable in dependency manifests.
-wildcards = "deny"
+# cargo-deny treats path-only workspace deps as wildcard requirements. Warn here,
+# then let the dedicated manifest check fail only on explicit wildcard versions.
+wildcards = "warn"
+allow-wildcard-paths = true
 highlight = "all"
 
 [sources]

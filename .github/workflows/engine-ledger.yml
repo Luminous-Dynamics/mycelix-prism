@@ -1,0 +1,43 @@
+name: Engine evidence ledger
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/engine-strategy/**"
+      - "scripts/validate_engine_capability_ledger.py"
+      - "scripts/test_engine_capability_ledger.py"
+      - ".github/workflows/engine-ledger.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/engine-strategy/**"
+      - "scripts/validate_engine_capability_ledger.py"
+      - "scripts/test_engine_capability_ledger.py"
+      - ".github/workflows/engine-ledger.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prism-engine-ledger-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-ledger:
+    name: Validate engine evidence ledger
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Run positive and negative invariant tests
+        run: python3 scripts/test_engine_capability_ledger.py
+
+      - name: Validate current schema, ledger and evidence references
+        run: python3 scripts/validate_engine_capability_ledger.py

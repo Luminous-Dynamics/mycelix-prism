@@ -89,7 +89,12 @@ def _validate_schema_vocabularies(schema: Any) -> list[str]:
     for path, expected in declarations.items():
         node = _schema_node(schema, *path)
         actual = node.get("enum") if isinstance(node, dict) else None
-        if not isinstance(actual, list) or set(actual) != expected or len(actual) != len(expected):
+        if (
+            not isinstance(actual, list)
+            or any(not isinstance(item, str) for item in actual)
+            or set(actual) != expected
+            or len(actual) != len(expected)
+        ):
             field = path[-1]
             errors.append(f"schema enum for {field} does not match validator vocabulary")
     return errors

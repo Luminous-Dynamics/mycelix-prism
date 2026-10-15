@@ -62,13 +62,60 @@ impl SearchEngine {
     /// emitting bytes. Raw bincode artifacts are intentionally not reinterpreted
     /// as this format; old artifacts must be rebuilt/re-encoded explicitly.
     pub fn to_precomputed(&self) -> Result<Vec<u8>, PrecomputedIndexError> {
-        validate_derived_state(self)?;
+        // Enforce cheap bounds before rebuilding corpus statistics and vectors.
         if self.claims.len() > MAX_CLAIMS || self.claims.len() != self.vectors.len() {
             return Err(PrecomputedIndexError::InconsistentClaimVectorCount);
         }
         if self.word_df.len() > MAX_WORD_DF_ENTRIES {
             return Err(PrecomputedIndexError::InvalidCount("word frequencies"));
         }
+
+        let mut projected_payload = 4_usize; // claim count
+        for claim in &self.claims {
+            if claim.content.is_empty() || claim.content.len() > MAX_CONTENT_BYTES {
+                return Err(PrecomputedIndexError::InvalidValue("claim content"));
+            }
+            if claim.sources.len() > MAX_SOURCES_PER_CLAIM {
+                return Err(PrecomputedIndexError::InvalidCount("claim sources"));
+            }
+            if claim.tags.len() > MAX_TAGS_PER_CLAIM {
+                return Err(PrecomputedIndexError::InvalidCount("claim tags"));
+            }
+            add_projected_size(&mut projected_payload, 4 + claim.content.len())?;
+            add_projected_size(&mut projected_payload, 4 + 3 + 4)?;
+            for source in &claim.sources {
+                if source.len() > MAX_SOURCE_BYTES {
+                    return Err(PrecomputedIndexError::InvalidValue("source"));
+                }
+                add_projected_size(&mut projected_payload, 4 + source.len())?;
+            }
+            for tag in &claim.tags {
+                if tag.len() > MAX_TAG_BYTES {
+                    return Err(PrecomputedIndexError::InvalidValue("tag"));
+                }
+                add_projected_size(&mut projected_payload, 4 + tag.len())?;
+            }
+        }
+
+        add_projected_size(&mut projected_payload, 4)?; // vector count
+        let vectors_size = self
+            .vectors
+            .len()
+            .checked_mul(BinaryHV::BYTES)
+            .ok_or(PrecomputedIndexError::TooLarge)?;
+        add_projected_size(&mut projected_payload, vectors_size)?;
+        add_projected_size(&mut projected_payload, 4)?; // word-frequency count
+        for (word, frequency) in &self.word_df {
+            if word.is_empty() || word.len() > MAX_WORD_BYTES {
+                return Err(PrecomputedIndexError::InvalidValue("word"));
+            }
+            if *frequency == 0 || *frequency > self.claims.len() {
+                return Err(PrecomputedIndexError::InvalidValue("word frequency"));
+            }
+            add_projected_size(&mut projected_payload, 4 + word.len() + 8)?;
+        }
+
+        validate_derived_state(self)?;
 
         let mut payload = Writer::default();
         payload.write_count(self.claims.len(), MAX_CLAIMS, "claims")?;
@@ -239,6 +286,19 @@ impl SearchEngine {
         validate_derived_state(&engine)?;
         Ok(engine)
     }
+}
+
+fn add_projected_size(
+    total: &mut usize,
+    additional: usize,
+) -> Result<(), PrecomputedIndexError> {
+    *total = total
+        .checked_add(additional)
+        .ok_or(PrecomputedIndexError::TooLarge)?;
+    if *total > MAX_PAYLOAD_BYTES {
+        return Err(PrecomputedIndexError::TooLarge);
+    }
+    Ok(())
 }
 
 fn validate_derived_state(engine: &SearchEngine) -> Result<(), PrecomputedIndexError> {
@@ -606,6 +666,18 @@ mod tests {
         assert!(matches!(
             SearchEngine::try_from_precomputed(&corrupt),
             Err(PrecomputedIndexError::DigestMismatch)
+        ));
+    }
+
+    #[test]
+    fn rejects_malicious_content_length_before_copying() {
+        let mut bytes = sample_index().to_precomputed().unwrap();
+        let offset = TEST_HEADER_LEN + 4;
+        bytes[offset..offset + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        reseal(&mut bytes);
+        assert!(matches!(
+            SearchEngine::try_from_precomputed(&bytes),
+            Err(PrecomputedIndexError::InvalidValue("claim content"))
         ));
     }
 

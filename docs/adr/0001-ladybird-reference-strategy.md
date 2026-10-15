@@ -1,9 +1,11 @@
-# ADR-0001: Use Ladybird as Prism's browser-engine reference, not a runtime dependency
+# ADR-0001: Use Ladybird as Prism's browser-engine reference, not a runtime dependency (superseded)
 
-- **Status:** Proposed for review; recommended working decision for the current phase
+- **Status:** Superseded by [ADR-0002: Ladybird-first rendering behind a replaceable engine boundary](0002-ladybird-first-replaceable-engine.md)
 - **Date:** 2026-10-10
 - **Owners:** Prism maintainers
-- **Scope:** Browser-engine strategy, compatibility testing, code reuse, integration boundaries
+- **Scope:** Historical browser-engine strategy, compatibility testing, code reuse, integration boundaries
+
+> **Superseded on 2026-10-15.** This document preserves the earlier reference-first decision for historical context. Follow ADR-0002 for the current direction: Ladybird is Prism's selected first-choice renderer, behind a Prism-owned adapter that preserves the option of adding other engines later. Selecting Ladybird does not mean the runtime integration has been built or passed its release gates.
 
 ## Context
 

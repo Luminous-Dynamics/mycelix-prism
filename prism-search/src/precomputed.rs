@@ -29,6 +29,7 @@ const MAX_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_TAG_BYTES: usize = 4 * 1024;
 const MAX_WORD_BYTES: usize = 256;
 const MAX_INDEXED_WORDS_PER_CLAIM: usize = 2_048;
+const MAX_TOTAL_INDEXED_WORDS: usize = 1_000_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrecomputedIndexError {
@@ -311,6 +312,7 @@ fn validate_derived_state(engine: &SearchEngine) -> Result<(), PrecomputedIndexE
     }
 
     let mut expected_word_df = HashMap::<String, usize>::new();
+    let mut total_indexed_words = 0usize;
     for claim in &engine.claims {
         let lowered = claim.content.to_lowercase();
         let indexed_word_count = lowered
@@ -323,6 +325,12 @@ fn validate_derived_state(engine: &SearchEngine) -> Result<(), PrecomputedIndexE
             // unigram and adjacent-word bigram. Bound temporary validation memory
             // independently of the raw string/file-size caps.
             return Err(PrecomputedIndexError::InvalidValue("claim indexed word count"));
+        }
+        total_indexed_words = total_indexed_words
+            .checked_add(indexed_word_count)
+            .ok_or(PrecomputedIndexError::InvalidCount("total indexed words"))?;
+        if total_indexed_words > MAX_TOTAL_INDEXED_WORDS {
+            return Err(PrecomputedIndexError::InvalidCount("total indexed words"));
         }
         let words: HashSet<&str> = lowered
             .split(|character: char| !character.is_alphanumeric())
@@ -729,6 +737,37 @@ mod tests {
         assert_eq!(
             engine.to_precomputed(),
             Err(PrecomputedIndexError::InvalidValue("claim indexed word count"))
+        );
+    }
+
+    #[test]
+    fn rejects_excessive_aggregate_index_terms_before_vector_recomputation() {
+        // Every claim is individually under the 2,048-word limit, but the
+        // aggregate exceeds the work budget. No stored vector is trusted and
+        // expensive vector recomputation must not begin.
+        let content = std::iter::repeat("ocean")
+            .take(2_000)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let claim_count = MAX_TOTAL_INDEXED_WORDS / 2_000 + 1;
+        let engine = SearchEngine {
+            claims: (0..claim_count)
+                .map(|_| ClaimEntry {
+                    content: content.clone(),
+                    sources: Vec::new(),
+                    empirical_level: EmpiricalLevel::E2,
+                    normative_level: NormativeLevel::N2,
+                    materiality_level: MaterialityLevel::M2,
+                    tags: Vec::new(),
+                })
+                .collect(),
+            vectors: vec![BinaryHV([0_u8; BinaryHV::BYTES]); claim_count],
+            word_df: HashMap::from([("ocean".to_string(), claim_count)]),
+        };
+
+        assert_eq!(
+            engine.to_precomputed(),
+            Err(PrecomputedIndexError::InvalidCount("total indexed words"))
         );
     }
 

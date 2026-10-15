@@ -137,35 +137,42 @@ pub async fn unified_search(local_results: Vec<SearchResult>, query: &str) -> Ve
     merge_unique_results(local_results, dht_results)
 }
 
-/// Merge claims using their full normalized text as identity.
+/// Merge DHT claims without pretending that unmeasured relevance is a comparable score.
 ///
-/// A prefix is not a sound identity: distinct claims can share arbitrarily long
-/// introductions. Updating the seen-set after insertion also prevents duplicate
-/// items within the incoming DHT batch from being appended more than once.
+/// Local results are already ordered by measured query similarity using the local
+/// corpus's IDF statistics. DHT results currently have no computed query similarity,
+/// so their normalized composite scores are not comparable to the local scores.
+/// Preserve the local ranking, deduplicate by full normalized content, then rank the
+/// DHT-only tier by evidence level and deterministic content order until both sources
+/// share a calibrated scoring contract.
 fn merge_unique_results(
-    mut merged: Vec<SearchResult>,
+    mut local_results: Vec<SearchResult>,
     dht_results: Vec<SearchResult>,
 ) -> Vec<SearchResult> {
-    let mut seen: std::collections::HashSet<String> = merged
+    let mut seen: std::collections::HashSet<String> = local_results
         .iter()
         .map(|result| normalize_claim_content(&result.content))
         .collect();
+    let mut unique_dht = Vec::with_capacity(dht_results.len());
 
     for result in dht_results {
         if seen.insert(normalize_claim_content(&result.content)) {
-            merged.push(result);
+            unique_dht.push(result);
         }
     }
 
-    // Re-rank by composite score, with a content tie-break so equal-score
-    // results do not inherit arbitrary DHT arrival order.
-    merged.sort_by(|a, b| {
-        b.rank_score()
-            .partial_cmp(&a.rank_score())
+    // DHT's similarity/reputation/age are unknown today. Rank this tier only by
+    // the explicit evidence classification, never by mixing partial scores.
+    unique_dht.sort_by(|a, b| {
+        b.empirical_level
+            .as_f32()
+            .partial_cmp(&a.empirical_level.as_f32())
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.content.cmp(&b.content))
     });
-    merged
+
+    local_results.extend(unique_dht);
+    local_results
 }
 
 /// Normalize whitespace and case while preserving the full claim.
@@ -194,6 +201,24 @@ mod tests {
             age_days: None,
             tags: Vec::new(),
         }
+    }
+
+    #[test]
+    fn fallback_does_not_compare_unknown_dht_relevance_to_local_similarity() {
+        let local = result("local result with measured similarity");
+        let mut dht = result("remote result with unknown similarity");
+        dht.empirical_level = EmpiricalLevel::E4;
+        dht.query_similarity = None;
+
+        // The rank_score values are not semantically comparable because the
+        // local result has a measured similarity component but the DHT result does not.
+        assert!(dht.rank_score() > local.rank_score());
+
+        let merged = merge_unique_results(vec![local], vec![dht]);
+        assert_eq!(merged[0].content, "local result with measured similarity");
+        assert_eq!(merged[0].query_similarity, Some(0.5));
+        assert_eq!(merged[1].content, "remote result with unknown similarity");
+        assert_eq!(merged[1].query_similarity, None);
     }
 
     #[test]

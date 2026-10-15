@@ -1,0 +1,29 @@
+# Prism dependency policy.
+# License policy is deliberately separate until the full lockfile license inventory
+# has been reviewed; this file does not claim that every dependency is license-cleared.
+
+[advisories]
+# Do not suppress known RustSec advisories without an explicit, reviewed rationale.
+ignore = []
+# Keep all known unmaintained/unsound advisories blocking; no IDs are suppressed.
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+
+[bans]
+# Report duplicate versions for intentional review; avoid hiding unexpected graph growth.
+multiple-versions = "warn"
+# cargo-deny treats path-only workspace deps as wildcard requirements. Warn here,
+# then let the dedicated manifest check fail only on explicit wildcard versions.
+wildcards = "warn"
+allow-wildcard-paths = true
+highlight = "all"
+
+[sources]
+# The default registry (crates.io) is permitted. Unknown registries and unapproved
+# Git sources fail closed. Symthaea is the current explicitly pinned Git dependency.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = [
+  "https://github.com/Luminous-Dynamics/symthaea",
+]

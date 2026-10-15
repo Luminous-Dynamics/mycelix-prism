@@ -34,7 +34,7 @@ class BenchmarkScorecardTests(unittest.TestCase):
     def test_rejects_perf_gate_before_baseline(self) -> None:
         scorecard = copy.deepcopy(SCORECARD)
         metric = next(m for s in scorecard["suites"] for m in s["metrics"] if m["target_stage"] == "provisional")
-        metric["release_gate"] = True
+        metric["gate_when_activated"] = True
         self.assertTrue(any("provisional target cannot be an active release gate" in e for e in validate_scorecard(SCHEMA, scorecard)))
 
     def test_rejects_invented_industry_score_target(self) -> None:
@@ -75,6 +75,18 @@ class BenchmarkScorecardTests(unittest.TestCase):
         scorecard["suites"][0]["references"] = []
         errors = validate_scorecard(SCHEMA, scorecard)
         self.assertTrue(any("fewer than 1 items" in e for e in errors))
+
+    def test_rejects_non_finite_target(self) -> None:
+        scorecard = copy.deepcopy(SCORECARD)
+        scorecard["suites"][0]["metrics"][0]["target_value"] = float("nan")
+        self.assertTrue(any("finite, non-negative number" in e for e in validate_scorecard(SCHEMA, scorecard)))
+
+    def test_provisional_metrics_are_not_active_release_gates(self) -> None:
+        scorecard = copy.deepcopy(SCORECARD)
+        metric = next(m for s in scorecard["suites"] for m in s["metrics"] if m["target_stage"] == "provisional")
+        self.assertFalse(metric["gate_when_activated"])
+        metric["gate_when_activated"] = True
+        self.assertTrue(any("provisional target cannot be a release gate when activated" in e for e in validate_scorecard(SCHEMA, scorecard)))
 
     def test_rejects_missing_numeric_target(self) -> None:
         scorecard = copy.deepcopy(SCORECARD)

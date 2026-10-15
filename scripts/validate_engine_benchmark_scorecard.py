@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -82,14 +83,16 @@ def validate_scorecard(schema: Any, scorecard: Any) -> list[str]:
             direction = metric.get("direction")
             target = metric.get("target_value")
             stage = metric.get("target_stage")
-            gate = metric.get("release_gate")
+            gate = metric.get("gate_when_activated")
             if direction == "baseline_only":
                 if target is not None or stage != "baseline_only" or gate is True:
-                    errors.append(f"{mpath} baseline-only metrics must not invent a score target or release gate")
+                    errors.append(f"{mpath} baseline-only metrics must not invent a score target or release gate when activated")
             elif target is None:
                 errors.append(f"{mpath} needs a numeric target unless it is explicitly baseline_only")
+            elif isinstance(target, bool) or not isinstance(target, (int, float)) or not math.isfinite(target) or target < 0:
+                errors.append(f"{mpath} target must be a finite, non-negative number")
             if stage == "provisional" and gate is True:
-                errors.append(f"{mpath} provisional target cannot be an active release gate")
+                errors.append(f"{mpath} provisional target cannot be a release gate when activated")
             if direction == "must_equal" and target is None:
                 errors.append(f"{mpath} must_equal metric needs an explicit target")
     ids = {s.get("id") for s in suites if isinstance(s, dict) and isinstance(s.get("id"), str)}

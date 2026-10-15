@@ -163,7 +163,7 @@
                 "unit",
                 "target_stage",
                 "target_basis",
-                "release_gate",
+                "gate_when_activated",
                 "pass_condition"
               ],
               "properties": {
@@ -205,12 +205,12 @@
                     "none_until_support"
                   ]
                 },
-                "release_gate": {
-                  "type": "boolean"
-                },
                 "pass_condition": {
                   "type": "string",
                   "minLength": 1
+                },
+                "gate_when_activated": {
+                  "type": "boolean"
                 }
               }
             }

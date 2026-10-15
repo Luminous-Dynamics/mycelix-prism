@@ -49,8 +49,8 @@
           "unit": "percent",
           "target_stage": "activation_gate",
           "target_basis": "correctness_contract",
-          "release_gate": true,
-          "pass_condition": "Every fixture declared supported by the current manifest passes."
+          "pass_condition": "Every fixture declared supported by the current manifest passes.",
+          "gate_when_activated": true
         },
         {
           "metric_id": "unexpected_failure_count",
@@ -59,8 +59,8 @@
           "unit": "cases",
           "target_stage": "activation_gate",
           "target_basis": "zero_tolerance",
-          "release_gate": true,
-          "pass_condition": "No unexpected failure is accepted in the declared supported set."
+          "pass_condition": "No unexpected failure is accepted in the declared supported set.",
+          "gate_when_activated": true
         },
         {
           "metric_id": "unclassified_case_count",
@@ -69,8 +69,8 @@
           "unit": "cases",
           "target_stage": "activation_gate",
           "target_basis": "zero_tolerance",
-          "release_gate": true,
-          "pass_condition": "Every declared case has an explicit outcome; missing is not success."
+          "pass_condition": "Every declared case has an explicit outcome; missing is not success.",
+          "gate_when_activated": true
         }
       ],
       "method": "Run deterministic local fixtures without public-network dependency; preserve one result record per manifest case.",
@@ -94,8 +94,8 @@
           "unit": "percent",
           "target_stage": "activation_gate",
           "target_basis": "correctness_contract",
-          "release_gate": true,
-          "pass_condition": "100% of the explicitly declared required/supported WPT cases pass."
+          "pass_condition": "100% of the explicitly declared required/supported WPT cases pass.",
+          "gate_when_activated": true
         },
         {
           "metric_id": "unexpected_wpt_failures",
@@ -104,8 +104,8 @@
           "unit": "cases",
           "target_stage": "activation_gate",
           "target_basis": "zero_tolerance",
-          "release_gate": true,
-          "pass_condition": "No new unexpected failures within the declared supported set."
+          "pass_condition": "No new unexpected failures within the declared supported set.",
+          "gate_when_activated": true
         },
         {
           "metric_id": "unreported_wpt_cases",
@@ -114,15 +114,17 @@
           "unit": "cases",
           "target_stage": "activation_gate",
           "target_basis": "zero_tolerance",
-          "release_gate": true,
-          "pass_condition": "Pass, fail, timeout, unsupported, skipped and not-run counts reconcile to the manifest."
+          "pass_condition": "Pass, fail, timeout, unsupported, skipped and not-run counts reconcile to the manifest.",
+          "gate_when_activated": true
         }
       ],
       "method": "Pin WPT commit and manifest; retain raw machine-readable output; report outcomes separately per spec area.",
       "notes": "Never present a subset score as overall browser compatibility. WPT is a correctness/conformance lane, not a performance score.",
       "references": [
         "https://web-platform-tests.org/",
-        "https://github.com/web-platform-tests/wpt"
+        "https://github.com/web-platform-tests/wpt",
+        "https://github.com/web-platform-tests/wpt/blob/master/docs/running-tests/from-local-system.md",
+        "https://github.com/web-platform-tests/wpt.fyi/blob/main/api/README.md"
       ]
     },
     {
@@ -140,8 +142,8 @@
           "unit": "percent",
           "target_stage": "activation_gate",
           "target_basis": "zero_tolerance",
-          "release_gate": true,
-          "pass_condition": "Every unauthorized or malformed privileged request is denied or rejected safely."
+          "pass_condition": "Every unauthorized or malformed privileged request is denied or rejected safely.",
+          "gate_when_activated": true
         },
         {
           "metric_id": "fail_open_negative_controls",
@@ -150,8 +152,8 @@
           "unit": "cases",
           "target_stage": "activation_gate",
           "target_basis": "zero_tolerance",
-          "release_gate": true,
-          "pass_condition": "No negative control obtains privileged access."
+          "pass_condition": "No negative control obtains privileged access.",
+          "gate_when_activated": true
         }
       ],
       "method": "Use explicit allow/deny expectations, malformed payloads, origin/context mismatches and revoked capability cases. Measure latency separately.",
@@ -176,8 +178,8 @@
           "unit": "requests",
           "target_stage": "activation_gate",
           "target_basis": "zero_tolerance",
-          "release_gate": true,
-          "pass_condition": "No unexpected outbound connection/request is emitted during an explicitly offline/local-only scenario."
+          "pass_condition": "No unexpected outbound connection/request is emitted during an explicitly offline/local-only scenario.",
+          "gate_when_activated": true
         }
       ],
       "method": "Run with network blocked and an observable egress boundary; distinguish deliberate loopback fixture traffic from outbound egress.",
@@ -202,8 +204,8 @@
           "unit": "milliseconds",
           "target_stage": "provisional",
           "target_basis": "absolute_budget",
-          "release_gate": false,
-          "pass_condition": "P95 target ≤ 3,000 ms on the declared reference machine; calibrate after initial 30-sample baseline."
+          "pass_condition": "P95 target ≤ 3,000 ms on the declared reference machine; calibrate after initial 30-sample baseline.",
+          "gate_when_activated": false
         }
       ],
       "method": "Measure process launch to first correct, nonblank, usable frame. Each cold sample starts a fresh process; record p50/p95 and raw samples.",
@@ -227,8 +229,8 @@
           "unit": "milliseconds",
           "target_stage": "provisional",
           "target_basis": "absolute_budget",
-          "release_gate": false,
-          "pass_condition": "P95 target ≤ 500 ms for a defined small local static fixture after the renderer slice exists."
+          "pass_condition": "P95 target ≤ 500 ms for a defined small local static fixture after the renderer slice exists.",
+          "gate_when_activated": false
         }
       ],
       "method": "Start navigation from the same local fixture; end only after a correctness assertion and render-completion signal. Do not substitute a fixed sleep.",
@@ -252,8 +254,8 @@
           "unit": "milliseconds",
           "target_stage": "provisional",
           "target_basis": "absolute_budget",
-          "release_gate": false,
-          "pass_condition": "P95 target ≤ 100 ms for a declared, supported interaction on reference hardware."
+          "pass_condition": "P95 target ≤ 100 ms for a declared, supported interaction on reference hardware.",
+          "gate_when_activated": false
         }
       ],
       "method": "Measure from a trusted injected input event to a frame containing the expected visible state change; retain raw per-event durations.",
@@ -277,8 +279,8 @@
           "unit": "MiB",
           "target_stage": "provisional",
           "target_basis": "absolute_budget",
-          "release_gate": false,
-          "pass_condition": "P95 process-tree resident set ≤ 500 MiB on the reference workload and hardware."
+          "pass_condition": "P95 process-tree resident set ≤ 500 MiB on the reference workload and hardware.",
+          "gate_when_activated": false
         }
       ],
       "method": "Record renderer plus helper process tree, peak RSS and time series; report cold and steady-state separately.",
@@ -303,8 +305,8 @@
           "unit": "percent",
           "target_stage": "provisional",
           "target_basis": "relative_to_baseline",
-          "release_gate": false,
-          "pass_condition": "Prism host adapter adds no more than 5% p95 latency against the matched standalone-Ladybird baseline, once comparable integration paths exist."
+          "pass_condition": "Prism host adapter adds no more than 5% p95 latency against the matched standalone-Ladybird baseline, once comparable integration paths exist.",
+          "gate_when_activated": false
         }
       ],
       "method": "Paired A/B runs in randomized order against the identical engine SHA, fixtures and reference environment. Publish both raw distributions.",
@@ -329,8 +331,8 @@
           "unit": "crashes",
           "target_stage": "activation_gate",
           "target_basis": "zero_tolerance",
-          "release_gate": true,
-          "pass_condition": "No renderer/host crash in a 10,000-case deterministic soak; each timeout is separately reported and triaged."
+          "pass_condition": "No renderer/host crash in a 10,000-case deterministic soak; each timeout is separately reported and triaged.",
+          "gate_when_activated": true
         },
         {
           "metric_id": "unhandled_timeouts",
@@ -339,8 +341,8 @@
           "unit": "cases",
           "target_stage": "activation_gate",
           "target_basis": "zero_tolerance",
-          "release_gate": true,
-          "pass_condition": "No timeout is silently discarded or treated as pass."
+          "pass_condition": "No timeout is silently discarded or treated as pass.",
+          "gate_when_activated": true
         }
       ],
       "method": "Run in isolated worker processes with per-case timeout, crash capture, fixture hash and deterministic replay record.",
@@ -365,8 +367,8 @@
           "unit": "official score",
           "target_stage": "baseline_only",
           "target_basis": "none_until_support",
-          "release_gate": false,
-          "pass_condition": "Once supported, publish version-pinned aggregate and per-workload results with raw JSON; set no comparative score target until the run is valid."
+          "pass_condition": "Once supported, publish version-pinned aggregate and per-workload results with raw JSON; set no comparative score target until the run is valid.",
+          "gate_when_activated": false
         }
       ],
       "method": "Use official Speedometer 3.1 workload, clean profile, focused device and pinned harness revision; publish harness warnings and detailed subtest results.",
@@ -392,14 +394,15 @@
           "unit": "official score",
           "target_stage": "baseline_only",
           "target_basis": "none_until_support",
-          "release_gate": false,
-          "pass_condition": "Once JavaScript/WebAssembly workloads are genuinely supported, publish version-pinned score and subtest output; do not fabricate missing-workload scores."
+          "pass_condition": "Once JavaScript/WebAssembly workloads are genuinely supported, publish version-pinned score and subtest output; do not fabricate missing-workload scores.",
+          "gate_when_activated": false
         }
       ],
       "method": "Pin JetStream 2.2, use a clean environment, preserve subtest data and do not compare scores from different JetStream versions.",
       "notes": "Not applicable to the current Prism runtime until the required scripting/runtime capabilities exist.",
       "references": [
-        "https://webkit.org/blog/15378/jetstream-2-2/"
+        "https://webkit.org/blog/15378/jetstream-2-2/",
+        "https://browserbench.org/JetStream2.2/index.html"
       ]
     },
     {
@@ -417,8 +420,8 @@
           "unit": "official score",
           "target_stage": "baseline_only",
           "target_basis": "none_until_support",
-          "release_gate": false,
-          "pass_condition": "Once graphics/animation workloads are valid, publish version-pinned result and subtests; document display refresh rate and graphics backend."
+          "pass_condition": "Once graphics/animation workloads are valid, publish version-pinned result and subtests; document display refresh rate and graphics backend.",
+          "gate_when_activated": false
         }
       ],
       "method": "Pin MotionMark version and display refresh-rate protocol; record GPU backend, screen resolution and per-suite results.",

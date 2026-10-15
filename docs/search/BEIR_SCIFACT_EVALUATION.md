@@ -23,7 +23,7 @@ unzip ./scifact.zip -d ./datasets
 find ./datasets -type f \( -name corpus.jsonl -o -name queries.jsonl -o -path '*/qrels/test.tsv' \) -print
 ~~~
 
-Pass the directory that directly contains corpus.jsonl and queries.jsonl and whose qrels subdirectory contains test.tsv. Nothing is downloaded automatically by the Rust program. No benchmark corpus or labels are committed to Prism, and normal CI does not fetch this research dataset.
+Pass the directory that directly contains corpus.jsonl and queries.jsonl and whose qrels subdirectory contains test.tsv. Nothing is downloaded automatically by the Rust program. No benchmark corpus or labels are committed to Prism, and normal CI does not fetch this research dataset. The reader enforces hard input limits of 64 MiB for `corpus.jsonl`, 8 MiB for `queries.jsonl`, and 8 MiB for `qrels/test.tsv`; oversize inputs fail before parsing proceeds.
 
 ## Run
 

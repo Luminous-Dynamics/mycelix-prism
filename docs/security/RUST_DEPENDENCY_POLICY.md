@@ -9,7 +9,7 @@ Prism must make dependency provenance and known-vulnerability checks repeatable 
 The `.github/workflows/dependency-audit.yml` workflow checks the committed `Cargo.lock` after validating it with `cargo metadata --locked`.
 
 - **RustSec advisories:** `cargo audit --file Cargo.lock` checks the lockfile against the RustSec advisory database. No advisory IDs are globally suppressed by this policy.
-- **Dependency graph and sources:** `cargo deny check --locked advisories bans sources` checks advisories, reports duplicate dependency versions for review, rejects wildcard version requirements, and rejects unknown registries or unapproved Git sources.
+- **Dependency graph and sources:** `cargo deny --locked check advisories bans sources` checks advisories, reports duplicate dependency versions for review, rejects wildcard version requirements, and rejects unknown registries or unapproved Git sources.
 - **Pinned Git exception:** the workspace currently consumes Symthaea from `https://github.com/Luminous-Dynamics/symthaea`; its precise revision must remain visible in `Cargo.lock`. The URL allowlist does not itself approve arbitrary revisions.
 - **Build reproducibility:** metadata validation uses `--locked`, and the workflow records the SHA-256 digest of the exact lockfile it audits.
 

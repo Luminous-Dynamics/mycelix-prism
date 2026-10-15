@@ -619,11 +619,26 @@ fn run(dataset_dir: &Path) -> Result<EvaluationReport, Box<dyn Error>> {
         per_query,
         limitations: vec![
             "Input files are user-supplied; no data is downloaded or bundled.",
-            "BLAKE3 hashes identify exact bytes; they do not prove dataset authenticity or licensing.",
-            "HDC search currently caps returned candidates at 100, so Recall@1000 is not available.",
-            "Metrics compare this Prism implementation with this local BM25 baseline, not BEIR leaderboard scores.",
-            "All corpus entries receive the same E2 metadata, so epistemic levels do not intentionally bias within-corpus ranking.",
-            "Runtime timings depend on the host, build mode, and system load; report hardware and compiler separately.",
+            concat!(
+                "BLAKE3 hashes identify exact bytes; ",
+                "they do not prove dataset authenticity or licensing."
+            ),
+            concat!(
+                "HDC search currently caps returned candidates at 100, ",
+                "so Recall@1000 is not available."
+            ),
+            concat!(
+                "Metrics compare this Prism implementation with this local BM25 baseline, ",
+                "not BEIR leaderboard scores."
+            ),
+            concat!(
+                "All corpus entries receive the same E2 metadata, ",
+                "so epistemic levels do not intentionally bias within-corpus ranking."
+            ),
+            concat!(
+                "Runtime timings depend on the host, build mode, and system load; ",
+                "report hardware and compiler separately."
+            ),
         ],
     })
 }

@@ -1,0 +1,504 @@
+{
+  "schema_version": "1.0.0",
+  "reviewed_at": "2026-10-15",
+  "decision": "Ladybird is the selected first-choice renderer. This ledger records evidence, not release claims. Prism may build selected components or a future native engine only through separate evidence-gated decisions.",
+  "evidence_sources": [
+    {
+      "id": "ladybird-libwebview-cmake",
+      "kind": "pinned_source",
+      "url": "https://github.com/LadybirdBrowser/ladybird/blob/86a57aa4b0194823c6f2c8ee5b9a473c6e03e19f/Libraries/LibWebView/CMakeLists.txt",
+      "reviewed_at": "2026-10-15",
+      "revision": "86a57aa4b0194823c6f2c8ee5b9a473c6e03e19f",
+      "claim_scope": "A LibWebView CMake target exists at the candidate commit; it generates IPC sources and links a broad internal dependency closure. This does not establish a stable third-party SDK."
+    },
+    {
+      "id": "ladybird-viewimplementation",
+      "kind": "pinned_source",
+      "url": "https://github.com/LadybirdBrowser/ladybird/blob/86a57aa4b0194823c6f2c8ee5b9a473c6e03e19f/Libraries/LibWebView/ViewImplementation.h",
+      "reviewed_at": "2026-10-15",
+      "revision": "86a57aa4b0194823c6f2c8ee5b9a473c6e03e19f",
+      "claim_scope": "The pinned source has a C++ view-control abstraction; source inspection only, not a successful independent consumer build."
+    },
+    {
+      "id": "ladybird-headless-webview",
+      "kind": "pinned_source",
+      "url": "https://github.com/LadybirdBrowser/ladybird/blob/86a57aa4b0194823c6f2c8ee5b9a473c6e03e19f/Libraries/LibWebView/HeadlessWebView.h",
+      "reviewed_at": "2026-10-15",
+      "revision": "86a57aa4b0194823c6f2c8ee5b9a473c6e03e19f",
+      "claim_scope": "A headless view abstraction is present; it suggests a test seam but does not demonstrate a Prism host or deterministic rendering."
+    },
+    {
+      "id": "ladybird-build-requirements",
+      "kind": "official_project_documentation",
+      "url": "https://github.com/LadybirdBrowser/ladybird/blob/86a57aa4b0194823c6f2c8ee5b9a473c6e03e19f/Documentation/BuildInstructionsLadybird.md",
+      "reviewed_at": "2026-10-15",
+      "revision": "86a57aa4b0194823c6f2c8ee5b9a473c6e03e19f",
+      "claim_scope": "The pinned build instructions document a C++23-capable compiler, CMake 3.30+, Qt 6.10+ and Rust; no build result is implied."
+    },
+    {
+      "id": "ladybird-security-update",
+      "kind": "official_project_documentation",
+      "url": "https://ladybird.org/newsletter/2026-09-30/",
+      "reviewed_at": "2026-10-15",
+      "revision": null,
+      "claim_scope": "Ladybird describes treating renderer IPC as untrusted, validating privileged operations, restricting helper-process authority and using platform sandboxing. This is upstream design evidence, not proof that Prism preserves those controls."
+    },
+    {
+      "id": "servo-library-release",
+      "kind": "official_project_documentation",
+      "url": "https://servo.org/blog/2026/04/13/servo-0.1.0-release/",
+      "reviewed_at": "2026-10-15",
+      "revision": "0.1.0",
+      "claim_scope": "Servo released a library crate and announced an LTS track; release notes explicitly say this is not a 1.0 stability promise and regular releases may break."
+    },
+    {
+      "id": "servo-embed-api",
+      "kind": "official_project_documentation",
+      "url": "https://doc.servo.org/servo/struct.WebView.html",
+      "reviewed_at": "2026-10-15",
+      "revision": "0.1.0 documentation baseline",
+      "claim_scope": "Servo documents an embedding-oriented WebView API. This is a research comparator; Prism has not integrated or tested it."
+    },
+    {
+      "id": "servo-embedding-guide",
+      "kind": "official_project_documentation",
+      "url": "https://book.servo.org/embedding/overview.html",
+      "reviewed_at": "2026-10-15",
+      "revision": null,
+      "claim_scope": "Servo's embedding overview describes the integration/documentation as evolving and notes build steps normally managed by mach."
+    },
+    {
+      "id": "wpt-project",
+      "kind": "standard_or_specification",
+      "url": "https://web-platform-tests.org/",
+      "reviewed_at": "2026-10-15",
+      "revision": null,
+      "claim_scope": "WPT is a cross-implementation web platform test project; a pinned subset is evidence of selected behavior, not whole-browser parity."
+    },
+    {
+      "id": "wasi-capability-principles",
+      "kind": "standard_or_specification",
+      "url": "https://github.com/WebAssembly/WASI/blob/main/docs/DesignPrinciples.md",
+      "reviewed_at": "2026-10-15",
+      "revision": null,
+      "claim_scope": "WASI describes capability-based security, explicit resource handles and avoiding ambient authority. Principles may inform Prism-owned service contracts but do not automatically secure native C++ or IPC."
+    },
+    {
+      "id": "prism-tauri-host",
+      "kind": "prism_source",
+      "url": "https://github.com/Luminous-Dynamics/mycelix-prism/blob/786572c8369c8aab5a94f91d60ce854068a6c7b5/prism-tauri/src/main.rs",
+      "reviewed_at": "2026-10-15",
+      "revision": "786572c8369c8aab5a94f91d60ce854068a6c7b5",
+      "claim_scope": "The current Tauri application hosts Prism UI and native commands; that source does not demonstrate a Ladybird rendering integration."
+    },
+    {
+      "id": "prism-vello-renderer",
+      "kind": "prism_source",
+      "url": "https://github.com/Luminous-Dynamics/mycelix-prism/blob/786572c8369c8aab5a94f91d60ce854068a6c7b5/prism-shell/src/renderer.rs",
+      "reviewed_at": "2026-10-15",
+      "revision": "786572c8369c8aab5a94f91d60ce854068a6c7b5",
+      "claim_scope": "Prism has a Vello/wgpu renderer for its own paint model; this alone is not a complete web browser rendering engine."
+    }
+  ],
+  "engines": [
+    {
+      "engine_id": "ladybird",
+      "role": "selected_target",
+      "identity": {
+        "repository": "https://github.com/LadybirdBrowser/ladybird",
+        "revision_kind": "git_commit",
+        "revision": "86a57aa4b0194823c6f2c8ee5b9a473c6e03e19f"
+      },
+      "integration_status": "not_implemented",
+      "capabilities": [
+        {
+          "capability_id": "html_css_dom",
+          "upstream_evidence": "official_docs_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "ladybird-libwebview-cmake",
+            "ladybird-viewimplementation"
+          ],
+          "notes": "Upstream is a browser engine, but no Prism-linked runtime test exists."
+        },
+        {
+          "capability_id": "javascript_webassembly",
+          "upstream_evidence": "official_docs_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "ladybird-security-update"
+          ],
+          "notes": "Upstream engine components are documented; a Prism integration and capability test are absent."
+        },
+        {
+          "capability_id": "native_embedding_surface",
+          "upstream_evidence": "pinned_source_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "ladybird-libwebview-cmake",
+            "ladybird-viewimplementation"
+          ],
+          "notes": "LibWebView and ViewImplementation exist in source; a stable third-party API/ABI and external consumer build are unproven."
+        },
+        {
+          "capability_id": "headless_fixture_render",
+          "upstream_evidence": "pinned_source_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "ladybird-headless-webview"
+          ],
+          "notes": "HeadlessWebView exists in source; no Prism smoke-test executable or rendered fixture evidence has been recorded."
+        },
+        {
+          "capability_id": "process_isolation_and_sandbox",
+          "upstream_evidence": "official_docs_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "ladybird-security-update"
+          ],
+          "notes": "Upstream describes IPC validation and helper sandboxing; Prism must verify the actual process topology and preserved boundaries."
+        },
+        {
+          "capability_id": "permissions_downloads_accessibility",
+          "upstream_evidence": "not_established",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "ladybird-libwebview-cmake",
+            "ladybird-viewimplementation"
+          ],
+          "notes": "The reviewed evidence does not establish the complete set of controls a Prism host needs; each must be inspected and tested."
+        },
+        {
+          "capability_id": "crash_recovery",
+          "upstream_evidence": "pinned_source_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "ladybird-viewimplementation",
+            "ladybird-headless-webview"
+          ],
+          "notes": "Crash-related abstractions are present, but Prism-host recovery behavior is not tested."
+        },
+        {
+          "capability_id": "wpt_conformance",
+          "upstream_evidence": "official_docs_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "wpt-project"
+          ],
+          "notes": "No Prism-pinned WPT revision, selected manifest or result artifact is attached to this candidate."
+        },
+        {
+          "capability_id": "prism_privileged_service_boundary",
+          "upstream_evidence": "not_applicable",
+          "prism_status": "not_implemented",
+          "evidence_ids": [
+            "wasi-capability-principles"
+          ],
+          "notes": "This is Prism-owned policy. Renderer-originated requests must be validated by a Prism broker; WASI principles are conceptual guidance, not a ready-made native security layer."
+        }
+      ],
+      "notes": [
+        "Selected renderer direction, not yet the actual renderer in Prism's shipped executable.",
+        "The commit is a pinned starting candidate, not a statement that the current upstream HEAD is identical.",
+        "No Ladybird build, independent host, runtime test, benchmark, or security validation is claimed."
+      ]
+    },
+    {
+      "engine_id": "servo",
+      "role": "research_comparator",
+      "identity": {
+        "repository": "https://github.com/servo/servo",
+        "revision_kind": "release",
+        "revision": "0.1.0"
+      },
+      "integration_status": "research_only",
+      "capabilities": [
+        {
+          "capability_id": "html_css_dom",
+          "upstream_evidence": "official_docs_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "servo-library-release"
+          ],
+          "notes": "Servo is an active browser engine; parity with Prism's selected WPT subset has not been measured."
+        },
+        {
+          "capability_id": "javascript_webassembly",
+          "upstream_evidence": "not_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "servo-library-release"
+          ],
+          "notes": "Not assessed in this research pass."
+        },
+        {
+          "capability_id": "native_embedding_surface",
+          "upstream_evidence": "official_docs_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "servo-library-release",
+            "servo-embed-api",
+            "servo-embedding-guide"
+          ],
+          "notes": "Library crate and WebView API are documented; no Prism build/link/host experiment is recorded."
+        },
+        {
+          "capability_id": "headless_fixture_render",
+          "upstream_evidence": "not_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "servo-embedding-guide"
+          ],
+          "notes": "No identical local-fixture test has been run."
+        },
+        {
+          "capability_id": "process_isolation_and_sandbox",
+          "upstream_evidence": "not_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "servo-library-release"
+          ],
+          "notes": "No Prism-relevant process/threat-model assessment has been completed."
+        },
+        {
+          "capability_id": "permissions_downloads_accessibility",
+          "upstream_evidence": "not_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "servo-embedding-guide"
+          ],
+          "notes": "Required embedder controls are not yet inventoried."
+        },
+        {
+          "capability_id": "crash_recovery",
+          "upstream_evidence": "not_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "servo-embedding-guide"
+          ],
+          "notes": "No host lifecycle tests have been run."
+        },
+        {
+          "capability_id": "wpt_conformance",
+          "upstream_evidence": "official_docs_reviewed",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "wpt-project"
+          ],
+          "notes": "No matched, pinned Prism-vs-Servo WPT report exists."
+        },
+        {
+          "capability_id": "prism_privileged_service_boundary",
+          "upstream_evidence": "not_applicable",
+          "prism_status": "not_implemented",
+          "evidence_ids": [
+            "wasi-capability-principles"
+          ],
+          "notes": "Prism-owned broker/authority remains a separate integration requirement."
+        }
+      ],
+      "notes": [
+        "Research comparator only; not a change to the Ladybird-first decision.",
+        "Servo 0.1.0 and LTS announcement are not equivalent to a stable 1.0 API guarantee."
+      ]
+    },
+    {
+      "engine_id": "prism_native_engine",
+      "role": "future_option",
+      "identity": {
+        "repository": "https://github.com/Luminous-Dynamics/mycelix-prism",
+        "revision_kind": "branch_snapshot",
+        "revision": "786572c8369c8aab5a94f91d60ce854068a6c7b5"
+      },
+      "integration_status": "not_applicable",
+      "capabilities": [
+        {
+          "capability_id": "html_css_dom",
+          "upstream_evidence": "not_established",
+          "prism_status": "not_implemented",
+          "evidence_ids": [
+            "prism-vello-renderer"
+          ],
+          "notes": "Existing DOM/layout code does not demonstrate complete standards-compliant browser-engine behavior."
+        },
+        {
+          "capability_id": "javascript_webassembly",
+          "upstream_evidence": "not_established",
+          "prism_status": "not_implemented",
+          "evidence_ids": [
+            "prism-vello-renderer"
+          ],
+          "notes": "No complete page-JavaScript/WebAssembly engine is evidenced here."
+        },
+        {
+          "capability_id": "native_embedding_surface",
+          "upstream_evidence": "not_applicable",
+          "prism_status": "not_implemented",
+          "evidence_ids": [],
+          "notes": "Not applicable to a not-yet-proposed engine."
+        },
+        {
+          "capability_id": "headless_fixture_render",
+          "upstream_evidence": "not_established",
+          "prism_status": "not_implemented",
+          "evidence_ids": [
+            "prism-vello-renderer"
+          ],
+          "notes": "Custom paint output is not yet a differential browser-engine test result."
+        },
+        {
+          "capability_id": "process_isolation_and_sandbox",
+          "upstream_evidence": "not_established",
+          "prism_status": "not_implemented",
+          "evidence_ids": [
+            "wasi-capability-principles"
+          ],
+          "notes": "Capability-oriented design is possible, but no native-engine sandbox exists in this record."
+        },
+        {
+          "capability_id": "permissions_downloads_accessibility",
+          "upstream_evidence": "not_established",
+          "prism_status": "not_implemented",
+          "evidence_ids": [],
+          "notes": "Not implemented as a complete browser-engine subsystem."
+        },
+        {
+          "capability_id": "crash_recovery",
+          "upstream_evidence": "not_established",
+          "prism_status": "not_implemented",
+          "evidence_ids": [],
+          "notes": "Not implemented as a complete browser-engine subsystem."
+        },
+        {
+          "capability_id": "wpt_conformance",
+          "upstream_evidence": "not_established",
+          "prism_status": "not_implemented",
+          "evidence_ids": [
+            "wpt-project"
+          ],
+          "notes": "No pinned WPT baseline or passing manifest for a Prism-native engine exists."
+        },
+        {
+          "capability_id": "prism_privileged_service_boundary",
+          "upstream_evidence": "not_applicable",
+          "prism_status": "not_implemented",
+          "evidence_ids": [
+            "wasi-capability-principles"
+          ],
+          "notes": "This should be owned by Prism independently of any renderer. A full native engine is not approved by ADR-0002."
+        }
+      ],
+      "notes": [
+        "Future option only. No parallel production engine implementation is authorized.",
+        "A native-engine proposal requires a concrete unmet requirement, bounded first subsystem, differential tests, fuzzing/security evidence and a credible maintenance plan."
+      ]
+    },
+    {
+      "engine_id": "prism_current_runtime",
+      "role": "current_baseline",
+      "identity": {
+        "repository": "https://github.com/Luminous-Dynamics/mycelix-prism",
+        "revision_kind": "branch_snapshot",
+        "revision": "786572c8369c8aab5a94f91d60ce854068a6c7b5"
+      },
+      "integration_status": "partially_existing",
+      "capabilities": [
+        {
+          "capability_id": "html_css_dom",
+          "upstream_evidence": "implemented_in_source_only",
+          "prism_status": "partial_unqualified",
+          "evidence_ids": [
+            "prism-vello-renderer"
+          ],
+          "notes": "Prism has HTML parsing, DOM/layout and its own paint model; this is not a full browser compatibility claim."
+        },
+        {
+          "capability_id": "javascript_webassembly",
+          "upstream_evidence": "not_established",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "prism-tauri-host"
+          ],
+          "notes": "Current application/UI dependencies do not establish a full page scripting or WebAssembly runtime."
+        },
+        {
+          "capability_id": "native_embedding_surface",
+          "upstream_evidence": "implemented_in_source_only",
+          "prism_status": "partial_unqualified",
+          "evidence_ids": [
+            "prism-tauri-host",
+            "prism-vello-renderer"
+          ],
+          "notes": "Tauri hosts the app UI while prism-shell paints a custom scene; neither proves a Ladybird embed or interchangeable engine adapter."
+        },
+        {
+          "capability_id": "headless_fixture_render",
+          "upstream_evidence": "not_established",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "prism-vello-renderer"
+          ],
+          "notes": "No cross-engine deterministic fixture report is captured in this ledger."
+        },
+        {
+          "capability_id": "process_isolation_and_sandbox",
+          "upstream_evidence": "not_established",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "prism-tauri-host"
+          ],
+          "notes": "The application source does not demonstrate a browser-grade hostile-page process isolation model."
+        },
+        {
+          "capability_id": "permissions_downloads_accessibility",
+          "upstream_evidence": "not_established",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "prism-tauri-host"
+          ],
+          "notes": "A complete engine-host integration matrix has not been verified."
+        },
+        {
+          "capability_id": "crash_recovery",
+          "upstream_evidence": "not_established",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "prism-tauri-host"
+          ],
+          "notes": "No renderer-crash integration evidence is recorded."
+        },
+        {
+          "capability_id": "wpt_conformance",
+          "upstream_evidence": "not_established",
+          "prism_status": "not_tested",
+          "evidence_ids": [
+            "wpt-project"
+          ],
+          "notes": "No pinned WPT baseline result is claimed."
+        },
+        {
+          "capability_id": "prism_privileged_service_boundary",
+          "upstream_evidence": "implemented_in_source_only",
+          "prism_status": "partial_unqualified",
+          "evidence_ids": [
+            "prism-tauri-host"
+          ],
+          "notes": "Prism has native commands/services, but this ledger does not claim a complete origin-bound, capability-safe browser-to-service broker."
+        }
+      ],
+      "notes": [
+        "Current baseline combines Prism's custom shell/rendering path and a Tauri UI host; do not call it Ladybird-powered.",
+        "Statuses labeled partial_unqualified are inventory statements, not security approval."
+      ]
+    }
+  ],
+  "proof_policy": [
+    "Evidence about upstream code or documentation is never copied into a claim that Prism integrated, tested, or secured the capability.",
+    "A capability may be marked verified only when the exact Prism revision, backend revision, test command, test artifact, environment and result are recorded.",
+    "Build success, smoke-test success, WPT conformance, security review, accessibility, performance and production readiness are separate claims.",
+    "Queued, pending, cancelled, skipped, unsupported and not-run results never count as passes.",
+    "Unknown stays unknown. Do not infer support from the presence of a crate, enum, interface, CI workflow, or upstream feature.",
+    "Capability security principles from WASI can inform the contract, but do not automatically secure native code, FFI, or IPC.",
+    "Changing an engine revision invalidates runtime evidence tied to the previous revision unless an explicit compatibility policy says the test remains applicable."
+  ]
+}

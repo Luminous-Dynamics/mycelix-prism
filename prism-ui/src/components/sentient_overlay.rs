@@ -82,7 +82,7 @@ fn collect_hdc_annotations(
 
         search_calls += 1;
         if let Some(top) = engine.search(sentence, 1).into_iter().next() {
-            if top.query_similarity > 0.15 {
+            if top.query_similarity.is_some_and(|similarity| similarity > 0.15) {
                 annotations.push((sentence.clone(), top));
             }
         }
@@ -128,7 +128,10 @@ fn render_annotations(
             .first()
             .map(|s| s.as_str())
             .unwrap_or("\u{2014}");
-        let sim_pct = (result.query_similarity * 100.0) as u32;
+        let sim_label = result
+            .query_similarity
+            .map(|similarity| format!("{:.0}% match", similarity * 100.0))
+            .unwrap_or_else(|| "Relevance unavailable".to_string());
 
         // Spore enrichment: show consciousness confidence and surprise
         let spore_note = spore_data
@@ -158,7 +161,7 @@ fn render_annotations(
             r##"<div class="overlay-claim">
                 <div class="overlay-match">
                     <span class="e-badge {e_class}">{e_label}</span>
-                    <span class="overlay-sim">{sim_pct}% match</span>
+                    <span class="overlay-sim">{sim_label}</span>
                     {spore_note}
                 </div>
                 <div class="overlay-page-text">"{sentence_short}"</div>
@@ -167,7 +170,7 @@ fn render_annotations(
             </div>"##,
             e_class = e_class,
             e_label = e_label,
-            sim_pct = sim_pct,
+            sim_label = sim_label,
             spore_note = spore_note,
             sentence_short = escape_html(&sentence[..sentence.len().min(100)]),
             claim = escape_html(&result.content),

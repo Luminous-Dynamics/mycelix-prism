@@ -163,9 +163,12 @@ fn SearchResultsPage(query: String, results: Vec<SearchResult>) -> impl IntoView
 
     let max_sim = results
         .iter()
-        .map(|r| r.query_similarity)
-        .fold(0.0_f32, f32::max);
-    let weak_results = max_sim < 0.08;
+        .filter_map(|result| result.query_similarity)
+        .reduce(f32::max);
+    // Missing similarity is not evidence of low relevance, especially for external results.
+    let weak_results = results.is_empty()
+        || (results.iter().all(|result| result.query_similarity.is_some())
+            && max_sim.is_some_and(|similarity| similarity < 0.08));
 
     // "Ask Symthaea" — opt-in only, fires on click, never automatically.
     // Deliberately not part of Compare mode's auto-firing engine set (see
@@ -427,12 +430,15 @@ fn EpistemicDrawer(url: String) -> impl IntoView {
                                         prism_common::EmpiricalLevel::E1 => "E1",
                                         prism_common::EmpiricalLevel::E0 => "E0",
                                     };
-                                    let sim = (r.query_similarity * 100.0) as u32;
+                                    let sim = r
+                                        .query_similarity
+                                        .map(|similarity| format!("{:.0}%", similarity * 100.0))
+                                        .unwrap_or_else(|| "Relevance unavailable".to_string());
                                     let snippet: String = r.content.chars().take(120).collect();
                                     view! {
                                         <div class="drawer-claim">
                                             <span class=e_class>{e_label}</span>
-                                            <span class="drawer-sim">{sim}"%"</span>
+                                            <span class="drawer-sim">{sim}</span>
                                             <p class="drawer-claim-text">{snippet}</p>
                                         </div>
                                     }

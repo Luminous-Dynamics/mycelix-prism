@@ -350,6 +350,21 @@ fn parse_qrels(text: &str) -> Result<Qrels, Box<dyn Error>> {
     Ok(qrels)
 }
 
+fn documents_from_records(records: &[TextRecord]) -> Vec<Document> {
+    let mut documents = records
+        .iter()
+        .map(|record| Document {
+            id: record.id.clone(),
+            content: record.content(),
+        })
+        .collect::<Vec<_>>();
+    // SearchEngine breaks exact score ties by insertion index. Sort by ID so
+    // HDC and BM25 share the same deterministic tie order independent of JSONL
+    // row ordering; the raw input hash still captures the actual input bytes.
+    documents.sort_by(|left, right| left.id.cmp(&right.id));
+    documents
+}
+
 fn validate_dataset(
     documents: &[Document],
     queries: &[QueryRecord],
@@ -538,13 +553,7 @@ fn run(dataset_dir: &Path) -> Result<EvaluationReport, Box<dyn Error>> {
     let qrels = parse_qrels(qrels_text)?;
     let data_load_ms = load_started.elapsed().as_secs_f64() * 1000.0;
 
-    let documents = corpus_records
-        .iter()
-        .map(|record| Document {
-            id: record.id.clone(),
-            content: record.content(),
-        })
-        .collect::<Vec<_>>();
+    let documents = documents_from_records(&corpus_records);
     validate_dataset(&documents, &query_records, &qrels)?;
 
     let query_by_id = query_records
@@ -814,6 +823,27 @@ mod tests {
             parse_qrels("query-id\tcorpus-id\tscore\nq1\tdoc1\t1\nq1\tdoc1\t1\n").is_err()
         );
         assert!(parse_qrels("query-id\tcorpus-id\tscore\nq1\tdoc1\t4\n").is_err());
+    }
+
+    #[test]
+    fn corpus_order_is_normalized_by_id_for_cross_ranker_ties() {
+        let records = vec![
+            TextRecord {
+                id: "z-doc".into(),
+                title: "Same".into(),
+                text: "content".into(),
+            },
+            TextRecord {
+                id: "a-doc".into(),
+                title: "Same".into(),
+                text: "content".into(),
+            },
+        ];
+        let documents = documents_from_records(&records);
+        assert_eq!(
+            documents.iter().map(|document| document.id.as_str()).collect::<Vec<_>>(),
+            vec!["a-doc", "z-doc"]
+        );
     }
 
     #[test]

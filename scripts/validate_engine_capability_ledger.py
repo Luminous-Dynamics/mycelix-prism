@@ -55,6 +55,11 @@ def _is_string(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def _is_allowed(value: Any, allowed: set[str]) -> bool:
+    """Safely test enum membership for untrusted JSON values."""
+    return isinstance(value, str) and value in allowed
+
+
 def _valid_date(value: Any) -> bool:
     if not isinstance(value, str):
         return False
@@ -142,7 +147,7 @@ def validate_documents(schema: Any, ledger: Any) -> list[str]:
             errors.append(f"duplicate evidence source id: {source_id}")
         else:
             source_by_id[source_id] = source
-        if source.get("kind") not in SOURCE_KINDS:
+        if not _is_allowed(source.get("kind"), SOURCE_KINDS):
             errors.append(f"{prefix}.kind is not an allowed evidence kind")
         if not _is_string(source.get("url")) or not source["url"].startswith("https://"):
             errors.append(f"{prefix}.url must be an HTTPS URL")
@@ -186,7 +191,7 @@ def validate_documents(schema: Any, ledger: Any) -> list[str]:
         else:
             engine_ids.add(engine_id)
 
-        if engine.get("role") not in ENGINE_ROLES:
+        if not _is_allowed(engine.get("role"), ENGINE_ROLES):
             errors.append(f"{prefix}.role is not allowed")
         identity = engine.get("identity")
         if not _is_object(identity):
@@ -196,13 +201,13 @@ def validate_documents(schema: Any, ledger: Any) -> list[str]:
             errors.append(f"{prefix}.identity.repository must be an HTTPS URL")
         revision_kind = identity.get("revision_kind")
         revision = identity.get("revision")
-        if revision_kind not in REVISION_KINDS:
+        if not _is_allowed(revision_kind, REVISION_KINDS):
             errors.append(f"{prefix}.identity.revision_kind is not allowed")
         if not _is_string(revision):
             errors.append(f"{prefix}.identity.revision must be a non-empty string")
         if revision_kind == "git_commit" and isinstance(revision, str) and not SHA1_RE.fullmatch(revision):
             errors.append(f"{prefix}.identity.revision must be a full lowercase 40-character SHA")
-        if engine.get("integration_status") not in INTEGRATION_STATUSES:
+        if not _is_allowed(engine.get("integration_status"), INTEGRATION_STATUSES):
             errors.append(f"{prefix}.integration_status is not allowed")
 
         capabilities = engine.get("capabilities")
@@ -222,10 +227,10 @@ def validate_documents(schema: Any, ledger: Any) -> list[str]:
                 errors.append(f"duplicate capability_id {cap_id} within {engine_id}")
             else:
                 capability_ids.add(cap_id)
-            if cap.get("upstream_evidence") not in UPSTREAM_STATUSES:
+            if not _is_allowed(cap.get("upstream_evidence"), UPSTREAM_STATUSES):
                 errors.append(f"{cap_prefix}.upstream_evidence is not allowed")
             prism_status = cap.get("prism_status")
-            if prism_status not in PRISM_STATUSES:
+            if not _is_allowed(prism_status, PRISM_STATUSES):
                 errors.append(f"{cap_prefix}.prism_status is not allowed")
             if not _is_string(cap.get("notes")):
                 errors.append(f"{cap_prefix}.notes must explain current evidence limits")

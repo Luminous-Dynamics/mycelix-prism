@@ -150,6 +150,18 @@ class EngineLedgerValidatorTests(unittest.TestCase):
         self.assertTrue(any("artifact_sha256 is required" in error for error in errors))
         self.assertTrue(any("capsule_schema_version" in error for error in errors))
 
+    def test_rejects_non_string_evidence_kind_without_crashing(self) -> None:
+        ledger = copy.deepcopy(self.ledger)
+        ledger["evidence_sources"][0]["kind"] = {"unexpected": "object"}
+        errors = validate_documents(self.schema, ledger)
+        self.assertTrue(any("kind is not an allowed evidence kind" in error for error in errors))
+
+    def test_rejects_non_string_engine_role_without_crashing(self) -> None:
+        ledger = copy.deepcopy(self.ledger)
+        ledger["engines"][0]["role"] = ["selected_target"]
+        errors = validate_documents(self.schema, ledger)
+        self.assertTrue(any("role is not allowed" in error for error in errors))
+
     def test_rejects_unknown_status(self) -> None:
         ledger = copy.deepcopy(self.ledger)
         ledger["engines"][0]["capabilities"][0]["prism_status"] = "probably-works"

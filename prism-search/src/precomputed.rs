@@ -806,10 +806,10 @@ mod tests {
         bytes.extend_from_slice(digest.as_bytes());
         bytes.extend_from_slice(&payload.bytes);
 
-        assert_eq!(
+        assert!(matches!(
             SearchEngine::try_from_precomputed(&bytes),
             Err(PrecomputedIndexError::InvalidCount("total indexed words"))
-        );
+        ));
     }
 
     #[test]

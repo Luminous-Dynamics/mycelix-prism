@@ -4955,6 +4955,7 @@ name = "prism-search"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "blake3",
  "criterion",
  "getrandom 0.2.17",
  "log",

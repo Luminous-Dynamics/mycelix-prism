@@ -203,12 +203,17 @@ mod tests {
         }
     }
 
+    fn dht_result(content: &str) -> SearchResult {
+        let mut result = result(content);
+        result.query_similarity = None;
+        result
+    }
+
     #[test]
     fn fallback_does_not_compare_unknown_dht_relevance_to_local_similarity() {
         let local = result("local result with measured similarity");
-        let mut dht = result("remote result with unknown similarity");
+        let mut dht = dht_result("remote result with unknown similarity");
         dht.empirical_level = EmpiricalLevel::E4;
-        dht.query_similarity = None;
 
         // The rank_score values are not semantically comparable because the
         // local result has a measured similarity component but the DHT result does not.
@@ -222,14 +227,14 @@ mod tests {
     }
 
     #[test]
-    fn equal_score_results_have_deterministic_content_order() {
+    fn dht_tier_order_is_deterministic_for_tied_evidence_levels() {
         let forward = merge_unique_results(
             Vec::new(),
-            vec![result("zeta claim"), result("alpha claim"), result("beta claim")],
+            vec![dht_result("zeta claim"), dht_result("alpha claim"), dht_result("beta claim")],
         );
         let reverse = merge_unique_results(
             Vec::new(),
-            vec![result("beta claim"), result("alpha claim"), result("zeta claim")],
+            vec![dht_result("beta claim"), dht_result("alpha claim"), dht_result("zeta claim")],
         );
 
         let forward_contents = forward
@@ -254,9 +259,9 @@ mod tests {
         let merged = merge_unique_results(
             vec![result(&first)],
             vec![
-                result(&second),
-                result(&first_with_different_case_and_spacing),
-                result(&second),
+                dht_result(&second),
+                dht_result(&first_with_different_case_and_spacing),
+                dht_result(&second),
             ],
         );
 

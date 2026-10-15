@@ -190,7 +190,7 @@ def validate_documents(schema: Any, ledger: Any) -> list[str]:
             )
             if not refs_valid:
                 errors.append(f"{cap_prefix}.evidence_ids must be a list of unique strings")
-                refs = refs if isinstance(refs, list) else []
+                refs = [item for item in refs if isinstance(item, str)] if isinstance(refs, list) else []
             for evidence_id in refs:
                 if evidence_id not in source_by_id:
                     errors.append(f"{cap_prefix} references unknown evidence id: {evidence_id}")

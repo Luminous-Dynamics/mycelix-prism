@@ -30,9 +30,12 @@ References:
 
 ### Servo: a necessary comparison, not a new default
 
-[Servo's official site](https://servo.org/) describes a Rust browser engine with an embedding-oriented `WebView`, parallel architecture and support for multiple targets. Its [current book](https://doc.servo.org/) says the API and embedding work remain in progress and points embedders toward options such as `tauri-runtime-verso` and `servo-gtk`. Its [embedding overview](https://book.servo.org/embedding/overview.html) also notes that the documentation is sparse and a direct Cargo build may require reproducing work normally handled by `mach`.
+[Servo's official site](https://servo.org/) describes a Rust browser engine with an embedding-oriented `WebView`, parallel architecture and support for multiple targets. On 2026-04-13, Servo published its first library crate, `servo 0.1.0`, and announced an LTS track for embedders; the announcement explicitly says this is not a 1.0 release and routine monthly releases may break. Its [current book](https://doc.servo.org/) points embedders toward options such as `tauri-runtime-verso` and `servo-gtk`; its [embedding overview](https://book.servo.org/embedding/overview.html) still describes the integration documentation as sparse and notes that a direct Cargo build may require reproducing work normally handled by `mach`.
+
+This improves Servo's credibility as a library to evaluate, but does not prove it is more compatible, secure, easier to package, or better aligned with Prism than Ladybird. An LTS policy mitigates upgrade churn; it does not remove integration or security work.
 
 Useful source evidence:
+- [Servo 0.1.0 crate and LTS announcement (2026-04-13)](https://servo.org/blog/2026/04/13/servo-0.1.0-release/)
 - [Servo embedding API docs](https://doc.servo.org/servo/)
 - [Servo WebView rendering model](https://doc.servo.org/servo/struct.WebView.html)
 - [Servo embedding overview](https://book.servo.org/embedding/overview.html)

@@ -14,6 +14,23 @@ The strategic unit is not “browser engine versus no browser engine.” It is a
 
 The first operational goal remains a Ladybird-backed vertical slice. The document does not claim an integrated Ladybird runtime exists today.
 
+## Evidence-carrying architecture: the engine capability ledger
+
+Prism now has a machine-readable [capability ledger](capability-ledger.json) and public [JSON Schema](capability-ledger.schema.json). The ledger separates three facts that are often blurred together: what upstream source/docs support, what Prism has integrated, and what an exact-revision runtime test actually demonstrated.
+
+A separate [standard-library-only validator](../../scripts/validate_engine_capability_ledger.py) and [positive/negative regression tests](../../scripts/test_engine_capability_ledger.py) enforce repository-specific rules. The [Engine evidence ledger workflow](../../.github/workflows/engine-ledger.yml) runs this short gate independently of the expensive Nix/Cargo lanes.
+
+The critical fail-closed rule is that a capability marked `verified` requires a passed Prism test-result artifact tied to an exact engine revision and a full Prism commit SHA. An upstream source link or a passing build alone cannot elevate it to verified. The current ledger deliberately contains **no verified browser capabilities**: this research pass did not run a Ladybird/Servo host or WPT workload.
+
+Status meanings:
+- **pinned_source_reviewed / official_docs_reviewed:** upstream evidence was inspected; runtime integration is still a separate field.
+- **implemented_in_source_only:** Prism source contains relevant code, but this does not establish end-to-end browser behavior.
+- **not_established / not_reviewed:** no sufficient evidence was captured; do not infer support.
+- **not_implemented / not_tested / partial_unqualified:** Prism-side statuses that prevent upstream claims from being presented as Prism integration results.
+- **verified:** reserved for exact-revision executable test evidence. It is not a blanket security, standards-compliance or production-readiness label.
+
+The approach is informed by Ladybird's [September 2026 security model update](https://ladybird.org/newsletter/2026-09-30/), which says renderer IPC must be treated as untrusted and privileged operations validated, and by [WASI's capability-security principles](https://github.com/WebAssembly/WASI/blob/main/docs/DesignPrinciples.md), which emphasize explicit, unforgeable capabilities and no ambient authority. These are architectural influences—not a claim that WASI itself secures native Ladybird C++ code or Prism IPC.
+
 ## What the external research changes
 
 ### Ladybird: the current target

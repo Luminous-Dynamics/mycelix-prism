@@ -852,6 +852,50 @@ mod tests {
     }
 
     #[test]
+    fn end_to_end_fixture_run_fingerprints_inputs_and_returns_metrics() -> Result<(), Box<dyn Error>> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "prism-beir-evaluator-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(directory.join("qrels"))?;
+
+        fs::write(
+            directory.join("corpus.jsonl"),
+            concat!(
+                "{\"_id\":\"d1\",\"title\":\"Ocean\",\"text\":\"Ocean chemistry changes pH.\"}\n",
+                "{\"_id\":\"d2\",\"title\":\"Quantum\",\"text\":\"Quantum entanglement physics.\"}\n"
+            ),
+        )?;
+        fs::write(
+            directory.join("queries.jsonl"),
+            concat!(
+                "{\"_id\":\"q1\",\"text\":\"ocean chemistry\"}\n",
+                "{\"_id\":\"q2\",\"text\":\"quantum entanglement\"}\n"
+            ),
+        )?;
+        fs::write(
+            directory.join("qrels").join("test.tsv"),
+            "query-id\tcorpus-id\tscore\nq1\td1\t1\nq2\td2\t1\n",
+        )?;
+
+        let report = run(&directory)?;
+        assert_eq!(report.corpus_documents, 2);
+        assert_eq!(report.query_records, 2);
+        assert_eq!(report.qrels_queries, 2);
+        assert_eq!(report.hdc_metrics.query_count, 2);
+        assert_eq!(report.bm25_metrics.query_count, 2);
+        assert_eq!(report.inputs.len(), 3);
+        assert!(report.inputs.iter().all(|input| input.blake3.len() == 64));
+        assert!(!report.canonical_reference_counts.counts_match);
+
+        fs::remove_dir_all(&directory)?;
+        Ok(())
+    }
+
+    #[test]
     fn bm25_ties_are_deterministic() {
         let documents = vec![
             Document { id: "z".into(), content: "ocean acidity".into() },

@@ -83,15 +83,6 @@ struct Fingerprint {
     blake3: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct QrelsHeaderProbe {
-    #[serde(rename = "query-id")]
-    query_id: String,
-    #[serde(rename = "corpus-id")]
-    corpus_id: String,
-    score: String,
-}
-
 type Relevance = HashMap<String, u8>;
 type Qrels = BTreeMap<String, Relevance>;
 
@@ -143,6 +134,7 @@ struct EvaluationReport {
     hdc_max_returned_results: usize,
     canonical_reference_counts: CanonicalCounts,
     inputs: Vec<Fingerprint>,
+    data_load_ms: f64,
     index_build_ms: f64,
     bm25_build_ms: f64,
     hdc_metrics: MetricSummary,
@@ -494,10 +486,6 @@ fn summarize_latencies(latencies_ms: &[f64]) -> LatencySummary {
     }
 }
 
-fn json_fingerprint(path: &Path, raw: &[u8]) -> Fingerprint {
-    fingerprint(&path.display().to_string(), raw)
-}
-
 fn run(dataset_dir: &Path) -> Result<EvaluationReport, Box<dyn Error>> {
     let corpus_path = dataset_dir.join("corpus.jsonl");
     let queries_path = dataset_dir.join("queries.jsonl");
@@ -555,7 +543,10 @@ fn run(dataset_dir: &Path) -> Result<EvaluationReport, Box<dyn Error>> {
     let mut per_query = Vec::with_capacity(qrels.len());
 
     for (query_id, relevance) in &qrels {
-        let query = query_by_id[query_id.as_str()];
+        let query = query_by_id
+            .get(query_id.as_str())
+            .copied()
+            .ok_or_else(|| invalid_data(format!("qrels references missing query {query_id:?}")))?;
         let query_text = query.query_text();
 
         let start = Instant::now();
@@ -614,10 +605,11 @@ fn run(dataset_dir: &Path) -> Result<EvaluationReport, Box<dyn Error>> {
             counts_match: canonical_counts_match,
         },
         inputs: vec![
-            json_fingerprint(&corpus_path, &corpus_raw),
-            json_fingerprint(&queries_path, &queries_raw),
-            json_fingerprint(&qrels_path, &qrels_raw),
+            fingerprint("corpus.jsonl", &corpus_raw),
+            fingerprint("queries.jsonl", &queries_raw),
+            fingerprint("qrels/test.tsv", &qrels_raw),
         ],
+        data_load_ms,
         index_build_ms,
         bm25_build_ms,
         hdc_metrics: summarize(&hdc_metric_rows),
@@ -659,7 +651,7 @@ fn print_report(report: &EvaluationReport) -> Result<(), Box<dyn Error>> {
             "blake3": fingerprint.blake3
         })).collect::<Vec<_>>(),
         "timing": {
-            "data_load_ms": report.index_build_ms * 0.0, // overwritten below by the explicit input metric in schema v1
+            "data_load_ms": report.data_load_ms
             "hdc_index_build_ms": report.index_build_ms,
             "bm25_index_build_ms": report.bm25_build_ms,
             "hdc_query_latency_ms": {

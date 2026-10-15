@@ -183,9 +183,14 @@ def validate_documents(schema: Any, ledger: Any) -> list[str]:
             if not _is_string(cap.get("notes")):
                 errors.append(f"{cap_prefix}.notes must explain current evidence limits")
             refs = cap.get("evidence_ids")
-            if not isinstance(refs, list) or len(refs) != len(set(refs)) if isinstance(refs, list) else True:
-                errors.append(f"{cap_prefix}.evidence_ids must be a list with unique values")
-                refs = []
+            refs_valid = (
+                isinstance(refs, list)
+                and all(isinstance(item, str) for item in refs)
+                and len(refs) == len(set(refs))
+            )
+            if not refs_valid:
+                errors.append(f"{cap_prefix}.evidence_ids must be a list of unique strings")
+                refs = refs if isinstance(refs, list) else []
             for evidence_id in refs:
                 if evidence_id not in source_by_id:
                     errors.append(f"{cap_prefix} references unknown evidence id: {evidence_id}")

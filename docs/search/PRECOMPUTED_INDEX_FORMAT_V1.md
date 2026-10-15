@@ -56,4 +56,4 @@ Regenerate old precomputed artifacts using `SearchEngine::to_precomputed()`. Bef
 
 ## Current bounds and limitations
 
-The implementation caps the complete file at 128 MiB, claims/vectors at 50,000, sources at 128 per claim, tags at 256 per claim, content at 512 KiB, source strings at 16 KiB, tag strings at 4 KiB, word-frequency entries at 250,000, and each word key at 256 bytes. These are defensive limits, not performance claims; benchmarks should inform future version changes.
+The implementation caps the complete file at 128 MiB, claims/vectors at 50,000, sources at 128 per claim, tags at 256 per claim, content at 512 KiB, source strings at 16 KiB, tag strings at 4 KiB, word-frequency entries at 250,000, and each word key at 256 bytes. These are defensive limits, not performance claims; benchmarks should inform future version changes.; validation also rejects claims with more than 2,048 indexed terms before recomputing vectors to bound temporary memory amplification.

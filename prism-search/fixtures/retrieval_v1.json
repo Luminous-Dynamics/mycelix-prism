@@ -1,0 +1,40 @@
+{
+  "schema_version": "prism-search-eval-v1",
+  "fixture_kind": "synthetic-bootstrap-not-public-web-evidence",
+  "documents": [
+    {"id":"ocean-acidification-1","content":"Ocean acidification happens when seawater absorbs atmospheric carbon dioxide, lowering pH and changing carbonate chemistry."},
+    {"id":"ocean-acidification-2","content":"Coral reefs and shell-forming organisms face risks as ocean acidity changes carbonate availability."},
+    {"id":"climate-change-1","content":"Climate change raises global average temperatures as greenhouse gas concentrations increase."},
+    {"id":"climate-mitigation-1","content":"Mitigation policies reduce carbon dioxide emissions from energy production and transport."},
+    {"id":"quantum-entanglement-1","content":"Quantum entanglement links measurement outcomes of distant systems under quantum mechanics."},
+    {"id":"quantum-coherence-1","content":"Phase coherence is an essential property of quantum states used in interference experiments."},
+    {"id":"rust-memory-safety-1","content":"Rust ownership and borrowing enforce memory safety without a garbage collector."},
+    {"id":"use-after-free-1","content":"Use-after-free bugs happen when a program accesses memory after its lifetime has ended."},
+    {"id":"ssrf-1","content":"Server-side request forgery allows an attacker to make a server request protected internal network resources."},
+    {"id":"xss-1","content":"HTML injection and cross-site scripting occur when untrusted input is interpreted as markup or script."},
+    {"id":"decentralized-search-1","content":"Decentralized search distributes indexing and retrieval among independently operated peers."},
+    {"id":"federated-index-1","content":"A federated index lets users search remote collections while retaining local control over data."},
+    {"id":"evidence-provenance-1","content":"Scientific claims should expose source provenance, uncertainty, methods, replication status and correction history."},
+    {"id":"epistemic-levels-1","content":"Evidence classification distinguishes unverified claims, preliminary tests, replicated findings and established evidence."},
+    {"id":"data-minimization-1","content":"Data minimization keeps personal information local and reduces unnecessary collection, retention and sharing."},
+    {"id":"consent-receipts-1","content":"Consent receipts provide verifiable records of what data a user allowed to be shared and why."},
+    {"id":"solar-pv-1","content":"Solar photovoltaic systems convert sunlight into electrical energy using semiconductor cells."},
+    {"id":"battery-storage-1","content":"Grid-scale battery storage helps balance variable renewable generation and electricity demand."},
+    {"id":"bm25-1","content":"BM25 ranks documents using term frequency, document frequency and document length normalization."},
+    {"id":"dense-retrieval-1","content":"Dense vector retrieval uses representation similarity to find semantically related documents."},
+    {"id":"browser-engine-1","content":"A web browser engine implements HTML parsing, CSS style calculation, layout, JavaScript and rendering."},
+    {"id":"browser-isolation-1","content":"Process isolation separates untrusted web content from privileged browser services."},
+    {"id":"ai-safety-1","content":"AI systems should provide traceable citations, calibrated uncertainty and remain unable to bypass deterministic authorization."},
+    {"id":"byzantine-tolerance-1","content":"Replicated state and Byzantine fault tolerance help distributed nodes agree despite some malicious participants."}
+  ],
+  "queries": [
+    {"id":"q-ocean-acidification","text":"ocean acidification carbonate pH","relevance":{"ocean-acidification-1":3,"ocean-acidification-2":2,"climate-change-1":1}},
+    {"id":"q-memory-safety","text":"memory safety Rust ownership use after free","relevance":{"rust-memory-safety-1":3,"use-after-free-1":2}},
+    {"id":"q-decentralized-search","text":"decentralized search federated index local control","relevance":{"decentralized-search-1":3,"federated-index-1":3,"dense-retrieval-1":1}},
+    {"id":"q-browser-isolation","text":"browser engine process isolation privileged services","relevance":{"browser-engine-1":2,"browser-isolation-1":3}},
+    {"id":"q-evidence","text":"evidence provenance uncertainty replication sources","relevance":{"evidence-provenance-1":3,"epistemic-levels-1":2,"ai-safety-1":1}},
+    {"id":"q-privacy-consent","text":"privacy consent local data sharing","relevance":{"data-minimization-1":3,"consent-receipts-1":2,"federated-index-1":1}},
+    {"id":"q-search-ranking","text":"BM25 dense vector retrieval document ranking","relevance":{"bm25-1":3,"dense-retrieval-1":3,"decentralized-search-1":1}},
+    {"id":"q-quantum","text":"quantum entanglement phase coherence","relevance":{"quantum-entanglement-1":3,"quantum-coherence-1":2}}
+  ]
+}

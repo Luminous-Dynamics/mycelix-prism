@@ -88,25 +88,46 @@ pub struct SearchResult {
     pub normative_level: NormativeLevel,
     /// Materiality / real-world impact (M0-M3).
     pub materiality_level: MaterialityLevel,
-    /// HDC cosine similarity to query (0.0-1.0).
-    pub query_similarity: f32,
-    /// Author reputation from ConsciousnessProfile (0.0-1.0).
-    pub author_reputation: f32,
-    /// Age in days since claim creation.
-    pub age_days: u32,
+    /// Normalized HDC similarity signal (0.0-1.0), not a calibrated probability.
+    /// None means this result did not have a measured local similarity score.
+    pub query_similarity: Option<f32>,
+    /// Verified author reputation (0.0-1.0), if available from a trusted profile.
+    /// None means reputation is unknown; missing provenance is not zero reputation.
+    pub author_reputation: Option<f32>,
+    /// Age in days since a verified creation/retrieval timestamp.
+    /// None means the result's age is unknown.
+    pub age_days: Option<u32>,
     /// Tags for categorization.
     pub tags: Vec<String>,
 }
 
 impl SearchResult {
-    /// Composite ranking score.
-    /// Weights: 0.4 relevance + 0.3 epistemic + 0.2 trust + 0.1 freshness.
+    /// Composite ranking score from available evidence.
+    ///
+    /// Unknown metadata contributes neither a fabricated value nor an implicit
+    /// penalty. The remaining component weights are normalized to sum to one.
+    /// This is a ranking heuristic, not a calibrated probability of relevance.
     pub fn rank_score(&self) -> f32 {
-        let freshness = 1.0 / (1.0 + self.age_days as f32 / 365.0);
-        0.4 * self.query_similarity
-            + 0.3 * self.empirical_level.as_f32()
-            + 0.2 * self.author_reputation
-            + 0.1 * freshness
+        let mut weighted_score = 0.3 * self.empirical_level.as_f32();
+        let mut total_weight = 0.3_f32;
+
+        if let Some(similarity) = self.query_similarity {
+            weighted_score += 0.4 * similarity.clamp(0.0, 1.0);
+            total_weight += 0.4;
+        }
+
+        if let Some(reputation) = self.author_reputation {
+            weighted_score += 0.2 * reputation.clamp(0.0, 1.0);
+            total_weight += 0.2;
+        }
+
+        if let Some(age_days) = self.age_days {
+            let freshness = 1.0 / (1.0 + age_days as f32 / 365.0);
+            weighted_score += 0.1 * freshness;
+            total_weight += 0.1;
+        }
+
+        (weighted_score / total_weight).clamp(0.0, 1.0)
     }
 }
 
@@ -161,9 +182,9 @@ mod tests {
             empirical_level: EmpiricalLevel::E4,
             normative_level: NormativeLevel::N1,
             materiality_level: MaterialityLevel::M2,
-            query_similarity: 1.0,
-            author_reputation: 1.0,
-            age_days: 0,
+            query_similarity: Some(1.0),
+            author_reputation: Some(1.0),
+            age_days: Some(0),
             tags: vec![],
         };
         // Max everything: 0.4*1.0 + 0.3*1.0 + 0.2*1.0 + 0.1*1.0 = 1.0
@@ -183,9 +204,9 @@ mod tests {
             empirical_level: EmpiricalLevel::E0,
             normative_level: NormativeLevel::N0,
             materiality_level: MaterialityLevel::M0,
-            query_similarity: 0.0,
-            author_reputation: 0.0,
-            age_days: 365_000, // very old
+            query_similarity: Some(0.0),
+            author_reputation: Some(0.0),
+            age_days: Some(365_000), // very old
             tags: vec![],
         };
         let score = result.rank_score();
@@ -200,13 +221,13 @@ mod tests {
             empirical_level: EmpiricalLevel::E2,
             normative_level: NormativeLevel::N1,
             materiality_level: MaterialityLevel::M1,
-            query_similarity: 0.5,
-            author_reputation: 0.5,
-            age_days: 0,
+            query_similarity: Some(0.5),
+            author_reputation: Some(0.5),
+            age_days: Some(0),
             tags: vec![],
         };
         let mut stale = fresh.clone();
-        stale.age_days = 3650; // 10 years
+        stale.age_days = Some(3650); // 10 years
         assert!(fresh.rank_score() > stale.rank_score());
     }
 
@@ -218,14 +239,36 @@ mod tests {
             empirical_level: EmpiricalLevel::E3,
             normative_level: NormativeLevel::N2,
             materiality_level: MaterialityLevel::M3,
-            query_similarity: 0.87,
-            author_reputation: 0.92,
-            age_days: 42,
+            query_similarity: Some(0.87),
+            author_reputation: Some(0.92),
+            age_days: Some(42),
             tags: vec!["climate".into(), "ocean".into()],
         };
         let json = serde_json::to_string(&result).unwrap();
         let restored: SearchResult = serde_json::from_str(&json).unwrap();
         assert_eq!(result, restored);
+    }
+
+    #[test]
+    fn missing_provenance_is_unknown_not_fabricated() {
+        let result = SearchResult {
+            content: "external claim without verified metadata".into(),
+            sources: vec![],
+            empirical_level: EmpiricalLevel::E2,
+            normative_level: NormativeLevel::N1,
+            materiality_level: MaterialityLevel::M1,
+            query_similarity: None,
+            author_reputation: None,
+            age_days: None,
+            tags: vec![],
+        };
+
+        let score = result.rank_score();
+        assert!(score.is_finite());
+        assert!((0.0..=1.0).contains(&score));
+        assert_eq!(result.query_similarity, None);
+        assert_eq!(result.author_reputation, None);
+        assert_eq!(result.age_days, None);
     }
 
     #[test]

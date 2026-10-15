@@ -486,14 +486,11 @@ fn external_hit_to_result(
         empirical_level: base_level,
         normative_level: NormativeLevel::N1,
         materiality_level: MaterialityLevel::M2,
-        query_similarity: 0.4, // Web results get moderate base relevance
-        author_reputation: match source_name {
-            "Wikipedia" => 0.85,
-            "DuckDuckGo" => 0.60,
-            "Ollama" => 0.50,
-            _ => 0.70,
-        },
-        age_days: 7,
+        // External hits do not provide calibrated local similarity, verified author reputation,
+        // or a verified publication timestamp. Keep those evidence fields explicitly unknown.
+        query_similarity: None,
+        author_reputation: None,
+        age_days: None,
         tags: vec![source_name.to_lowercase()],
     }
 }

@@ -74,7 +74,7 @@ A credible first differentiated release could focus on local-first, user-control
 - **Gate C — standards baseline:** pinned WPT subset and published baseline; regressions block merge.
 - **Gate D — isolation and privacy:** tested process/capability boundaries, permission behavior, network restrictions, storage partitioning, and threat-model review.
 - **Gate E — usability:** accessibility, keyboard navigation, crash recovery, download safety, and real-site smoke tests.
-- **Gate F — comparative performance:** repeatable matched benchmarks against Ladybird and at least one mature browser. Publish raw data and limitations.
+- **Gate F — comparative performance:** once Ladybird is integrated, run repeatable matched workloads against Prism's pre-migration Tauri/WebKitGTK and custom-shell baselines, plus a mature external browser when useful. Publish raw data and limitations; keep conformance, performance, and security evidence separate.
 
 ## Bottom line
 

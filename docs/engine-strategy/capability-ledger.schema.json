@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Luminous-Dynamics/mycelix-prism/blob/docs/prism-ladybird-positioning-and-ci-fix/docs/engine-strategy/capability-ledger.schema.json",
+  "title": "Prism Engine Capability Evidence Ledger",
+  "description": "Separates upstream source/documentation evidence from Prism integration and runtime-test status. Source presence is not integration proof.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "reviewed_at",
+    "decision",
+    "evidence_sources",
+    "engines",
+    "proof_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "reviewed_at": {
+      "type": "string",
+      "format": "date"
+    },
+    "decision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "url",
+          "reviewed_at",
+          "claim_scope"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "kind": {
+            "enum": [
+              "pinned_source",
+              "official_project_documentation",
+              "standard_or_specification",
+              "prism_source"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "reviewed_at": {
+            "type": "string",
+            "format": "date"
+          },
+          "revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "claim_scope": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "engines": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "engine_id",
+          "role",
+          "identity",
+          "integration_status",
+          "capabilities",
+          "notes"
+        ],
+        "properties": {
+          "engine_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+          },
+          "role": {
+            "enum": [
+              "selected_target",
+              "research_comparator",
+              "future_option",
+              "current_baseline"
+            ]
+          },
+          "identity": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repository",
+              "revision_kind",
+              "revision"
+            ],
+            "properties": {
+              "repository": {
+                "type": "string",
+                "format": "uri"
+              },
+              "revision_kind": {
+                "enum": [
+                  "git_commit",
+                  "release",
+                  "branch_snapshot",
+                  "not_pinned"
+                ]
+              },
+              "revision": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "integration_status": {
+            "enum": [
+              "not_implemented",
+              "research_only",
+              "partially_existing",
+              "not_applicable"
+            ]
+          },
+          "capabilities": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "capability_id",
+                "upstream_evidence",
+                "prism_status",
+                "evidence_ids",
+                "notes"
+              ],
+              "properties": {
+                "capability_id": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                },
+                "upstream_evidence": {
+                  "enum": [
+                    "pinned_source_reviewed",
+                    "official_docs_reviewed",
+                    "implemented_in_source_only",
+                    "not_established",
+                    "not_reviewed",
+                    "not_applicable"
+                  ]
+                },
+                "prism_status": {
+                  "enum": [
+                    "not_implemented",
+                    "not_tested",
+                    "partial_unqualified",
+                    "verified",
+                    "failed",
+                    "not_applicable"
+                  ]
+                },
+                "evidence_ids": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]*$"
+                  }
+                },
+                "notes": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "proof_policy": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

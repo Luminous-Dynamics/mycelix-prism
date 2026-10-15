@@ -1,14 +1,14 @@
 
 # Ladybird / LibWebView feasibility spike
 
-**Status: NOT RUN.** This is a reproducible experiment protocol and a source-level integration audit, not evidence that Ladybird builds, embeds, or is secure enough for Prism. No renderer, host executable, benchmark, or end-to-end test was run while preparing this document.
+**Status: NOT RUN. Strategic direction: Ladybird is Prism's selected first-choice renderer.** This document is the staged implementation protocol and source-level integration audit—not evidence that Ladybird already builds, embeds, or is secure enough for Prism. No renderer, host executable, benchmark, or end-to-end test was run while preparing it. The spike now tests how to integrate the chosen engine; it is not a vote on whether to keep Ladybird merely as a reference.
 
 ## Candidate and provenance
 
 - Upstream: [LadybirdBrowser/ladybird](https://github.com/LadybirdBrowser/ladybird)
 - Candidate source commit: 86a57aa4b0194823c6f2c8ee5b9a473c6e03e19f
 - Platform for this spike: Linux only
-- Current Prism decision: reference-first; do not make Ladybird a mandatory runtime dependency or switch production rendering on the basis of this spike alone.
+- Current Prism decision: Ladybird-first as the intended renderer. The current executable must not be described as Ladybird-powered until the integration is implemented and validated. This spike does not authorize production packaging.
 - Normative compatibility authority: the selected Web Platform Tests (WPT) revision and applicable web standards, not Ladybird's observed behavior.
 
 The candidate SHA is intentionally fixed. Any different revision must be recorded as a new candidate with a reason, and its results must not be attributed to this revision.
@@ -25,7 +25,7 @@ These findings come from reading the pinned source and upstream build instructio
 6. **The upstream security model creates concrete integration obligations.** Ladybird's [September 2026 security update](https://ladybird.org/newsletter/2026-09-30/) says IPC from a potentially compromised renderer must be treated as untrusted, privileged operations validated by other processes, and helper processes given minimal system access. It describes the network process handling HTTP/WebSocket cookie operations and tighter Linux helper sandboxing including Landlock. The update also distinguishes top-level site isolation from embedded-frame process isolation. These upstream statements are useful threat-model evidence, but they do not prove that a Prism host, bridge, or particular build preserves those boundaries; Stage 4 must verify the actual process graph and callback/IPC paths.
 7. **Prism's current shell is not yet enough to claim reproducibility.** The investigated Prism flake.nix points at moving nixos-unstable and rust-overlay inputs and itself says to commit flake.lock before calling the shell reproducible. Pin and record the experiment's inputs before using it as evidence.
 
-These findings lower confidence that this is a drop-in library, but do not rule out a useful, upstream-aligned integration. The experiment should answer the build-graph and lifecycle questions before implementing a large adapter.
+These findings rule out assuming a drop-in SDK, but do not rule out an upstream-aligned integration. The chosen direction is still Ladybird-first; the experiment decides which integration seam is sustainable. Prefer a narrow Prism-owned adapter and do not let Ladybird-specific types leak into product services.
 
 ## Experiment stages
 
@@ -63,11 +63,11 @@ At minimum, verify:
 
 Save raw logs, exit codes, fixture hashes, viewport, source SHA and test output. A headless pass proves only the tested headless behaviors. Do not describe it as a visible desktop embed.
 
-### Stage 3 — visible native host, only if needed and justified
+### Stage 3 — first Prism host integration through a replaceable engine boundary
 
-Only proceed if the headless test passes and the target can be consumed without an unmaintainable private-API dependency. Verify the input, resize, focus, frame-presentation and shutdown contracts before wiring UI. Test keyboard and pointer actions, back/forward, URL/title/loading state, resize, dialogs and renderer-crash recovery.
+After the headless test passes, implement the first narrow user-facing Prism integration if the target is consumable without an unmaintainable private-API dependency. Put it behind a Prism-owned Rust contract that covers lifecycle/health, navigation/history, URL/title/loading events, viewport and input, presentation/frame transport, and typed user-mediated requests. Verify the input, resize, focus, frame-presentation and shutdown contracts before wiring UI. Test keyboard and pointer actions, back/forward, URL/title/loading state, resize, dialogs and renderer-crash recovery. This is one Ladybird backend—not a requirement to implement multiple engines.
 
-If the only viable design requires adding a host target to Ladybird's own build graph or maintaining a compatibility patch against internal APIs, label it **upstream-coupled** and document the maintenance owner/update process. "No modified upstream source files" does not by itself mean "independently consumable."
+If the viable design requires adding a host target to Ladybird's own build graph or maintaining compatibility patches against internal APIs, label it **upstream-coupled** and document the maintenance owner/update process. In that case, assess a supervised process boundary and versioned IPC before deciding the integration route. "No modified upstream source files" does not by itself mean "independently consumable."
 
 ### Stage 4 — security boundary and Prism bridge
 
@@ -93,10 +93,12 @@ For every stage, record PASS, FAIL, UNSUPPORTED or NOT RUN, plus the exact comma
 
 ## Decision rule
 
-- **Go to a bounded prototype:** Stages 0–2 pass; the build and API boundary is understandable; no source patch is needed for the initial smoke path; security assumptions can be tested. This authorizes only a prototype, not a production engine switch.
-- **Go to a visible host:** headless evidence is repeatable and the required native surface/input/lifecycle APIs are consumable with a sustainable update strategy.
-- **No-go / retain as reference:** unpinned or irreproducible inputs, target build failure that cannot be resolved without a long-lived private fork, no supported way to control process/lifecycle/security boundaries, or a maintenance burden that lacks a credible upstream coordination path.
-- **Production decision:** requires a separately reviewed security/threat-model report, applicable WPT evidence, exact-head regression results, supported-platform matrix, and measured cost/benefit. No spike result alone approves shipping or bundling Ladybird.
+- **Proceed to the next integration gate:** previous stage has reproducible evidence on the recorded source/toolchain and no unresolved failure is hidden as unsupported or skipped.
+- **Preferred path:** a supported and maintainable LibWebView-based host behind Prism's own interface.
+- **Alternative integration seam (still Ladybird):** if LibWebView cannot be consumed sustainably, investigate an upstream-supported host or a supervised Ladybird process with a versioned, bounded protocol. Do not silently revert the product direction to WebKitGTK and describe the result as Ladybird.
+- **Stop this integration mechanism:** unpinned inputs, build/consumer failures that demand a long-lived private fork, or untestable lifecycle/security boundaries. Record the evidence and compare realistic Ladybird integration alternatives. Revisit engine selection only with a documented blocker and an explicit ADR review.
+- **Future engine:** keep the adapter provider-neutral, but do not build or benchmark extra browser backends without a concrete need.
+- **Production decision:** requires a separately reviewed security/threat-model report, applicable WPT evidence, exact-head regression results, supported-platform matrix, packaging/license/dependency review, accessibility evidence and measured maintenance/value. No spike result alone authorizes shipping Ladybird.
 
 ## Source references
 

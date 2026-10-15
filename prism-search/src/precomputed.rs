@@ -28,6 +28,7 @@ const MAX_CONTENT_BYTES: usize = 512 * 1024;
 const MAX_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_TAG_BYTES: usize = 4 * 1024;
 const MAX_WORD_BYTES: usize = 256;
+const MAX_INDEXED_WORDS_PER_CLAIM: usize = 2_048;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrecomputedIndexError {
@@ -312,6 +313,17 @@ fn validate_derived_state(engine: &SearchEngine) -> Result<(), PrecomputedIndexE
     let mut expected_word_df = HashMap::<String, usize>::new();
     for claim in &engine.claims {
         let lowered = claim.content.to_lowercase();
+        let indexed_word_count = lowered
+            .split(|character: char| !character.is_alphanumeric())
+            .filter(|word| word.len() >= 2 && !is_stop_word(word))
+            .take(MAX_INDEXED_WORDS_PER_CLAIM + 1)
+            .count();
+        if indexed_word_count > MAX_INDEXED_WORDS_PER_CLAIM {
+            // IDF encoding materializes a full 2,048-byte hypervector for each
+            // unigram and adjacent-word bigram. Bound temporary validation memory
+            // independently of the raw string/file-size caps.
+            return Err(PrecomputedIndexError::InvalidValue("claim indexed word count"));
+        }
         let words: HashSet<&str> = lowered
             .split(|character: char| !character.is_alphanumeric())
             .filter(|word| word.len() >= 2 && !is_stop_word(word))
@@ -689,6 +701,35 @@ mod tests {
             SearchEngine::try_from_precomputed(&bytes),
             Err(PrecomputedIndexError::InvalidValue("claim content"))
         ));
+    }
+
+    #[test]
+    fn rejects_excessive_index_terms_before_vector_recomputation() {
+        let content = std::iter::repeat("ocean")
+            .take(MAX_INDEXED_WORDS_PER_CLAIM + 1)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let engine = SearchEngine {
+            claims: vec![ClaimEntry {
+                content,
+                sources: Vec::new(),
+                empirical_level: EmpiricalLevel::E2,
+                normative_level: NormativeLevel::N2,
+                materiality_level: MaterialityLevel::M2,
+                tags: Vec::new(),
+            }],
+            vectors: vec![BinaryHV([0_u8; BinaryHV::BYTES])],
+            word_df: HashMap::new(),
+        };
+
+        assert_eq!(
+            validate_derived_state(&engine),
+            Err(PrecomputedIndexError::InvalidValue("claim indexed word count"))
+        );
+        assert_eq!(
+            engine.to_precomputed(),
+            Err(PrecomputedIndexError::InvalidValue("claim indexed word count"))
+        );
     }
 
     #[test]

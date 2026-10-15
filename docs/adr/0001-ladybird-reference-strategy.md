@@ -11,7 +11,11 @@ Prism is an experimental Rust-first browser and knowledge-platform workspace. It
 
 Ladybird is an independent, standards-oriented browser project with LibWeb, LibJS, LibWasm, and dedicated process roles for web content, network requests, and image decoding. Its public README still describes it as pre-alpha and developer-only. Its process-architecture document says parts of the described architecture are aspirational and implementation is ongoing. The current public plan targets Linux and macOS for the 2026 alpha; its FAQ describes a beta in 2027 and stable release in 2028. These dates are plans, not guarantees.
 
-Ladybird's February 2026 Rust announcement describes a deliberate, incremental port. By August, official updates reported that style/layout, CSS parsing, computed-style work and the paint pipeline had moved to Rust, while broader engine development continued. The project explicitly asks contributors to coordinate proposed porting work with the core team. The public materials reviewed do not establish a stable, supported embeddable-engine API intended for third-party browser shells.
+Ladybird's February 2026 Rust announcement describes a deliberate, incremental port. By August, official updates reported that style/layout, CSS parsing, computed-style work and the paint pipeline had moved to Rust, while broader engine development continued. The project explicitly asks contributors to coordinate proposed porting work with the core team.
+
+**New integration finding (reviewed 2026-10-15):** the public source tree contains a real CMake library target, `LibWebView`, with exported C++ symbols and view abstractions such as `ViewImplementation` and `HeadlessWebView`. Therefore it would be inaccurate to say that embedding is technically impossible. However, these types are coupled to Ladybird's internal AK/LibCore/IPC/graphics/process libraries and its build graph; the reviewed public docs do not define a stable third-party embedder ABI or versioned embedding contract. The official build instructions currently call for Qt 6.10+, CMake 3.30+, a C++23-capable compiler, and a Rust toolchain. A community native-frontend prototype demonstrated embedded rendering, but its issue lists missing download UI, permission prompts, accessibility, settings, and other browser integrations. This is enough evidence to justify a tightly scoped feasibility spike—not enough to justify replacing Prism's Tauri/WebKitGTK runtime in production.
+
+Ladybird also changed its contribution process in June 2026: code changes are now introduced by project maintainers rather than public pull requests. A Prism integration that needs internal engine changes must therefore be coordinated with maintainers, rather than assuming a fork PR can be accepted.
 
 The September 2026 newsletter also reports a security-hardening week with Trail of Bits engineers. It documents identified issues and exploit-chain work, which is evidence of active scrutiny rather than a claim that all security risks are resolved. The same update says the project is still preparing for alpha testing. Its reported WPT count should be interpreted against the exact WPT revision because newly upstreamed tests contributed to the monthly change.
 
@@ -23,6 +27,10 @@ Sources checked on 2026-10-10:
 - [Ladybird project updates](https://ladybird.org/news/)
 - [Ladybird September 2026 newsletter](https://ladybird.org/newsletter/2026-09-30/)
 - [Ladybird releases page](https://github.com/LadybirdBrowser/ladybird/releases)
+- [LibWebView CMake library](https://github.com/LadybirdBrowser/ladybird/tree/master/Libraries/LibWebView) and [its build target](https://github.com/LadybirdBrowser/ladybird/blob/master/Libraries/LibWebView/CMakeLists.txt)
+- [Ladybird's build requirements](https://github.com/LadybirdBrowser/ladybird/blob/master/Documentation/BuildInstructionsLadybird.md)
+- [Native frontend prototype and its missing browser features, issue #9503](https://github.com/LadybirdBrowser/ladybird/issues/9503)
+- [Ladybird's revised contribution process, 2026-06-05](https://ladybird.org/posts/changing-how-we-develop-ladybird/)
 - [Web Platform Tests](https://web-platform-tests.org/)
 
 ## Decision
@@ -45,7 +53,15 @@ Low coupling and immediate value. Prism can compare behavior, test against real 
 
 ### B. Make Ladybird a mandatory bundled engine now — rejected for now
 
-Potentially avoids rebuilding large parts of the web platform, but there is no established supported embedding API evidenced by the reviewed project documentation. Prism would inherit a pre-alpha engine, a C++-heavy integration boundary, upstream architecture and release changes, a significant packaging/toolchain burden, and uncertain portability across Prism's intended targets. Building an adapter before proving the interface is supportable would create a second browser-integration project.
+Potentially avoids rebuilding large parts of the web platform, and the presence of `LibWebView` means a native host is plausible. But there is still no documented stable third-party embedder contract. Prism would inherit a pre-alpha engine, a tightly coupled C++/CMake integration boundary, upstream architecture and release changes, a significant packaging/toolchain burden, and uncertain portability across Prism's intended targets. Bundling the complete engine now would turn Prism into a browser-engine integration and release-maintenance project before the interface or maintenance economics are proven.
+
+### E. Time-boxed native LibWebView feasibility spike — now justified, not production adoption
+
+The new source inspection changes the next experiment: test the actual `LibWebView` library rather than assuming a standalone-browser sidecar is the only possible integration boundary. Keep this as a separate, non-default engineering spike with no upstream source modifications and no release packaging.
+
+The spike succeeds only if a pinned upstream commit can be built reproducibly in a Prism Nix development environment and a minimal host can render a safe local fixture, navigate, resize, deliver keyboard/mouse input, surface URL/title/loading state, and fail closed on renderer/process crashes. The spike must explicitly evaluate permission prompts, file/download handling, accessibility, session/profile isolation, and the proposed Rust-to-browser bridge; missing controls are failures, not future implied support. Record exact source revision, Nix inputs, build logs, package outputs, startup/idle memory, and the observed security/process boundaries.
+
+Compare that prototype with the current Tauri/WebKitGTK path on the same Linux host and workload. Do not select Ladybird as the production renderer until the prototype meets the feature/security/portability gates, packaging is reproducible, licensing and dependency notices are reviewed, maintainers have been consulted on any needed upstream surface, and the maintenance burden is measurably defensible. A successful Linux spike authorizes only the next review gate—not a cross-platform or security claim.
 
 ### C. Fork Ladybird and maintain a Prism engine — rejected
 
@@ -75,7 +91,7 @@ Continue only where there is a specific, measured reason. Reimplementing all of 
 
 ## Integration experiment: gates before implementation
 
-A limited adapter/sidecar spike may be proposed only after all of the following are documented:
+A bounded LibWebView feasibility spike is now warranted, but it is not production integration. Do not bundle or ship the result. Any move beyond the spike requires all of the following to be documented:
 
 1. **Use case:** a concrete user outcome that Prism's current engine cannot deliver and that an external Ladybird process could deliver.
 2. **Interface:** a feasible, versionable boundary supported by upstream or maintained as an explicit external process protocol. No private C++ object coupling.
@@ -105,7 +121,9 @@ Revisit the independent-engine strategy when Prism publishes a WPT baseline, saf
 ## Next actions
 
 1. Pin a WPT revision and publish an initial Prism baseline with implemented, unsupported, failing, and untested counts.
-2. Add Ladybird as an optional comparison lane to a deterministic real-site smoke corpus; store exact version/commit and test environment.
-3. Keep search and privacy tests independent of any browser-engine runtime.
-4. Resolve Prism's documented potential parser lifetime issue before security-readiness claims.
-5. Obtain a reproducible standalone Cargo.lock and passing CI on exact source commits.
+2. Keep Ladybird as an optional comparison lane to a deterministic real-site smoke corpus; store exact version/commit and test environment.
+3. Run the bounded Linux `LibWebView` feasibility spike described in option E; do not modify Ladybird source and do not make it a required runtime dependency.
+4. Compare identical fixture workflows on Ladybird and Tauri/WebKitGTK, including crash handling, accessibility, permission flows, startup/idle memory, and build/package size.
+5. Keep search and privacy tests independent of any browser-engine runtime.
+6. Resolve Prism's documented potential parser lifetime issue before security-readiness claims.
+7. Obtain a reproducible standalone Cargo.lock and passing CI on exact source commits.

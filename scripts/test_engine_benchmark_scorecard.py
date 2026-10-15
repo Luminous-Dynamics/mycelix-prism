@@ -58,6 +58,24 @@ class BenchmarkScorecardTests(unittest.TestCase):
         scorecard["suites"] = [s for s in scorecard["suites"] if s["id"] != "local-only-egress"]
         self.assertTrue(any("required P0 suite missing" in e for e in validate_scorecard(SCHEMA, scorecard)))
 
+    def test_rejects_non_string_suite_class_without_crashing(self) -> None:
+        scorecard = copy.deepcopy(SCORECARD)
+        scorecard["suites"][0]["class"] = {"bad": "type"}
+        errors = validate_scorecard(SCHEMA, scorecard)
+        self.assertTrue(any("class is not allowed" in e for e in errors))
+
+    def test_rejects_malformed_statistics_without_crashing(self) -> None:
+        scorecard = copy.deepcopy(SCORECARD)
+        scorecard["measurement_protocol"]["report_statistics"] = [{"not": "a string"}]
+        errors = validate_scorecard(SCHEMA, scorecard)
+        self.assertTrue(any("report_statistics must retain" in e for e in errors))
+
+    def test_every_suite_has_authoritative_reference(self) -> None:
+        scorecard = copy.deepcopy(SCORECARD)
+        scorecard["suites"][0]["references"] = []
+        errors = validate_scorecard(SCHEMA, scorecard)
+        self.assertTrue(any("fewer than 1 items" in e for e in errors))
+
     def test_rejects_missing_numeric_target(self) -> None:
         scorecard = copy.deepcopy(SCORECARD)
         scorecard["suites"][0]["metrics"][0]["target_value"] = None

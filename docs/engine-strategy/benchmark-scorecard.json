@@ -74,7 +74,10 @@
         }
       ],
       "method": "Run deterministic local fixtures without public-network dependency; preserve one result record per manifest case.",
-      "notes": "Harness contract only until the real Ladybird-backed fixture runner exists."
+      "notes": "Harness contract only until the real Ladybird-backed fixture runner exists.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/7"
+      ]
     },
     {
       "id": "wpt-supported-subset",
@@ -116,7 +119,11 @@
         }
       ],
       "method": "Pin WPT commit and manifest; retain raw machine-readable output; report outcomes separately per spec area.",
-      "notes": "Never present a subset score as overall browser compatibility. WPT is a correctness/conformance lane, not a performance score."
+      "notes": "Never present a subset score as overall browser compatibility. WPT is a correctness/conformance lane, not a performance score.",
+      "references": [
+        "https://web-platform-tests.org/",
+        "https://github.com/web-platform-tests/wpt"
+      ]
     },
     {
       "id": "broker-negative-controls",
@@ -148,7 +155,11 @@
         }
       ],
       "method": "Use explicit allow/deny expectations, malformed payloads, origin/context mismatches and revoked capability cases. Measure latency separately.",
-      "notes": "Performance optimization must never weaken a fail-closed security result."
+      "notes": "Performance optimization must never weaken a fail-closed security result.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/37",
+        "https://github.com/WebAssembly/WASI/blob/main/docs/DesignPrinciples.md"
+      ]
     },
     {
       "id": "local-only-egress",
@@ -170,7 +181,11 @@
         }
       ],
       "method": "Run with network blocked and an observable egress boundary; distinguish deliberate loopback fixture traffic from outbound egress.",
-      "notes": "A pass requires observable network enforcement, not just an absence of requests in application logs."
+      "notes": "A pass requires observable network enforcement, not just an absence of requests in application logs.",
+      "references": [
+        "https://fetch.spec.whatwg.org/",
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/7"
+      ]
     },
     {
       "id": "cold-start-to-first-usable-frame",
@@ -192,7 +207,10 @@
         }
       ],
       "method": "Measure process launch to first correct, nonblank, usable frame. Each cold sample starts a fresh process; record p50/p95 and raw samples.",
-      "notes": "Provisional product target, not a measured result. Fix the reference machine and power/thermal conditions before locking the budget."
+      "notes": "Provisional product target, not a measured result. Fix the reference machine and power/thermal conditions before locking the budget.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/36"
+      ]
     },
     {
       "id": "small-static-fixture-first-render",
@@ -214,7 +232,10 @@
         }
       ],
       "method": "Start navigation from the same local fixture; end only after a correctness assertion and render-completion signal. Do not substitute a fixed sleep.",
-      "notes": "A deterministic local latency target, not a public-site or network-latency claim."
+      "notes": "A deterministic local latency target, not a public-site or network-latency claim.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/7"
+      ]
     },
     {
       "id": "visible-input-response",
@@ -236,7 +257,10 @@
         }
       ],
       "method": "Measure from a trusted injected input event to a frame containing the expected visible state change; retain raw per-event durations.",
-      "notes": "Do not enable this target until the tested interaction path and rendering-completion signal are implemented."
+      "notes": "Do not enable this target until the tested interaction path and rendering-completion signal are implemented.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/7"
+      ]
     },
     {
       "id": "renderer-memory",
@@ -258,7 +282,11 @@
         }
       ],
       "method": "Record renderer plus helper process tree, peak RSS and time series; report cold and steady-state separately.",
-      "notes": "Provisional budget only; validate against process-isolation design and realistic page workload before locking."
+      "notes": "Provisional budget only; validate against process-isolation design and realistic page workload before locking.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/36",
+        "https://ladybird.org/newsletter/2026-09-30/"
+      ]
     },
     {
       "id": "adapter-overhead",
@@ -280,7 +308,11 @@
         }
       ],
       "method": "Paired A/B runs in randomized order against the identical engine SHA, fixtures and reference environment. Publish both raw distributions.",
-      "notes": "Do not compare different engine revisions or machines and attribute the difference to adapter overhead."
+      "notes": "Do not compare different engine revisions or machines and attribute the difference to adapter overhead.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/36",
+        "https://github.com/LadybirdBrowser/ladybird/tree/86a57aa4b0194823c6f2c8ee5b9a473c6e03e19f"
+      ]
     },
     {
       "id": "fixture-soak-stability",
@@ -312,7 +344,11 @@
         }
       ],
       "method": "Run in isolated worker processes with per-case timeout, crash capture, fixture hash and deterministic replay record.",
-      "notes": "A zero-crash soak is not a memory-safety proof and does not replace fuzzing or security review."
+      "notes": "A zero-crash soak is not a memory-safety proof and does not replace fuzzing or security review.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/2",
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/7"
+      ]
     },
     {
       "id": "speedometer-3-1",
@@ -334,7 +370,12 @@
         }
       ],
       "method": "Use official Speedometer 3.1 workload, clean profile, focused device and pinned harness revision; publish harness warnings and detailed subtest results.",
-      "notes": "This exercises end-to-end web-application responsiveness. Do not report a score if workloads produce missing durations or required APIs are unimplemented."
+      "notes": "This exercises end-to-end web-application responsiveness. Do not report a score if workloads produce missing durations or required APIs are unimplemented.",
+      "references": [
+        "https://browserbench.org/Speedometer3.1/",
+        "https://www.browserbench.org/Speedometer3.1/about.html",
+        "https://www.browserbench.org/Speedometer3.1/instructions.html"
+      ]
     },
     {
       "id": "jetstream-2-2",
@@ -356,7 +397,10 @@
         }
       ],
       "method": "Pin JetStream 2.2, use a clean environment, preserve subtest data and do not compare scores from different JetStream versions.",
-      "notes": "Not applicable to the current Prism runtime until the required scripting/runtime capabilities exist."
+      "notes": "Not applicable to the current Prism runtime until the required scripting/runtime capabilities exist.",
+      "references": [
+        "https://webkit.org/blog/15378/jetstream-2-2/"
+      ]
     },
     {
       "id": "motionmark-1-3",
@@ -378,7 +422,11 @@
         }
       ],
       "method": "Pin MotionMark version and display refresh-rate protocol; record GPU backend, screen resolution and per-suite results.",
-      "notes": "MotionMark targets graphics/paining throughput rather than serving as a general browser correctness or security score."
+      "notes": "MotionMark targets graphics/paining throughput rather than serving as a general browser correctness or security score.",
+      "references": [
+        "https://webkit.org/blog/14908/motionmark-1-3/",
+        "https://github.com/WebKit/MotionMark"
+      ]
     }
   ]
 }

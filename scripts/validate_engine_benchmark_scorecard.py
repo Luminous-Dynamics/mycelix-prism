@@ -13,6 +13,10 @@ SCORECARD_PATH = ROOT / "docs/engine-strategy/benchmark-scorecard.json"
 ALLOWED_CLASS = {"correctness", "conformance", "security", "privacy", "performance", "resource", "reliability", "industry-comparator"}
 
 
+def _allowed(value: Any, allowed: set[str]) -> bool:
+    return isinstance(value, str) and value in allowed
+
+
 def validate_scorecard(schema: Any, scorecard: Any) -> list[str]:
     from engine_ledger_schema import validate_instance, validate_schema_definition
 
@@ -35,7 +39,11 @@ def validate_scorecard(schema: Any, scorecard: Any) -> list[str]:
         if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 30:
             errors.append("minimum baseline samples must be at least 30 before regression gating")
         report_stats = protocol.get("report_statistics")
-        if not isinstance(report_stats, list) or not {"median", "p95", "IQR", "MAD", "raw samples"}.issubset(set(report_stats)):
+        if (
+            not isinstance(report_stats, list)
+            or any(not isinstance(item, str) for item in report_stats)
+            or not {"median", "p95", "IQR", "MAD", "raw samples"}.issubset(set(report_stats))
+        ):
             errors.append("report_statistics must retain median, p95, IQR, MAD and raw samples")
 
     suites = scorecard.get("suites")
@@ -53,7 +61,7 @@ def validate_scorecard(schema: Any, scorecard: Any) -> list[str]:
             if suite_id in suite_ids:
                 errors.append(f"duplicate suite id: {suite_id}")
             suite_ids.add(suite_id)
-        if suite.get("class") not in ALLOWED_CLASS:
+        if not _allowed(suite.get("class"), ALLOWED_CLASS):
             errors.append(f"{prefix}.class is not allowed")
         metrics = suite.get("metrics")
         if not isinstance(metrics, list):
@@ -84,7 +92,7 @@ def validate_scorecard(schema: Any, scorecard: Any) -> list[str]:
                 errors.append(f"{mpath} provisional target cannot be an active release gate")
             if direction == "must_equal" and target is None:
                 errors.append(f"{mpath} must_equal metric needs an explicit target")
-    ids = {s.get("id") for s in suites if isinstance(s, dict)}
+    ids = {s.get("id") for s in suites if isinstance(s, dict) and isinstance(s.get("id"), str)}
     for required in ("local-fixture-correctness", "wpt-supported-subset", "broker-negative-controls", "local-only-egress"):
         if required not in ids:
             errors.append(f"required P0 suite missing: {required}")

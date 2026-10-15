@@ -1,5 +1,10 @@
 name: CI
 
+# Cancel stale, expensive Nix builds after a newer commit arrives for the same PR.
+concurrency:
+  group: prism-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main, 'ci/**']
@@ -12,6 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify committed Cargo lockfile
+        run: test -f Cargo.lock
 
       - name: Install Nix
         uses: cachix/install-nix-action@v27
@@ -45,6 +53,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify committed Cargo lockfile
+        run: test -f Cargo.lock
+
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
@@ -71,11 +82,27 @@ jobs:
       - name: cargo nextest run --workspace --locked
         run: nix develop --command cargo nextest run --workspace --locked
 
+      - name: Run deterministic search-evaluation smoke test
+        run: |
+          set -o pipefail
+          nix develop --command cargo run -p prism-search --bin evaluate_retrieval --locked | tee retrieval-evaluation.json
+
+      - name: Upload retrieval-evaluation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: prism-search-evaluation-${{ github.sha }}
+          path: retrieval-evaluation.json
+          if-no-files-found: error
+          retention-days: 14
+
   msrv:
     name: MSRV check (Rust 1.96.1 · nix develop)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify committed Cargo lockfile
+        run: test -f Cargo.lock
 
       - name: Install Nix
         uses: cachix/install-nix-action@v27

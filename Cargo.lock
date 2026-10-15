@@ -4962,6 +4962,7 @@ dependencies = [
  "prism-ingest",
  "proptest",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -47,13 +47,49 @@ impl SearchEngine {
         }
     }
 
-    /// Load a pre-computed index from bytes (bincode format).
-    /// Falls back to an empty engine if deserialization fails.
+    /// Deserialize a pre-computed index, preserving corruption as an explicit error.
+    ///
+    /// Prefer this API for release artifacts and untrusted index files. Falling
+    /// back to an empty index can make corruption look like a successful search
+    /// with zero results, so callers should handle the error visibly.
+    pub fn try_from_precomputed(bytes: &[u8]) -> Result<Self, String> {
+        let mut engine: Self =
+            bincode::deserialize(bytes).map_err(|error| error.to_string())?;
+
+        if engine.claims.len() != engine.vectors.len() {
+            return Err(format!(
+                "precomputed index has {} claims but {} vectors",
+                engine.claims.len(),
+                engine.vectors.len()
+            ));
+        }
+
+        // Word frequencies and vectors are derived state. Recompute them from
+        // the claims and reject stale/mismatched serialized artifacts rather
+        // than trusting internally inconsistent ranking data.
+        let stored_word_df = engine.word_df.clone();
+        let stored_vectors = engine.vectors.clone();
+        engine.rebuild_index();
+
+        if engine.word_df != stored_word_df {
+            return Err("precomputed index document frequencies do not match its claims".into());
+        }
+        if engine.vectors != stored_vectors {
+            return Err("precomputed index vectors do not match its claims and corpus statistics".into());
+        }
+
+        Ok(engine)
+    }
+
+    /// Compatibility wrapper that logs a failure and returns an empty engine.
+    ///
+    /// New callers should prefer try_from_precomputed() and handle the error
+    /// explicitly; this wrapper remains to avoid breaking existing integrations.
     pub fn from_precomputed(bytes: &[u8]) -> Self {
-        match bincode::deserialize(bytes) {
+        match Self::try_from_precomputed(bytes) {
             Ok(engine) => engine,
             Err(e) => {
-                log::error!("Failed to deserialize precomputed index: {}", e);
+                log::error!("Failed to deserialize precomputed index; returning empty index: {}", e);
                 Self::new()
             }
         }
@@ -68,7 +104,9 @@ impl SearchEngine {
         {
             let bytes = include_bytes!("../prism-index.bin");
             log::info!("Loading precomputed index ({} bytes)", bytes.len());
-            return Self::from_precomputed(bytes);
+            return Self::try_from_precomputed(bytes).unwrap_or_else(|e| {
+                panic!("embedded Prism search index failed validation: {e}");
+            });
         }
 
         #[cfg(not(feature = "precomputed-index"))]
@@ -151,30 +189,56 @@ impl SearchEngine {
 
     /// Merge another engine's claims into this one (for lazy-loading).
     pub fn merge(&mut self, other: Self) {
-        for (claim, vector) in other.claims.into_iter().zip(other.vectors) {
-            let prefix: String = claim
-                .content
-                .chars()
-                .take(80)
-                .collect::<String>()
-                .to_lowercase();
-            let is_dup = self.claims.iter().any(|c| {
-                c.content
-                    .chars()
-                    .take(80)
-                    .collect::<String>()
-                    .to_lowercase()
-                    == prefix
-            });
-            if !is_dup {
+        // Claim identity must not be inferred from a truncated prefix: two
+        // distinct claims can share the same first 80 characters. Normalize
+        // case and whitespace, then compare the full content.
+        let mut content_keys: std::collections::HashSet<String> = self
+            .claims
+            .iter()
+            .map(|claim| normalize_claim_content(&claim.content))
+            .collect();
+
+        for claim in other.claims {
+            let key = normalize_claim_content(&claim.content);
+            if content_keys.insert(key) {
                 self.claims.push(claim);
-                self.vectors.push(vector);
             }
         }
-        // Merge word_df
-        for (word, count) in other.word_df {
-            *self.word_df.entry(word).or_insert(0) += count;
+
+        // Recompute corpus statistics and every vector together. Merging vectors
+        // encoded against different IDF statistics would make similarity scores
+        // incomparable and leave query encoding inconsistent with document vectors.
+        self.rebuild_index();
+    }
+
+    /// Rebuild corpus statistics and document vectors as one consistent snapshot.
+    ///
+    /// IDF depends on the entire indexed corpus. Any mutation that changes the
+    /// corpus must therefore update both the word frequencies and all document vectors.
+    fn rebuild_index(&mut self) {
+        let mut word_df = std::collections::HashMap::new();
+
+        for claim in &self.claims {
+            let lowered = claim.content.to_lowercase();
+            let words: std::collections::HashSet<&str> = lowered
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| w.len() >= 2 && !is_stop_word(w))
+                .collect();
+
+            for word in words {
+                *word_df.entry(word.to_string()).or_insert(0) += 1;
+            }
         }
+
+        let n_docs = self.claims.len() as f32;
+        let vectors = self
+            .claims
+            .iter()
+            .map(|claim| encode_text_idf(&claim.content, &word_df, n_docs))
+            .collect();
+
+        self.word_df = word_df;
+        self.vectors = vectors;
     }
 
     /// Add a claim to the index.
@@ -185,16 +249,34 @@ impl SearchEngine {
         sources: &[&str],
         tags: &[&str],
     ) {
-        let hv = encode_text(content);
-        self.claims.push(ClaimEntry {
-            content: content.to_string(),
-            sources: sources.iter().map(|s| s.to_string()).collect(),
+        self.add_claims(std::iter::once((
+            content.to_string(),
             empirical_level,
-            normative_level: NormativeLevel::N2, // Default for dynamic adds
-            materiality_level: MaterialityLevel::M2,
-            tags: tags.iter().map(|s| s.to_string()).collect(),
-        });
-        self.vectors.push(hv);
+            sources.iter().map(|s| s.to_string()).collect(),
+            tags.iter().map(|s| s.to_string()).collect(),
+        )));
+    }
+
+    /// Add a batch of claims and rebuild shared IDF statistics only once.
+    ///
+    /// Prefer this method when importing many claims: a corpus-dependent IDF
+    /// snapshot requires rebuilding all document vectors after a mutation, so
+    /// batching avoids an O(n) rebuild for every item in a large import.
+    pub fn add_claims<I>(&mut self, claims: I)
+    where
+        I: IntoIterator<Item = (String, EmpiricalLevel, Vec<String>, Vec<String>)>,
+    {
+        for (content, empirical_level, sources, tags) in claims {
+            self.claims.push(ClaimEntry {
+                content,
+                sources,
+                empirical_level,
+                normative_level: NormativeLevel::N2, // Default for dynamic adds
+                materiality_level: MaterialityLevel::M2,
+                tags,
+            });
+        }
+        self.rebuild_index();
     }
 
     /// Search for claims matching a query. Returns top-k results ranked by composite score.
@@ -215,82 +297,56 @@ impl SearchEngine {
             encode_text_idf(query, &self.word_df, self.claims.len() as f32)
         };
 
-        // LSH pre-filter: bit-sampling with 64 hash functions.
-        // Each hash samples 3 bit positions. A candidate must match at least 12/64 hashes.
-        // For random vectors (~50% sim): expected matches = 32, threshold 12 passes ~all.
-        // For relevant vectors (~55% sim): expected matches = ~35, passes easily.
-        // For irrelevant vectors (~49% sim): expected matches = ~30, many filtered.
-        const NUM_HASHES: usize = 64;
-        const MATCH_THRESHOLD: usize = 16;
-
-        // Pre-compute query hash values (each hash = XOR of 3 sampled bytes)
-        let query_hashes: [u8; NUM_HASHES] = std::array::from_fn(|h| {
-            // Deterministic byte positions from hash index
-            let p0 = (h * 31 + 7) % 2048;
-            let p1 = (h * 67 + 13) % 2048;
-            let p2 = (h * 97 + 29) % 2048;
-            query_hv.0[p0] ^ query_hv.0[p1] ^ query_hv.0[p2]
-        });
-
-        let candidates: Vec<usize> = if self.vectors.len() > 200 {
-            self.vectors
-                .iter()
-                .enumerate()
-                .filter_map(|(i, v)| {
-                    let mut matches = 0u32;
-                    for h in 0..NUM_HASHES {
-                        let p0 = (h * 31 + 7) % 2048;
-                        let p1 = (h * 67 + 13) % 2048;
-                        let p2 = (h * 97 + 29) % 2048;
-                        let vh = v.0[p0] ^ v.0[p1] ^ v.0[p2];
-                        // Count matching bits between query hash and candidate hash
-                        matches += (!(query_hashes[h] ^ vh)).count_ones();
-                    }
-                    // 64 hashes × 8 bits = 512 possible matching bits
-                    // Threshold: require above random expectation (256)
-                    if matches > (MATCH_THRESHOLD as u32 * 8) {
-                        Some(i)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        } else {
-            (0..self.vectors.len()).collect()
-        };
-
-        // Exact similarity on candidates only
-        let baseline = 0.50_f32; // True baseline for 16,384-bit BinaryHV
-        let mut scored: Vec<(usize, f32)> = candidates
-            .iter()
-            .map(|&i| {
+        // Correctness-first exhaustive retrieval: score every indexed claim.
+        //
+        // The previous prefilter XORed three sampled bytes and counted bit matches.
+        // For near-random binary hypervectors, XOR parity largely destroys the
+        // modest similarity signal the index is meant to preserve. Its 128/512
+        // threshold was also below the 256/512 random expectation, so it was not
+        // a defensible locality-sensitive hash and could not justify a recall claim.
+        // Keep the exhaustive scan until a real LSH/ANN implementation is backed
+        // by a pinned relevance set, measured recall@k, and latency benchmarks.
+        // Exact exhaustive scoring is the correctness baseline until an
+        // approximate index demonstrates recall and latency on a pinned corpus.
+        let baseline = 0.50_f32; // Expected similarity for independent BinaryHV vectors
+        let mut scored: Vec<(usize, f32, f32)> = (0..self.vectors.len())
+            .map(|i| {
                 let sim = query_hv.similarity(&self.vectors[i]);
                 let claim = &self.claims[i];
                 let epistemic = claim.empirical_level.as_f32();
                 let norm_sim = ((sim - baseline) / (1.0 - baseline)).clamp(0.0, 1.0);
-                let composite = 0.7 * norm_sim + 0.2 * epistemic + 0.1 * 0.9;
-                (i, composite)
+                // These metadata values remain legacy placeholders until their
+                // provenance is modeled explicitly in SearchResult.
+                // Reputation and age are unknown for the current claim schema;
+                // use only measured query similarity and its explicit evidence level.
+                // Dividing by the fixed observed weight (0.7) preserves the same
+                // ordering as SearchResult::rank_score() with optional fields absent.
+                let composite = (0.4 * norm_sim + 0.3 * epistemic) / 0.7;
+                (i, composite, norm_sim)
             })
             .collect();
 
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // Stable and deterministic ordering for exact score ties.
+        scored.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
         scored.truncate(top_k);
 
         scored
             .into_iter()
-            .map(|(i, _)| {
+            .map(|(i, _composite, norm_sim)| {
                 let claim = &self.claims[i];
-                let sim = query_hv.similarity(&self.vectors[i]);
-                let norm_sim = ((sim - baseline) / (1.0 - baseline)).clamp(0.0, 1.0);
                 SearchResult {
                     content: claim.content.clone(),
                     sources: claim.sources.clone(),
                     empirical_level: claim.empirical_level,
                     normative_level: claim.normative_level,
                     materiality_level: claim.materiality_level,
-                    query_similarity: norm_sim,
-                    author_reputation: 0.9,
-                    age_days: 1,
+                    query_similarity: Some(norm_sim),
+                    author_reputation: None,
+                    age_days: None,
                     tags: claim.tags.clone(),
                 }
             })
@@ -471,6 +527,15 @@ fn is_stop_word(word: &str) -> bool {
     )
 }
 
+/// Normalize content for conservative duplicate detection.
+fn normalize_claim_content(content: &str) -> String {
+    content
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
 /// Deterministic hash of a word to a u64 seed for BinaryHV::random().
 fn hash_word(word: &str) -> u64 {
     // FNV-1a hash
@@ -543,14 +608,13 @@ pub fn render_search_results_html(query: &str, results: &[SearchResult]) -> Stri
 <body>
     <h1>Prism Search</h1>
     <h2>Results for &quot;{query}&quot;</h2>
-    <p>{count} results from {total} indexed claims</p>
+    <p>{count} results returned</p>
     <hr>
     {results_html}
 </body>
 </html>"#,
         query = query,
         count = results.len(),
-        total = "seed",
         results_html = results_html,
     )
 }
@@ -583,6 +647,46 @@ mod tests {
         assert!(!html.contains("<img"));
         assert!(html.contains("&lt;script&gt;claim()&lt;/script&gt;"));
         assert!(html.contains("&lt;/h2&gt;&lt;script&gt;query()&lt;/script&gt;"));
+    }
+
+    #[test]
+    fn corrupt_precomputed_index_returns_explicit_error() {
+        assert!(SearchEngine::try_from_precomputed(b"not a valid bincode index").is_err());
+    }
+
+    #[test]
+    fn precomputed_index_round_trip_checks_derived_state() {
+        let mut engine = SearchEngine::new();
+        engine.add_claim("ocean acidification", EmpiricalLevel::E2, &[], &[]);
+        engine.add_claim("quantum entanglement", EmpiricalLevel::E3, &[], &[]);
+
+        let bytes = bincode::serialize(&engine).expect("serialize valid index");
+        let loaded = SearchEngine::try_from_precomputed(&bytes)
+            .expect("valid derived state should round-trip");
+
+        assert_eq!(loaded.claim_count(), 2);
+        assert_eq!(loaded.vectors.len(), loaded.claims.len());
+        assert_eq!(loaded.word_df.get("ocean"), Some(&1));
+    }
+
+    #[test]
+    fn precomputed_index_rejects_mismatched_vector_count() {
+        let mut engine = SearchEngine::new();
+        engine.add_claim("ocean acidification", EmpiricalLevel::E2, &[], &[]);
+        engine.vectors.pop();
+
+        let bytes = bincode::serialize(&engine).expect("serialize malformed index");
+        assert!(SearchEngine::try_from_precomputed(&bytes).is_err());
+    }
+
+    #[test]
+    fn precomputed_index_rejects_stale_document_frequencies() {
+        let mut engine = SearchEngine::new();
+        engine.add_claim("ocean acidification", EmpiricalLevel::E2, &[], &[]);
+        engine.word_df.insert("forged-frequency".into(), 42);
+
+        let bytes = bincode::serialize(&engine).expect("serialize malformed index");
+        assert!(SearchEngine::try_from_precomputed(&bytes).is_err());
     }
 
     #[test]
@@ -639,6 +743,50 @@ mod tests {
         );
     }
 
+
+    #[test]
+    fn returned_results_are_sorted_by_exposed_rank_score() {
+        let mut engine = SearchEngine::new();
+        engine.add_claim("ocean acidification lowers seawater pH", EmpiricalLevel::E2, &[], &[]);
+        engine.add_claim("ocean acidification threatens shell forming organisms", EmpiricalLevel::E3, &[], &[]);
+        engine.add_claim("quantum entanglement and phase coherence", EmpiricalLevel::E1, &[], &[]);
+        engine.add_claim("carbon dioxide changes ocean carbonate chemistry", EmpiricalLevel::E4, &[], &[]);
+
+        let results = engine.search("ocean acidification carbonate chemistry", 4);
+        assert!(results.len() >= 2);
+        for pair in results.windows(2) {
+            assert!(
+                pair[0].rank_score() >= pair[1].rank_score(),
+                "results must be sorted by exposed score: {} < {}",
+                pair[0].rank_score(),
+                pair[1].rank_score()
+            );
+        }
+    }
+
+    #[test]
+    fn exact_scan_ranks_matching_claim_after_more_than_200_documents() {
+        let mut engine = SearchEngine::new();
+        let distractors = (0..250)
+            .map(|i| {
+                (
+                    format!("unrelated gardening topic number {i}"),
+                    EmpiricalLevel::E1,
+                    Vec::new(),
+                    Vec::new(),
+                )
+            })
+            .collect::<Vec<_>>();
+        engine.add_claims(distractors);
+
+        let target = "quantum entanglement preserves phase coherence in a controlled experiment";
+        engine.add_claim(target, EmpiricalLevel::E3, &["https://example.test/quantum"], &[]);
+
+        let results = engine.search(target, 5);
+        assert!(!results.is_empty());
+        assert_eq!(results[0].content, target);
+    }
+
     #[test]
     fn search_empty_query_returns_empty() {
         let engine = SearchEngine::with_seed_claims();
@@ -669,11 +817,93 @@ mod tests {
     }
 
     #[test]
+    fn add_claim_rebuilds_document_frequencies_and_vectors() {
+        let mut engine = SearchEngine::new();
+        engine.add_claim(
+            "sharedterm ocean",
+            EmpiricalLevel::E1,
+            &["https://example.test/ocean"],
+            &[],
+        );
+        engine.add_claim(
+            "sharedterm climate",
+            EmpiricalLevel::E2,
+            &["https://example.test/climate"],
+            &[],
+        );
+
+        assert_eq!(engine.claim_count(), 2);
+        assert_eq!(engine.word_df.get("sharedterm"), Some(&2));
+        assert_eq!(engine.vectors.len(), engine.claims.len());
+        assert!(!engine.search("climate", 2).is_empty());
+    }
+
+    #[test]
+    fn merge_does_not_drop_distinct_claims_with_shared_prefixes() {
+        let shared_prefix = "this claim deliberately shares a long common prefix ".repeat(3);
+        let first = format!("{shared_prefix}alpha");
+        let second = format!("{shared_prefix}beta");
+
+        let mut left = SearchEngine::new();
+        left.add_claim(&first, EmpiricalLevel::E1, &[], &[]);
+        let mut right = SearchEngine::new();
+        right.add_claim(&second, EmpiricalLevel::E2, &[], &[]);
+
+        left.merge(right);
+
+        assert_eq!(left.claim_count(), 2);
+        assert!(left.claims.iter().any(|claim| claim.content == first));
+        assert!(left.claims.iter().any(|claim| claim.content == second));
+    }
+
+    #[test]
+    fn batch_add_rebuilds_one_consistent_index_snapshot() {
+        let mut engine = SearchEngine::new();
+        engine.add_claims(vec![
+            (
+                "sharedterm ocean".to_string(),
+                EmpiricalLevel::E1,
+                Vec::new(),
+                Vec::new(),
+            ),
+            (
+                "sharedterm climate".to_string(),
+                EmpiricalLevel::E2,
+                Vec::new(),
+                Vec::new(),
+            ),
+        ]);
+
+        assert_eq!(engine.claim_count(), 2);
+        assert_eq!(engine.word_df.get("sharedterm"), Some(&2));
+        assert_eq!(engine.vectors.len(), engine.claims.len());
+        assert!(!engine.search("climate", 2).is_empty());
+    }
+
+    #[test]
+    fn merge_rebuilds_document_frequencies_and_vectors() {
+        let mut left = SearchEngine::new();
+        left.add_claim("sharedterm ocean", EmpiricalLevel::E1, &[], &[]);
+
+        let mut right = SearchEngine::new();
+        right.add_claim("sharedterm climate", EmpiricalLevel::E2, &[], &[]);
+
+        left.merge(right);
+
+        assert_eq!(left.claim_count(), 2);
+        assert_eq!(left.word_df.get("sharedterm"), Some(&2));
+        assert_eq!(left.vectors.len(), left.claims.len());
+        assert!(!left.search("climate", 2).is_empty());
+    }
+
+    #[test]
     fn render_results_html_valid() {
         let engine = SearchEngine::with_seed_claims();
         let results = engine.search("rust programming", 3);
         let html = render_search_results_html("rust programming", &results);
         assert!(html.contains("Prism Search"));
         assert!(html.contains("rust programming"));
+        assert!(html.contains("results returned"));
+        assert!(!html.contains("seed indexed claims"));
     }
 }

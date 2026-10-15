@@ -42,8 +42,9 @@ struct SearchResultJson {
     content: String,
     sources: Vec<String>,
     empirical_level: String,
-    query_similarity: f32,
-    author_reputation: f32,
+    query_similarity: Option<f32>,
+    author_reputation: Option<f32>,
+    age_days: Option<u32>,
     tags: Vec<String>,
     rank_score: f32,
 }
@@ -114,6 +115,7 @@ fn search_claims(
                 empirical_level: format!("{:?}", r.empirical_level),
                 query_similarity: r.query_similarity,
                 author_reputation: r.author_reputation,
+                age_days: r.age_days,
                 tags: r.tags,
                 rank_score: score,
             }

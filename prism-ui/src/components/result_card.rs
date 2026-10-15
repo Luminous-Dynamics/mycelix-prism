@@ -17,7 +17,10 @@ pub fn ResultCard(result: SearchResult, rank: usize) -> impl IntoView {
         EmpiricalLevel::E0 => ("e-badge e0", "E0"),
     };
 
-    let score_pct = (result.rank_score() * 100.0) as u32;
+    let score_label = result
+        .query_similarity
+        .map(|similarity| format!("{:.0}% similarity", similarity.clamp(0.0, 1.0) * 100.0))
+        .unwrap_or_else(|| "Relevance unavailable".to_string());
     let source = result
         .sources
         .first()
@@ -34,7 +37,7 @@ pub fn ResultCard(result: SearchResult, rank: usize) -> impl IntoView {
             <div class="result-header">
                 <span style="color:var(--content-text-secondary); font-size:14px; font-weight:600;">{rank}"."</span>
                 <span class=e_class>{e_label}</span>
-                <span class="result-score">{score_pct}"% match"</span>
+                <span class="result-score">{score_label}</span>
             </div>
             <div class="result-content">{result.content.clone()}</div>
             <div class="result-footer">

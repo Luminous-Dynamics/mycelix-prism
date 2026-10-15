@@ -153,13 +153,19 @@ def validate_documents(schema: Any, ledger: Any) -> list[str]:
         if source.get("revision") is not None and not _is_string(source.get("revision")):
             errors.append(f"{prefix}.revision must be a string or null")
         if source.get("kind") in {"prism_test_result", "benchmark_result", "security_review"}:
-            for key in ("prism_revision", "engine_revision", "command", "artifact_url", "result"):
+            for key in ("prism_revision", "engine_revision", "command", "artifact_url", "result", "artifact_sha256", "environment"):
                 if not _is_string(source.get(key)):
                     errors.append(f"{prefix}.{key} is required for executable evidence")
             if isinstance(source.get("prism_revision"), str) and not SHA1_RE.fullmatch(source["prism_revision"]):
                 errors.append(f"{prefix}.prism_revision must be a full lowercase 40-character commit SHA")
             if not _is_string(source.get("artifact_url")) or not source["artifact_url"].startswith("https://"):
                 errors.append(f"{prefix}.artifact_url must be an HTTPS artifact/log URL")
+            if isinstance(source.get("artifact_sha256"), str) and not re.fullmatch(r"^[0-9a-f]{64}$", source["artifact_sha256"]):
+                errors.append(f"{prefix}.artifact_sha256 must be a full lowercase SHA-256 digest")
+            if not _is_object(source.get("environment")):
+                errors.append(f"{prefix}.environment must identify the test environment")
+        if source.get("kind") == "prism_test_result" and source.get("capsule_schema_version") != "1.0.0":
+            errors.append(f"{prefix}.capsule_schema_version must identify the supported result-capsule schema")
 
     engines = ledger.get("engines")
     if not isinstance(engines, list) or not engines:
@@ -245,6 +251,7 @@ def validate_documents(schema: Any, ledger: Any) -> list[str]:
                     if evidence_id in source_by_id
                     and source_by_id[evidence_id].get("kind") == "prism_test_result"
                     and source_by_id[evidence_id].get("result") == "passed"
+                    and source_by_id[evidence_id].get("capsule_schema_version") == "1.0.0"
                 ]
                 if not test_sources:
                     errors.append(f"{cap_prefix} cannot be verified without a passed, exact-revision Prism test artifact")

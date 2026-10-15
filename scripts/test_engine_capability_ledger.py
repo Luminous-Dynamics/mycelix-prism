@@ -126,6 +126,30 @@ class EngineLedgerValidatorTests(unittest.TestCase):
         errors = validate_documents(schema, self.ledger)
         self.assertTrue(any("schema enum for prism_status does not match validator vocabulary" in error for error in errors))
 
+    def test_rejects_passed_test_evidence_without_artifact_digest(self) -> None:
+        ledger = copy.deepcopy(self.ledger)
+        engine = ledger["engines"][0]
+        engine["integration_status"] = "integrated"
+        cap = engine["capabilities"][0]
+        cap["prism_status"] = "verified"
+        cap["evidence_ids"].append("synthetic-capsule-evidence")
+        ledger["evidence_sources"].append({
+            "id": "synthetic-capsule-evidence",
+            "kind": "prism_test_result",
+            "url": "https://example.invalid/capsule.json",
+            "reviewed_at": "2026-10-15",
+            "revision": None,
+            "claim_scope": "synthetic validator fixture only; not real browser evidence",
+            "prism_revision": "a" * 40,
+            "engine_revision": engine["identity"]["revision"],
+            "command": "synthetic test fixture",
+            "artifact_url": "https://example.invalid/capsule.json",
+            "result": "passed",
+        })
+        errors = validate_documents(self.schema, ledger)
+        self.assertTrue(any("artifact_sha256 is required" in error for error in errors))
+        self.assertTrue(any("capsule_schema_version" in error for error in errors))
+
     def test_rejects_unknown_status(self) -> None:
         ledger = copy.deepcopy(self.ledger)
         ledger["engines"][0]["capabilities"][0]["prism_status"] = "probably-works"

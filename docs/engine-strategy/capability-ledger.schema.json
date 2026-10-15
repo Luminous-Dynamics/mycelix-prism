@@ -90,6 +90,51 @@
           "result": {
             "type": "string",
             "minLength": 1
+          },
+          "artifact_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "capsule_schema_version": {
+            "const": "1.0.0"
+          },
+          "environment": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "os",
+              "architecture",
+              "runner_image",
+              "toolchain",
+              "toolchain_lock_sha256",
+              "gpu_backend"
+            ],
+            "properties": {
+              "os": {
+                "type": "string",
+                "minLength": 1
+              },
+              "architecture": {
+                "type": "string",
+                "minLength": 1
+              },
+              "runner_image": {
+                "type": "string",
+                "minLength": 1
+              },
+              "toolchain": {
+                "type": "string",
+                "minLength": 1
+              },
+              "toolchain_lock_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "gpu_backend": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
           }
         },
         "allOf": [
@@ -114,7 +159,26 @@
                 "engine_revision",
                 "command",
                 "artifact_url",
-                "result"
+                "result",
+                "artifact_sha256",
+                "environment"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "prism_test_result"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "required": [
+                "capsule_schema_version"
               ]
             }
           }

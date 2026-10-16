@@ -117,6 +117,7 @@ impl ConsentStore {
             return false;
         };
         contains_canonical_domain(&self.approved_domains, &canonical)
+            && !contains_canonical_domain(&self.denied_domains, &canonical)
     }
 
     /// Check if a domain has been explicitly denied.
@@ -196,7 +197,12 @@ impl ConsentStore {
 
     /// Number of approved domains.
     pub fn approved_count(&self) -> usize {
-        canonical_domain_count(&self.approved_domains)
+        self.approved_domains
+            .iter()
+            .filter_map(|stored| canonical_domain(stored))
+            .filter(|canonical| !contains_canonical_domain(&self.denied_domains, canonical))
+            .collect::<HashSet<_>>()
+            .len()
     }
 
     /// Number of denied domains after canonicalizing persisted hostnames.
@@ -377,6 +383,29 @@ mod tests {
         assert!(!store.is_approved("EXAMPLE.COM."));
         assert_eq!(store.approved_count(), 0);
         assert_eq!(store.denied_count(), 2);
+    }
+
+    #[test]
+    fn conflicting_legacy_approval_and_denial_always_resolve_as_denied() {
+        let json = r#"{"approved_domains":["Example.COM."],"denied_domains":["EXAMPLE.COM"]}"#;
+        let mut store: ConsentStore = serde_json::from_str(json).unwrap();
+
+        // Denial wins consistently across decisions and user-visible counts.
+        assert!(store.is_denied("example.com"));
+        assert!(!store.is_approved("example.com."));
+        assert_eq!(store.approved_count(), 0);
+        assert_eq!(store.denied_count(), 1);
+        assert_eq!(
+            store.resolve_zone(ContentZone::Public, "EXAMPLE.COM."),
+            ContentZone::Private
+        );
+
+        // A later explicit approval resolves the conflict intentionally.
+        assert!(store.try_approve_domain("example.com"));
+        assert!(store.is_approved("EXAMPLE.COM."));
+        assert!(!store.is_denied("example.com"));
+        assert_eq!(store.approved_count(), 1);
+        assert_eq!(store.denied_count(), 0);
     }
 
     #[test]

@@ -120,7 +120,7 @@ def validate_manifest(manifest: Any) -> list[str]:
         ):
             errors.append(f"{prefix} post_revocation must expect deny/no_op")
     if kinds != KINDS:
-        errors.append("manifest must contain each required scenario kind exactly once")
+        errors.append("manifest must include at least one scenario for each required kind")
     required_obs = manifest.get("required_observability")
     if (
         not isinstance(required_obs, list)
@@ -269,8 +269,21 @@ def derive_outcome(capsule: Any) -> str:
     cases = capsule["cases"]
     if not cases or any(not isinstance(case, dict) for case in cases):
         return "incomplete"
+    try:
+        raw_manifest = MANIFEST_PATH.read_bytes()
+        canonical_manifest = json.loads(raw_manifest)
+    except (OSError, json.JSONDecodeError):
+        return "incomplete"
+    if validate_manifest(canonical_manifest):
+        return "incomplete"
+    canonical_ids = [scenario["case_id"] for scenario in canonical_manifest["scenarios"]]
+    expected_digest = hashlib.sha256(raw_manifest).hexdigest()
+    if capsule.get("manifest_sha256") != expected_digest:
+        return "incomplete"
     case_ids = [case.get("case_id") for case in cases]
     manifest_ids = capsule.get("manifest_case_ids")
+    if manifest_ids != canonical_ids:
+        return "incomplete"
     manifest_count = capsule.get("manifest_case_count")
     if (
         not isinstance(manifest_ids, list)

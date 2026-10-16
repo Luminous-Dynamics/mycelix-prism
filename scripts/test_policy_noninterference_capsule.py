@@ -126,7 +126,7 @@ class PolicyNoninterferenceCapsuleTests(unittest.TestCase):
     def test_rejects_manifest_missing_required_scenario_kind(self) -> None:
         manifest = dict(MANIFEST)
         manifest["scenarios"] = [scenario for scenario in MANIFEST["scenarios"] if scenario["kind"] != "expired_authority"]
-        self.assertTrue(any("each required scenario kind exactly once" in e for e in validate_manifest(manifest)))
+        self.assertTrue(any("at least one scenario for each required kind" in e for e in validate_manifest(manifest)))
 
     def test_denial_with_side_effect_fails_not_passes(self) -> None:
         capsule = make_capsule()
@@ -237,6 +237,11 @@ class PolicyNoninterferenceCapsuleTests(unittest.TestCase):
         capsule = make_capsule()
         capsule["cases"][0]["attack_vector"] = "weakened or substituted attack"
         self.assertTrue(any("attack_vector differs from canonical manifest" in e for e in validate_capsule(SCHEMA, capsule)))
+
+    def test_derive_outcome_rejects_forged_manifest_identity(self) -> None:
+        capsule = make_capsule()
+        capsule["manifest_sha256"] = "f" * 64
+        self.assertEqual(derive_outcome(capsule), "incomplete")
 
     def test_derive_outcome_accepts_manifest_growth_without_hardcoded_count(self) -> None:
         capsule = make_capsule()

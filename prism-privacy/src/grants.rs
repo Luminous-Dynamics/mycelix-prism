@@ -114,6 +114,7 @@ pub enum GrantValidationError {
 pub enum GrantError {
     InvalidGrant(GrantValidationError),
     DuplicateGrantId,
+    DuplicateChoiceReceipt,
     MissingGrant,
     PolicyVersionMismatch,
     AuthorityUnavailable,
@@ -127,6 +128,7 @@ pub enum DenialReason {
     InvalidRequest,
     MissingGrant,
     Revoked,
+    AlreadyConsumed,
     DestinationMismatch,
     OperationMismatch,
     ScopeMismatch,
@@ -156,6 +158,7 @@ struct GrantRecord {
     /// Starts at 1 and advances on revocation; old permits never refresh.
     epoch: u64,
     revoked: bool,
+    consumed: bool,
 }
 
 #[derive(Default)]
@@ -214,6 +217,13 @@ impl GrantAuthority {
         if state.grants.contains_key(&grant.id) {
             return Err(GrantError::DuplicateGrantId);
         }
+        if state
+            .grants
+            .values()
+            .any(|record| record.grant.user_choice_receipt == grant.user_choice_receipt)
+        {
+            return Err(GrantError::DuplicateChoiceReceipt);
+        }
 
         state.grants.insert(
             grant.id.clone(),
@@ -221,6 +231,7 @@ impl GrantAuthority {
                 grant,
                 epoch: 1,
                 revoked: false,
+                consumed: false,
             },
         );
         Ok(())
@@ -269,6 +280,17 @@ impl GrantAuthority {
         if current_epoch != permit.grant_epoch {
             return Err(DenialReason::StalePermit);
         }
+
+        // Each explicit consent receipt authorizes one commit only. Consume the
+        // grant before calling user code so panic/re-entry cannot replay it.
+        let record = state
+            .grants
+            .get_mut(&binding.grant_id)
+            .ok_or(DenialReason::MissingGrant)?;
+        if record.consumed {
+            return Err(DenialReason::AlreadyConsumed);
+        }
+        record.consumed = true;
 
         // Linearization boundary: revoke() cannot acknowledge while this
         // closure is in progress, and no later closure can pass after revoke.
@@ -387,6 +409,9 @@ fn validate_locked(
     if record.revoked {
         return Err(DenialReason::Revoked);
     }
+    if record.consumed {
+        return Err(DenialReason::AlreadyConsumed);
+    }
 
     let grant = &record.grant;
     if grant.policy_version != state.current_policy_version {
@@ -457,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_scoped_grant_can_commit() {
+    fn exact_scoped_grant_can_commit_once() {
         let authority = sample_authority();
         let request = sample_request(ContentZone::Local);
         let permit = authority.authorize(&request, Some(100)).unwrap();
@@ -468,6 +493,11 @@ mod tests {
             .commit_with(&permit, &request, Some(101), || "committed")
             .unwrap();
         assert_eq!(result, "committed");
+        assert_eq!(
+            authority.authorize(&request, Some(102)),
+            Err(DenialReason::AlreadyConsumed),
+            "the same user choice must not authorize a second commit"
+        );
     }
 
     #[test]
@@ -605,6 +635,13 @@ mod tests {
             Err(GrantError::InvalidGrant(
                 GrantValidationError::InvalidContentScope
             ))
+        );
+
+        let mut reused_receipt = sample_grant("second-grant");
+        reused_receipt.destination = "elsewhere.example".into();
+        assert_eq!(
+            authority.issue(reused_receipt),
+            Err(GrantError::DuplicateChoiceReceipt)
         );
 
         let mut invalid_receipt = sample_grant("bad-receipt");

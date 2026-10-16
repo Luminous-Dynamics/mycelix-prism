@@ -239,6 +239,7 @@ impl GrantAuthority {
             return Err(GrantError::DuplicateChoiceReceipt);
         }
 
+        let issued_policy_epoch = state.current_policy_epoch;
         state.grants.insert(
             grant.id.clone(),
             GrantRecord {
@@ -246,7 +247,7 @@ impl GrantAuthority {
                 epoch: 1,
                 revoked: false,
                 consumed: false,
-                policy_epoch: state.current_policy_epoch,
+                policy_epoch: issued_policy_epoch,
             },
         );
         Ok(())

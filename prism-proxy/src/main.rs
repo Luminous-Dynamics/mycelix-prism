@@ -31,26 +31,50 @@ fn redirect_target_is_safe(url: &url::Url) -> bool {
     validate_proxy_url(url.as_str()).is_ok()
 }
 
-fn safe_redirect_policy() -> reqwest::redirect::Policy {
-    // Preserve reqwest's bounded-hop and loop protection after validating each
-    // target. A custom policy without this delegation would need to implement
-    // both protections itself.
+fn same_origin(initial: &url::Url, target: &url::Url) -> bool {
+    initial.scheme() == target.scheme()
+        && initial.host_str() == target.host_str()
+        && initial.port_or_known_default() == target.port_or_known_default()
+}
+
+fn safe_redirect_policy(restrict_to_initial_origin: bool) -> reqwest::redirect::Policy {
+    // Validate the target on every hop and delegate hop/loop limits to reqwest.
+    // Sensitive provider API calls additionally stay on their original origin.
     let limited = reqwest::redirect::Policy::limited(5);
     reqwest::redirect::Policy::custom(move |attempt| {
         if !redirect_target_is_safe(attempt.url()) {
             return attempt.error("redirect target rejected by Prism SSRF policy");
         }
+        if restrict_to_initial_origin {
+            if let Some(initial) = attempt.previous().first()
+                && !same_origin(initial, attempt.url())
+            {
+                return attempt.error("cross-origin redirect rejected for provider API request");
+            }
+        }
         limited.redirect(attempt)
     })
 }
 
-fn build_client(user_agent: &str, timeout_secs: u64) -> reqwest::Client {
+fn build_client_with_policy(
+    user_agent: &str,
+    timeout_secs: u64,
+    restrict_to_initial_origin: bool,
+) -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(user_agent)
-        .redirect(safe_redirect_policy())
+        .redirect(safe_redirect_policy(restrict_to_initial_origin))
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .expect("HTTP client TLS init failed")
+}
+
+fn build_client(user_agent: &str, timeout_secs: u64) -> reqwest::Client {
+    build_client_with_policy(user_agent, timeout_secs, false)
+}
+
+fn build_api_client(user_agent: &str, timeout_secs: u64) -> reqwest::Client {
+    build_client_with_policy(user_agent, timeout_secs, true)
 }
 
 fn internal_error_response() -> axum::response::Response<axum::body::Body> {
@@ -139,7 +163,7 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
     );
     log::info!("DDG proxy: {}", params.q);
 
-    let client = build_client("Prism/0.2 (ddg-proxy)", 10);
+    let client = build_api_client("Prism/0.2 (ddg-proxy)", 10);
 
     match client.get(&url).send().await {
         Ok(resp) => {
@@ -175,7 +199,7 @@ async fn brave_handler(
     );
     log::info!("Brave proxy: {}", params.q);
 
-    let client = build_client("Prism/0.2 (brave-proxy)", 15);
+    let client = build_api_client("Prism/0.2 (brave-proxy)", 15);
 
     match client
         .get(&url)
@@ -213,7 +237,7 @@ async fn perplexity_handler(
 
     log::info!("Perplexity proxy request");
 
-    let client = build_client("Prism/0.2 (perplexity-proxy)", 30);
+    let client = build_api_client("Prism/0.2 (perplexity-proxy)", 30);
 
     match client
         .post("https://api.perplexity.ai/chat/completions")
@@ -286,6 +310,20 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_api_redirects_must_remain_same_origin() {
+        let initial = url::Url::parse("https://api.example.test/v1/search").unwrap();
+        let same = url::Url::parse("https://api.example.test/v2/search").unwrap();
+        let different_host = url::Url::parse("https://capture.example.test/collect").unwrap();
+        let different_scheme = url::Url::parse("http://api.example.test/v1/search").unwrap();
+        let different_port = url::Url::parse("https://api.example.test:8443/v1/search").unwrap();
+
+        assert!(same_origin(&initial, &same));
+        assert!(!same_origin(&initial, &different_host));
+        assert!(!same_origin(&initial, &different_scheme));
+        assert!(!same_origin(&initial, &different_port));
+    }
 
     #[test]
     fn redirect_target_validation_rejects_internal_destinations() {

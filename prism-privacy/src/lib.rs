@@ -350,6 +350,7 @@ mod tests {
             ".",
         ] {
             assert!(!store.try_approve_domain(domain), "{domain:?}");
+            assert!(!store.try_deny_domain(domain), "{domain:?}");
             assert!(store.is_denied(domain), "{domain:?}");
             assert_eq!(
                 store.resolve_zone(ContentZone::Public, domain),
@@ -358,6 +359,7 @@ mod tests {
             );
         }
         assert_eq!(store.approved_count(), 0);
+        assert_eq!(store.denied_count(), 0);
     }
 
     #[test]

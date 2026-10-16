@@ -86,7 +86,9 @@ pub fn validate_proxy_url(raw: &str) -> Result<url::Url, &'static str> {
 
             // Block well-known and local-use NAT64 prefixes. These can encode
             // IPv4 destinations that would otherwise bypass IPv4 literal checks.
-            if (seg[0] == 0x0064 && seg[1] == 0xff9b && seg[2..].iter().all(|part| *part == 0))
+            if (seg[0] == 0x0064
+                && seg[1] == 0xff9b
+                && seg[2..6].iter().all(|part| *part == 0))
                 || (seg[0] == 0x0064 && seg[1] == 0xff9b && seg[2] == 0x0001)
             {
                 return Err("Access to private/reserved IP addresses is forbidden");

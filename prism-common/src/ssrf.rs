@@ -54,6 +54,10 @@ pub fn validate_proxy_url(raw: &str) -> Result<url::Url, &'static str> {
         _ => return Err("Only http and https URLs are allowed"),
     }
 
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("URL credentials are forbidden");
+    }
+
     let host_str = parsed.host_str().unwrap_or("");
 
     if host_str == "localhost" || host_str == "metadata.google.internal" {
@@ -123,7 +127,8 @@ pub fn validate_proxy_url(raw: &str) -> Result<url::Url, &'static str> {
                 return Err("Access to private/reserved IP addresses is forbidden");
             }
         }
-        _ => {} // Domain names pass through (validated by DNS at fetch time)
+        // Hostnames pass through syntactic validation only. Connection-time DNS
+        // resolution classification and address pinning are tracked separately.
     }
 
     Ok(parsed)
@@ -152,6 +157,12 @@ mod tests {
     fn rejects_cloud_metadata() {
         assert!(validate_proxy_url("http://169.254.169.254/latest/meta-data/").is_err());
         assert!(validate_proxy_url("http://metadata.google.internal").is_err());
+    }
+
+    #[test]
+    fn rejects_embedded_url_credentials() {
+        assert!(validate_proxy_url("https://user:secret@example.com/path").is_err());
+        assert!(validate_proxy_url("https://user@example.com/path").is_err());
     }
 
     #[test]

@@ -18,7 +18,7 @@ A grant binds one explicit choice to all of the following:
 - Validity interval, with expiry exclusive.
 - Unique, non-reusable grant ID.
 
-The authority owns the active policy version instead of trusting a request-supplied version. Rotating that version makes older grants unusable. Each choice receipt is unique in the authority, each grant is single-use, and a grant is consumed before its commit closure runs. The decision path fails closed on private content, malformed bindings, missing grants, mismatches, unavailable clocks, backward clock readings, expiry, revocation, replay, and poisoned authority state. A Public or Local request that uses this authority still needs an explicit matching grant. This primitive is not a default-allow policy path.
+The authority owns the active policy version instead of trusting a request-supplied version. A monotonic policy generation invalidates older grants even if a previous version label is later reused. Each choice receipt is unique in the authority, each grant is single-use, and a grant is consumed before its commit closure runs. The decision path fails closed on private content, malformed bindings, missing grants, mismatches, unavailable clocks, backward clock readings, expiry, revocation, replay, and poisoned authority state. A Public or Local request that uses this authority still needs an explicit matching grant. This primitive is not a default-allow policy path.
 
 ## Revocation and the last responsible moment
 

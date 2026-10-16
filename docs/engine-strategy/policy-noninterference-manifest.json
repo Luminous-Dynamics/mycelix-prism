@@ -1,0 +1,84 @@
+{
+  "schema_version": "1.0.0",
+  "suite_id": "policy-noninterference",
+  "reviewed_at": "2026-10-16",
+  "principle": "A policy denial is not evidence of noninterference unless relevant side-effect channels are observed and reconciled.",
+  "required_observability": [
+    "state_digest",
+    "share_queue",
+    "privileged_actions",
+    "egress"
+  ],
+  "effect_counters": [
+    "state_writes",
+    "share_queue_writes",
+    "privileged_actions",
+    "outbound_flows",
+    "post_revocation_completions"
+  ],
+  "scenarios": [
+    {
+      "case_id": "deny-unauthorized-request",
+      "kind": "unauthorized_request",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "deny",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "zero"
+    },
+    {
+      "case_id": "deny-malformed-request",
+      "kind": "malformed_request",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "deny",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "zero"
+    },
+    {
+      "case_id": "deny-expired-authority",
+      "kind": "expired_authority",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "deny",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "zero"
+    },
+    {
+      "case_id": "deny-unconsented-cross-zone",
+      "kind": "unconsented_cross_zone",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "deny",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "zero"
+    },
+    {
+      "case_id": "deny-post-revocation",
+      "kind": "post_revocation",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "deny",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "zero"
+    },
+    {
+      "case_id": "deny-policy-evaluation-failure",
+      "kind": "policy_evaluation_failure",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "no_op",
+      "policy_failure_mode": "unavailable",
+      "expected_side_effects": "zero"
+    },
+    {
+      "case_id": "allow-authorized-control",
+      "kind": "authorized_control",
+      "source_zone": "LOCAL",
+      "destination_zone": "LOCAL",
+      "expected_decision": "allow",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "authorized_write"
+    }
+  ]
+}

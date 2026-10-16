@@ -7,6 +7,8 @@ on:
       - "docs/engine-strategy/**"
       - "scripts/validate_engine_test_capsule.py"
       - "scripts/test_engine_test_capsule.py"
+      - "scripts/validate_engine_benchmark_scorecard.py"
+      - "scripts/test_engine_benchmark_scorecard.py"
       - "scripts/validate_policy_noninterference_capsule.py"
       - "scripts/test_policy_noninterference_capsule.py"
       - "scripts/validate_engine_capability_ledger.py"

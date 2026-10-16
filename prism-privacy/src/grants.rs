@@ -704,6 +704,15 @@ mod tests {
             ))
         );
 
+        let mut private_grant = sample_grant("private-data");
+        private_grant.zone = ContentZone::Private;
+        assert_eq!(
+            authority.issue(private_grant),
+            Err(GrantError::InvalidGrant(
+                GrantValidationError::PrivateDataGrant
+            ))
+        );
+
         let mut invalid_window = sample_grant("bad-window");
         invalid_window.expires_at_unix_ms = invalid_window.issued_at_unix_ms;
         assert_eq!(

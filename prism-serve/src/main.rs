@@ -531,6 +531,50 @@ mod tests {
         assert!(!same_origin(&initial, &different_port));
     }
 
+    #[tokio::test]
+    async fn redirect_to_loopback_is_blocked_before_second_connection() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let first = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let blocked = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let first_addr = first.local_addr().unwrap();
+        let blocked_addr = blocked.local_addr().unwrap();
+
+        let responder = tokio::spawn(async move {
+            let (mut stream, _) = first.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await;
+            let response = format!(
+                "HTTP/1.1 302 Found\r\nLocation: http://{blocked_addr}/internal\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        // This test intentionally starts at loopback to exercise redirect
+        // policy in isolation; the public handler rejects this initial URL.
+        let client = reqwest::Client::builder()
+            .redirect(safe_redirect_policy(false))
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let result = client
+            .get(format!("http://{first_addr}/start"))
+            .send()
+            .await;
+        assert!(result.is_err(), "redirect to loopback should fail");
+
+        responder.await.unwrap();
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                blocked.accept()
+            )
+            .await
+            .is_err(),
+            "the blocked redirect target must never receive a connection"
+        );
+    }
+
     #[test]
     fn redirect_target_validation_rejects_internal_destinations() {
         for raw in [

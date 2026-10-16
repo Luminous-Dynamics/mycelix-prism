@@ -112,7 +112,8 @@
           "output_sha256",
           "event_trace_sha256",
           "observability",
-          "side_effects"
+          "side_effects",
+          "attack_vector"
         ],
         "properties": {
           "case_id": {
@@ -272,6 +273,10 @@
                 "type": "integer"
               }
             }
+          },
+          "attack_vector": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }

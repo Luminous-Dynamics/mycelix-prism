@@ -73,11 +73,14 @@ def validate_manifest(manifest: Any) -> list[str]:
             continue
         expected_scenario_keys = {
             "case_id", "kind", "source_zone", "destination_zone",
-            "expected_decision", "policy_failure_mode", "expected_side_effects",
+            "expected_decision", "policy_failure_mode", "expected_side_effects", "attack_vector",
         }
         if set(scenario) != expected_scenario_keys:
             errors.append(f"{prefix} keys do not match the versioned scenario contract")
         case_id, kind = scenario.get("case_id"), scenario.get("kind")
+        attack_vector = scenario.get("attack_vector")
+        if not isinstance(attack_vector, str) or not attack_vector.strip():
+            errors.append(f"{prefix}.attack_vector must be a non-empty string")
         if not isinstance(case_id, str) or not case_id:
             errors.append(f"{prefix}.case_id must be a non-empty string")
         elif case_id in ids:
@@ -86,8 +89,6 @@ def validate_manifest(manifest: Any) -> list[str]:
             ids.add(case_id)
         if not isinstance(kind, str) or kind not in KINDS:
             errors.append(f"{prefix}.kind is not allowed")
-        elif kind in kinds:
-            errors.append(f"duplicate manifest scenario kind: {kind}")
         else:
             kinds.add(kind)
         side_effect_mode = scenario.get("expected_side_effects")
@@ -105,6 +106,11 @@ def validate_manifest(manifest: Any) -> list[str]:
         elif kind != "policy_evaluation_failure" and failure_mode != "not_applicable":
             errors.append(f"{prefix} non-failure scenario must use policy_failure_mode=not_applicable")
         source_zone, destination_zone = scenario.get("source_zone"), scenario.get("destination_zone")
+        allowed_zones = {"PRIVATE", "LOCAL", "PUBLIC", "NONE"}
+        if not isinstance(source_zone, str) or source_zone not in allowed_zones:
+            errors.append(f"{prefix}.source_zone is not allowed")
+        if not isinstance(destination_zone, str) or destination_zone not in allowed_zones:
+            errors.append(f"{prefix}.destination_zone is not allowed")
         if kind == "unconsented_cross_zone" and (
             not isinstance(source_zone, str) or source_zone not in {"PRIVATE", "LOCAL"} or destination_zone != "PUBLIC"
         ):
@@ -216,7 +222,7 @@ def validate_capsule(
             ids.add(case_id)
         scenario = scenario_by_id.get(case_id) if isinstance(case_id, str) else None
         if scenario is not None:
-            for field in ("kind", "source_zone", "destination_zone", "expected_decision", "policy_failure_mode"):
+            for field in ("kind", "source_zone", "destination_zone", "expected_decision", "policy_failure_mode", "attack_vector"):
                 if case.get(field) != scenario.get(field):
                     errors.append(f"{prefix}.{field} differs from canonical manifest scenario")
         kind = case.get("kind")
@@ -261,27 +267,54 @@ def derive_outcome(capsule: Any) -> str:
     if not isinstance(capsule, dict) or not isinstance(capsule.get("cases"), list):
         return "incomplete"
     cases = capsule["cases"]
-    if len(cases) != 7 or any(not isinstance(case, dict) for case in cases):
+    if not cases or any(not isinstance(case, dict) for case in cases):
         return "incomplete"
     case_ids = [case.get("case_id") for case in cases]
-    if case_ids != ["deny-unauthorized-request", "deny-malformed-request", "deny-expired-authority", "deny-unconsented-cross-zone", "deny-post-revocation", "deny-policy-evaluation-failure", "allow-authorized-control"]:
+    manifest_ids = capsule.get("manifest_case_ids")
+    manifest_count = capsule.get("manifest_case_count")
+    if (
+        not isinstance(manifest_ids, list)
+        or any(not isinstance(case_id, str) for case_id in manifest_ids)
+        or len(set(manifest_ids)) != len(manifest_ids)
+        or case_ids != manifest_ids
+        or isinstance(manifest_count, bool)
+        or not isinstance(manifest_count, int)
+        or manifest_count != len(cases)
+    ):
         return "incomplete"
-    blocked = False
+    seen_kinds: set[str] = set()
     for case in cases:
         kind = case.get("kind")
         if not isinstance(kind, str) or kind not in KINDS:
             return "incomplete"
+        seen_kinds.add(kind)
+        expected = case.get("expected_decision")
+        if not isinstance(expected, str) or expected not in {"allow", "deny", "no_op"}:
+            return "incomplete"
+    if seen_kinds != KINDS:
+        return "incomplete"
+
+    blocked = False
+    for case in cases:
+        kind = case["kind"]
         obs, effects = case.get("observability"), case.get("side_effects")
         if not isinstance(obs, dict) or any(obs.get(channel) is not True for channel in REQUIRED_OBSERVABILITY):
             blocked = True
         if not isinstance(effects, dict):
             return "blocked"
-        if any(isinstance(effects.get(name), bool) or not isinstance(effects.get(name), int) or effects.get(name) < 0 for name in EFFECT_COUNTERS):
+        if any(
+            isinstance(effects.get(name), bool)
+            or not isinstance(effects.get(name), int)
+            or effects.get(name) < 0
+            for name in EFFECT_COUNTERS
+        ):
             return "blocked"
         effect_present = any(effects[name] > 0 for name in EFFECT_COUNTERS)
         observed, expected = case.get("observed_decision"), case.get("expected_decision")
+        if observed != expected:
+            return "failed"
         if kind in DENIED_KINDS:
-            if not isinstance(observed, str) or observed not in {"deny", "no_op"} or effect_present:
+            if observed not in {"deny", "no_op"} or effect_present:
                 return "failed"
             if case.get("pre_state_sha256") != case.get("post_state_sha256"):
                 return "failed"
@@ -298,13 +331,8 @@ def derive_outcome(capsule: Any) -> str:
                 return "failed"
             if effects["state_writes"] < 1 or case.get("pre_state_sha256") == case.get("post_state_sha256"):
                 return "failed"
-        if not isinstance(expected, str):
-            return "incomplete"
-        if expected == "allow" and observed != "allow":
-            return "failed"
-        if expected in {"deny", "no_op"} and observed not in {"deny", "no_op"}:
-            return "failed"
     return "blocked" if blocked else "passed"
+
 
 
 def main() -> int:

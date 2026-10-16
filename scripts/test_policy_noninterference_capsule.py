@@ -46,6 +46,7 @@ def make_case(scenario: dict, index: int) -> dict:
     return {
         "case_id": scenario["case_id"],
         "kind": scenario["kind"],
+        "attack_vector": scenario["attack_vector"],
         "source_zone": scenario["source_zone"],
         "destination_zone": scenario["destination_zone"],
         "expected_decision": expected,
@@ -222,6 +223,26 @@ class PolicyNoninterferenceCapsuleTests(unittest.TestCase):
         scenario = next(item for item in manifest["scenarios"] if item["kind"] == "post_revocation")
         scenario["expected_decision"] = []
         self.assertTrue(any("post_revocation must expect" in e for e in validate_manifest(manifest)))
+
+    def test_manifest_has_multiple_distinct_adversarial_vectors(self) -> None:
+        ids = [scenario["case_id"] for scenario in MANIFEST["scenarios"]]
+        vectors = [scenario["attack_vector"] for scenario in MANIFEST["scenarios"]]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual(len(vectors), len(set(vectors)))
+        self.assertGreaterEqual(sum(s["kind"] == "policy_evaluation_failure" for s in MANIFEST["scenarios"]), 3)
+        self.assertGreaterEqual(sum(s["kind"] == "post_revocation" for s in MANIFEST["scenarios"]), 2)
+        self.assertGreaterEqual(sum(s["kind"] == "unconsented_cross_zone" for s in MANIFEST["scenarios"]), 2)
+
+    def test_rejects_capsule_attack_vector_changed_from_manifest(self) -> None:
+        capsule = make_capsule()
+        capsule["cases"][0]["attack_vector"] = "weakened or substituted attack"
+        self.assertTrue(any("attack_vector differs from canonical manifest" in e for e in validate_capsule(SCHEMA, capsule)))
+
+    def test_derive_outcome_accepts_manifest_growth_without_hardcoded_count(self) -> None:
+        capsule = make_capsule()
+        self.assertEqual(capsule["manifest_case_count"], len(MANIFEST["scenarios"]))
+        self.assertGreater(capsule["manifest_case_count"], 7)
+        self.assertEqual(derive_outcome(capsule), "passed")
 
     def test_policy_capsule_schema_is_in_supported_subset(self) -> None:
         from engine_ledger_schema import validate_schema_definition

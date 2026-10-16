@@ -21,10 +21,33 @@ const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10MB
 // `prism_common::ssrf` so `prism-proxy` and `prism-serve` share a single
 // implementation — see that module for rationale and tests.
 
+/// Validate every redirect hop, not only the user-supplied starting URL.
+///
+/// This blocks obvious redirect-based SSRF attempts (for example a public host
+/// redirecting to loopback or cloud metadata). Hostname DNS rebinding remains a
+/// separate risk: `validate_proxy_url` does not pin and validate resolved IPs
+/// at connection time.
+fn redirect_target_is_safe(url: &url::Url) -> bool {
+    validate_proxy_url(url.as_str()).is_ok()
+}
+
+fn safe_redirect_policy() -> reqwest::redirect::Policy {
+    // Preserve reqwest's bounded-hop and loop protection after validating each
+    // target. A custom policy without this delegation would need to implement
+    // both protections itself.
+    let limited = reqwest::redirect::Policy::limited(5);
+    reqwest::redirect::Policy::custom(move |attempt| {
+        if !redirect_target_is_safe(attempt.url()) {
+            return attempt.error("redirect target rejected by Prism SSRF policy");
+        }
+        limited.redirect(attempt)
+    })
+}
+
 fn build_client(user_agent: &str, timeout_secs: u64) -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(user_agent)
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(safe_redirect_policy())
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .expect("HTTP client TLS init failed")
@@ -263,6 +286,41 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redirect_target_validation_rejects_internal_destinations() {
+        for raw in [
+            "http://localhost:8080",
+            "http://127.0.0.1:5432",
+            "http://10.0.0.7",
+            "http://192.168.1.1",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://metadata.google.internal",
+            "file:///etc/passwd",
+            "ftp://example.com",
+        ] {
+            let parsed = url::Url::parse(raw).unwrap();
+            assert!(
+                !redirect_target_is_safe(&parsed),
+                "unsafe redirect target accepted: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn redirect_target_validation_accepts_external_http_targets() {
+        for raw in [
+            "https://example.com/path",
+            "https://api.duckduckgo.com/?q=test",
+            "http://en.wikipedia.org/wiki/Rust",
+        ] {
+            let parsed = url::Url::parse(raw).unwrap();
+            assert!(
+                redirect_target_is_safe(&parsed),
+                "valid external redirect target rejected: {raw}"
+            );
+        }
+    }
 
     #[test]
     fn rejects_localhost() {

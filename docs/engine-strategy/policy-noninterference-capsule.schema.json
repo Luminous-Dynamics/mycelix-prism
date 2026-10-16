@@ -1,0 +1,280 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Prism Policy Noninterference Evidence Capsule",
+  "description": "Versioned evidence record for policy broker noninterference experiments. Structure validation is not proof of runtime behavior.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite_id",
+    "prism_revision",
+    "policy_revision",
+    "manifest_sha256",
+    "manifest_case_ids",
+    "manifest_case_count",
+    "environment",
+    "command",
+    "generated_at_utc",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "suite_id": {
+      "const": "policy-noninterference"
+    },
+    "prism_revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "policy_revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "manifest_case_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._/-]+$",
+        "minLength": 1
+      }
+    },
+    "manifest_case_count": {
+      "type": "integer"
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "architecture",
+        "runner_image",
+        "toolchain",
+        "toolchain_lock_sha256"
+      ],
+      "properties": {
+        "os": {
+          "type": "string",
+          "minLength": 1
+        },
+        "architecture": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runner_image": {
+          "type": "string",
+          "minLength": 1
+        },
+        "toolchain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "toolchain_lock_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at_utc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "case_id",
+          "kind",
+          "source_zone",
+          "destination_zone",
+          "expected_decision",
+          "observed_decision",
+          "policy_failure_mode",
+          "consent",
+          "revocation_acknowledged",
+          "completed_after_revocation",
+          "pre_state_sha256",
+          "post_state_sha256",
+          "output_sha256",
+          "event_trace_sha256",
+          "observability",
+          "side_effects"
+        ],
+        "properties": {
+          "case_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._/-]+$",
+            "minLength": 1
+          },
+          "kind": {
+            "enum": [
+              "unauthorized_request",
+              "malformed_request",
+              "expired_authority",
+              "unconsented_cross_zone",
+              "post_revocation",
+              "policy_evaluation_failure",
+              "authorized_control"
+            ]
+          },
+          "source_zone": {
+            "enum": [
+              "PRIVATE",
+              "LOCAL",
+              "PUBLIC",
+              "NONE"
+            ]
+          },
+          "destination_zone": {
+            "enum": [
+              "PRIVATE",
+              "LOCAL",
+              "PUBLIC",
+              "NONE"
+            ]
+          },
+          "expected_decision": {
+            "enum": [
+              "allow",
+              "deny",
+              "no_op"
+            ]
+          },
+          "observed_decision": {
+            "enum": [
+              "allow",
+              "deny",
+              "no_op",
+              "error"
+            ]
+          },
+          "policy_failure_mode": {
+            "enum": [
+              "not_applicable",
+              "timeout",
+              "unavailable",
+              "malformed_policy",
+              "schema_mismatch"
+            ]
+          },
+          "consent": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "present",
+              "data_scope_matches",
+              "recipient_matches",
+              "purpose_matches",
+              "not_expired"
+            ],
+            "properties": {
+              "present": {
+                "type": "boolean"
+              },
+              "data_scope_matches": {
+                "type": "boolean"
+              },
+              "recipient_matches": {
+                "type": "boolean"
+              },
+              "purpose_matches": {
+                "type": "boolean"
+              },
+              "not_expired": {
+                "type": "boolean"
+              }
+            }
+          },
+          "revocation_acknowledged": {
+            "type": "boolean"
+          },
+          "completed_after_revocation": {
+            "type": "boolean"
+          },
+          "pre_state_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "post_state_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "output_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "event_trace_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "observability": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "state_digest",
+              "share_queue",
+              "privileged_actions",
+              "egress"
+            ],
+            "properties": {
+              "state_digest": {
+                "type": "boolean"
+              },
+              "share_queue": {
+                "type": "boolean"
+              },
+              "privileged_actions": {
+                "type": "boolean"
+              },
+              "egress": {
+                "type": "boolean"
+              }
+            }
+          },
+          "side_effects": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "state_writes",
+              "share_queue_writes",
+              "privileged_actions",
+              "outbound_flows",
+              "post_revocation_completions"
+            ],
+            "properties": {
+              "state_writes": {
+                "type": "integer"
+              },
+              "share_queue_writes": {
+                "type": "integer"
+              },
+              "privileged_actions": {
+                "type": "integer"
+              },
+              "outbound_flows": {
+                "type": "integer"
+              },
+              "post_revocation_completions": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

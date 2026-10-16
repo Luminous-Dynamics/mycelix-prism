@@ -7,6 +7,8 @@ on:
       - "docs/engine-strategy/**"
       - "scripts/validate_engine_test_capsule.py"
       - "scripts/test_engine_test_capsule.py"
+      - "scripts/validate_policy_noninterference_capsule.py"
+      - "scripts/test_policy_noninterference_capsule.py"
       - "scripts/validate_engine_capability_ledger.py"
       - "scripts/engine_ledger_schema.py"
       - "scripts/test_engine_capability_ledger.py"
@@ -57,3 +59,8 @@ jobs:
         run: |
           python3 scripts/test_engine_benchmark_scorecard.py
           python3 scripts/validate_engine_benchmark_scorecard.py
+
+      - name: Test and validate policy noninterference evidence capsule
+        run: |
+          python3 scripts/test_policy_noninterference_capsule.py
+          python3 scripts/validate_policy_noninterference_capsule.py --check-schema

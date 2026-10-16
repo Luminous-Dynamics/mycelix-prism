@@ -99,7 +99,7 @@ fn canonical_domain_count(domains: &HashSet<String>) -> usize {
 /// Stored as JSON on disk for persistence across sessions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsentStore {
-    /// Domains the user has approved for Public zone (DHT sharing).
+    /// Hostname preferences only; these do not authorize a particular data export.
     approved_domains: HashSet<String>,
     /// Domains the user has explicitly marked as Private.
     denied_domains: HashSet<String>,
@@ -113,7 +113,7 @@ impl ConsentStore {
         }
     }
 
-    /// Check if a domain has been approved for Public sharing.
+    /// Check the saved hostname preference. This is not outbound authorization.
     pub fn is_approved(&self, domain: &str) -> bool {
         let Some(canonical) = canonical_domain(domain) else {
             return false;
@@ -139,7 +139,7 @@ impl ConsentStore {
         let _ = self.try_approve_domain(&domain);
     }
 
-    /// Approve one exact hostname for Public sharing.
+    /// Save a preference for one exact hostname. This does not authorize outbound data.
     ///
     /// Returns false and leaves state unchanged for an invalid hostname.
     /// Approval never extends implicitly to subdomains.
@@ -178,21 +178,19 @@ impl ConsentStore {
     ///
     /// If the reflex arc classified as Local, check if user has approved
     /// this domain for Public sharing.
+    /// Resolve classification without treating a hostname preference as authority.
+    ///
+    /// Explicit hostname denial still forces Private. Approval preferences never
+    /// upgrade Local data to Public; outbound actions must use GrantAuthority and
+    /// a matching operation/scope/purpose-bound consent grant.
     pub fn resolve_zone(&self, base_zone: ContentZone, domain: &str) -> ContentZone {
-        // User denial always wins
         if self.is_denied(domain) {
             return ContentZone::Private;
         }
 
         match base_zone {
-            ContentZone::Private => ContentZone::Private, // Never override Private
-            ContentZone::Local => {
-                if self.is_approved(domain) {
-                    ContentZone::Public
-                } else {
-                    ContentZone::Local
-                }
-            }
+            ContentZone::Private => ContentZone::Private,
+            ContentZone::Local => ContentZone::Local,
             ContentZone::Public => ContentZone::Public,
         }
     }
@@ -245,12 +243,13 @@ mod tests {
     }
 
     #[test]
-    fn consent_approve_upgrades_local_to_public() {
+    fn hostname_preference_does_not_upgrade_local_to_public() {
         let mut store = ConsentStore::new();
         store.approve_domain("example.com".to_string());
+        assert!(store.is_approved("example.com"));
         assert_eq!(
             store.resolve_zone(ContentZone::Local, "example.com"),
-            ContentZone::Public
+            ContentZone::Local
         );
     }
 

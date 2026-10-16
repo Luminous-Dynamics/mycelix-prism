@@ -401,12 +401,17 @@ mod tests {
             ContentZone::Private
         );
 
-        // A later explicit approval resolves the conflict intentionally.
+        // A later explicit approval resolves the saved preference conflict,
+        // but it still cannot classify Local content as Public.
         assert!(store.try_approve_domain("example.com"));
         assert!(store.is_approved("EXAMPLE.COM."));
         assert!(!store.is_denied("example.com"));
         assert_eq!(store.approved_count(), 1);
         assert_eq!(store.denied_count(), 0);
+        assert_eq!(
+            store.resolve_zone(ContentZone::Local, "EXAMPLE.COM."),
+            ContentZone::Local
+        );
     }
 
     #[test]

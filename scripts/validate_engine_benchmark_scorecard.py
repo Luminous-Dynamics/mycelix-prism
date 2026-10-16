@@ -44,7 +44,7 @@ def validate_scorecard(schema: Any, scorecard: Any) -> list[str]:
         bootstrap_replicates = protocol.get("bootstrap_replicates")
         alpha = protocol.get("familywise_alpha")
         if isinstance(paired_blocks, bool) or not isinstance(paired_blocks, int) or paired_blocks < 30:
-            errors.append("minimum paired blocks must be at least 30 before regression screening")
+            errors.append("at least 30 paired blocks are required before regression screening")
         if isinstance(release_blocks, bool) or not isinstance(release_blocks, int) or release_blocks < 100:
             errors.append("minimum paired blocks must be at least 100 before release-blocking performance decisions")
         if isinstance(bootstrap_replicates, bool) or not isinstance(bootstrap_replicates, int) or bootstrap_replicates < 10000:
@@ -118,7 +118,7 @@ def validate_scorecard(schema: Any, scorecard: Any) -> list[str]:
             elif isinstance(target, bool) or not isinstance(target, (int, float)) or not math.isfinite(target) or target < 0:
                 errors.append(f"{mpath} target must be a finite, non-negative number")
             if stage == "provisional" and gate is True:
-                errors.append(f"{mpath} provisional target cannot be a release gate when activated")
+                errors.append(f"{mpath} provisional target cannot be an active release gate; a provisional target cannot be a release gate when activated")
             if direction == "must_equal" and target is None:
                 errors.append(f"{mpath} must_equal metric needs an explicit target")
     ids = {s.get("id") for s in suites if isinstance(s, dict) and isinstance(s.get("id"), str)}

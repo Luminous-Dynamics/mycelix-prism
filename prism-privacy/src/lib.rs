@@ -37,6 +37,60 @@ pub fn encoding_gate(zone: ContentZone) -> EncodingDecision {
     }
 }
 
+/// Canonicalize a hostname before it is used as a privacy-policy key.
+///
+/// Accept ASCII DNS hostnames (including already-encoded IDNA A-labels), normalize
+/// ASCII case, and remove one optional DNS root dot. Invalid, ambiguous, or
+/// non-ASCII input is rejected rather than allowed to widen sharing authority.
+/// Callers that parse URLs must pass the parser's canonical host, not an origin
+/// string containing a scheme, port, path, or credentials.
+fn canonical_domain(domain: &str) -> Option<String> {
+    if domain.is_empty() || !domain.is_ascii() || domain.trim() != domain {
+        return None;
+    }
+
+    let domain = domain.strip_suffix('.').unwrap_or(domain);
+    if domain.is_empty() || domain.len() > 253 {
+        return None;
+    }
+
+    let canonical = domain.to_ascii_lowercase();
+    for label in canonical.split('.') {
+        let bytes = label.as_bytes();
+        if bytes.is_empty() || bytes.len() > 63 {
+            return None;
+        }
+        if !bytes[0].is_ascii_alphanumeric() || !bytes[bytes.len() - 1].is_ascii_alphanumeric() {
+            return None;
+        }
+        if !bytes.iter().all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-') {
+            return None;
+        }
+    }
+
+    Some(canonical)
+}
+
+/// Match legacy persisted values by canonical hostname, so old mixed-case or
+/// root-dot entries cannot bypass current policy.
+fn contains_canonical_domain(domains: &HashSet<String>, canonical: &str) -> bool {
+    domains
+        .iter()
+        .any(|stored| canonical_domain(stored).as_deref() == Some(canonical))
+}
+
+fn remove_canonical_domain(domains: &mut HashSet<String>, canonical: &str) {
+    domains.retain(|stored| canonical_domain(stored).as_deref() != Some(canonical));
+}
+
+fn canonical_domain_count(domains: &HashSet<String>) -> usize {
+    domains
+        .iter()
+        .filter_map(|stored| canonical_domain(stored))
+        .collect::<HashSet<_>>()
+        .len()
+}
+
 /// Persistent store of user consent decisions (per-domain).
 ///
 /// When a domain is approved for Public sharing, it's stored here.
@@ -59,24 +113,46 @@ impl ConsentStore {
 
     /// Check if a domain has been approved for Public sharing.
     pub fn is_approved(&self, domain: &str) -> bool {
-        self.approved_domains.contains(domain)
+        let Some(canonical) = canonical_domain(domain) else {
+            return false;
+        };
+        contains_canonical_domain(&self.approved_domains, &canonical)
     }
 
     /// Check if a domain has been explicitly denied.
+    /// Invalid host input is treated as denied, so callers can fail closed.
     pub fn is_denied(&self, domain: &str) -> bool {
-        self.denied_domains.contains(domain)
+        let Some(canonical) = canonical_domain(domain) else {
+            return true;
+        };
+        contains_canonical_domain(&self.denied_domains, &canonical)
     }
 
     /// Approve a domain for Public zone sharing.
-    pub fn approve_domain(&mut self, domain: String) {
-        self.denied_domains.remove(&domain);
-        self.approved_domains.insert(domain);
+    /// Approve one exact hostname for Public sharing.
+    ///
+    /// Returns false and leaves state unchanged for an invalid hostname.
+    /// Approval never extends implicitly to subdomains.
+    pub fn approve_domain(&mut self, domain: String) -> bool {
+        let Some(canonical) = canonical_domain(&domain) else {
+            return false;
+        };
+        remove_canonical_domain(&mut self.denied_domains, &canonical);
+        remove_canonical_domain(&mut self.approved_domains, &canonical);
+        self.approved_domains.insert(canonical);
+        true
     }
 
     /// Deny a domain (force Private zone).
-    pub fn deny_domain(&mut self, domain: String) {
-        self.approved_domains.remove(&domain);
-        self.denied_domains.insert(domain);
+    /// Deny one exact hostname. Invalid input is rejected without mutating policy.
+    pub fn deny_domain(&mut self, domain: String) -> bool {
+        let Some(canonical) = canonical_domain(&domain) else {
+            return false;
+        };
+        remove_canonical_domain(&mut self.approved_domains, &canonical);
+        remove_canonical_domain(&mut self.denied_domains, &canonical);
+        self.denied_domains.insert(canonical);
+        true
     }
 
     /// Resolve zone considering user consent.
@@ -104,12 +180,12 @@ impl ConsentStore {
 
     /// Number of approved domains.
     pub fn approved_count(&self) -> usize {
-        self.approved_domains.len()
+        canonical_domain_count(&self.approved_domains)
     }
 
-    /// Number of denied domains.
+    /// Number of denied domains after canonicalizing persisted hostnames.
     pub fn denied_count(&self) -> usize {
-        self.denied_domains.len()
+        canonical_domain_count(&self.denied_domains)
     }
 }
 
@@ -224,11 +300,75 @@ mod tests {
     }
 
     #[test]
-    fn empty_domain_handled() {
+    fn domain_approval_and_denial_are_case_and_root_dot_insensitive() {
         let mut store = ConsentStore::new();
-        store.approve_domain(String::new());
-        // Should not panic or corrupt state
-        assert!(store.is_approved(""));
-        assert!(!store.is_approved("example.com"));
+        assert!(store.approve_domain("Example.COM.".to_string()));
+        assert!(store.is_approved("example.com"));
+        assert!(store.is_approved("EXAMPLE.COM."));
+        assert_eq!(
+            store.resolve_zone(ContentZone::Local, "EXAMPLE.COM"),
+            ContentZone::Public
+        );
+
+        assert!(store.deny_domain("EVIL.COM.".to_string()));
+        assert!(store.is_denied("evil.com"));
+        assert_eq!(
+            store.resolve_zone(ContentZone::Public, "eViL.CoM"),
+            ContentZone::Private
+        );
+    }
+
+    #[test]
+    fn invalid_domains_fail_closed_and_cannot_be_approved() {
+        let mut store = ConsentStore::new();
+        for domain in [
+            "",
+            " ",
+            "example..com",
+            "-bad.example",
+            "bad-.example",
+            "example.com/path",
+            "example.com:443",
+            "éxample.com",
+            "example.com..",
+            ".",
+        ] {
+            assert!(!store.approve_domain(domain.to_string()), "{domain:?}");
+            assert!(store.is_denied(domain), "{domain:?}");
+            assert_eq!(
+                store.resolve_zone(ContentZone::Public, domain),
+                ContentZone::Private,
+                "{domain:?}"
+            );
+        }
+        assert_eq!(store.approved_count(), 0);
+    }
+
+    #[test]
+    fn legacy_persisted_domain_casing_cannot_bypass_policy() {
+        let json = r#"{"approved_domains":["Example.COM."],"denied_domains":["EVIL.COM"]}"#;
+        let mut store: ConsentStore = serde_json::from_str(json).unwrap();
+        assert!(store.is_approved("example.com"));
+        assert!(store.is_denied("evil.com."));
+        assert_eq!(
+            store.resolve_zone(ContentZone::Public, "EVIL.COM."),
+            ContentZone::Private
+        );
+
+        assert!(store.deny_domain("example.com".to_string()));
+        assert!(!store.is_approved("EXAMPLE.COM."));
+        assert_eq!(store.approved_count(), 0);
+        assert_eq!(store.denied_count(), 2);
+    }
+
+    #[test]
+    fn hostname_canonicalization_preserves_exact_host_consent_scope() {
+        let mut store = ConsentStore::new();
+        assert!(store.approve_domain("example.com".to_string()));
+        assert!(!store.is_approved("sub.example.com"));
+        assert_eq!(
+            store.resolve_zone(ContentZone::Local, "sub.example.com"),
+            ContentZone::Local
+        );
     }
 }

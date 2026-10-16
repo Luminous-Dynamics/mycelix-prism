@@ -18,7 +18,7 @@ A grant binds one explicit choice to all of the following:
 - Validity interval, with expiry exclusive.
 - Unique, non-reusable grant ID.
 
-The decision path fails closed on private content, malformed bindings, missing grants, mismatches, unavailable clocks, backward clock readings, expiry, revocation, and poisoned authority state. A Public or Local request that uses this authority still needs an explicit matching grant. This primitive is not a default-allow policy path.
+The authority owns the active policy version instead of trusting a request-supplied version. Rotating that version makes older grants unusable. Each choice receipt is unique in the authority, each grant is single-use, and a grant is consumed before its commit closure runs. The decision path fails closed on private content, malformed bindings, missing grants, mismatches, unavailable clocks, backward clock readings, expiry, revocation, replay, and poisoned authority state. A Public or Local request that uses this authority still needs an explicit matching grant. This primitive is not a default-allow policy path.
 
 ## Revocation and the last responsible moment
 
@@ -46,6 +46,7 @@ The following are **proposed targets**, not measured results or claims about cur
 | Private-data noninterference | 0 Private requests invoke a commit closure | Unit/property tests plus runtime side-effect counter |
 | Authorization precision | 100% of manifest cases match expected decisions; all negative cases have 0 commit side effects | Versioned case manifest, positive control, raw event trace |
 | Scope binding | 0 successes for destination, operation, scope, purpose, or policy-version mismatch | Mutation/property corpus; retain each mismatch as a separate case |
+| Consent replay | A grant can commit at most once; duplicate choice-receipt references cannot mint additional grants | Permit replay, concurrent duplicate commits, duplicate-receipt and restart tests |
 | Revocation | 0 commit closures start after the revocation acknowledgement | Deterministic scheduling tests, model-checking or equivalent interleaving harness, then a 10,000-schedule soak |
 | Clock failure | 100% deny on unavailable or backward clock readings | Injected fault tests and runtime clock-fault tests |
 | Fail-closed behavior | 0 authorization successes after poisoned authority state or invalid persisted records | Fault injection and restart/recovery tests |

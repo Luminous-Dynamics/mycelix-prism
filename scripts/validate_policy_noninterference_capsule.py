@@ -109,7 +109,9 @@ def validate_manifest(manifest: Any) -> list[str]:
             not isinstance(source_zone, str) or source_zone not in {"PRIVATE", "LOCAL"} or destination_zone != "PUBLIC"
         ):
             errors.append(f"{prefix} must describe PRIVATE/LOCAL to PUBLIC")
-        if kind == "post_revocation" and scenario.get("expected_decision") not in {"deny", "no_op"}:
+        if kind == "post_revocation" and (
+            not isinstance(expected_decision, str) or expected_decision not in {"deny", "no_op"}
+        ):
             errors.append(f"{prefix} post_revocation must expect deny/no_op")
     if kinds != KINDS:
         errors.append("manifest must contain each required scenario kind exactly once")
@@ -267,6 +269,8 @@ def derive_outcome(capsule: Any) -> str:
     blocked = False
     for case in cases:
         kind = case.get("kind")
+        if not isinstance(kind, str) or kind not in KINDS:
+            return "incomplete"
         obs, effects = case.get("observability"), case.get("side_effects")
         if not isinstance(obs, dict) or any(obs.get(channel) is not True for channel in REQUIRED_OBSERVABILITY):
             blocked = True

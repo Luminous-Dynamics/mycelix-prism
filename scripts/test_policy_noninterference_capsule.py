@@ -216,6 +216,13 @@ class PolicyNoninterferenceCapsuleTests(unittest.TestCase):
         capsule["cases"][0]["expected_decision"] = ["deny"]
         self.assertEqual(derive_outcome(capsule), "incomplete")
 
+    def test_manifest_unhashable_post_revocation_decision_does_not_crash(self) -> None:
+        manifest = dict(MANIFEST)
+        manifest["scenarios"] = [dict(item) for item in MANIFEST["scenarios"]]
+        scenario = next(item for item in manifest["scenarios"] if item["kind"] == "post_revocation")
+        scenario["expected_decision"] = []
+        self.assertTrue(any("post_revocation must expect" in e for e in validate_manifest(manifest)))
+
     def test_policy_capsule_schema_is_in_supported_subset(self) -> None:
         from engine_ledger_schema import validate_schema_definition
         self.assertEqual(validate_schema_definition(SCHEMA), [])

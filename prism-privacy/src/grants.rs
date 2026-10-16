@@ -50,6 +50,8 @@ pub struct ConsentGrant {
     /// Exact DNS hostname, not a URL, origin, wildcard, or suffix.
     pub destination: String,
     pub operation: OutboundOperation,
+    /// Privacy classification of the data authorized by this grant.
+    pub zone: ContentZone,
     /// Stable data/sensitivity scope such as a content ID or named data class.
     pub content_scope: String,
     pub purpose: String,
@@ -107,6 +109,7 @@ pub enum GrantValidationError {
     InvalidPurpose,
     InvalidPolicyVersion,
     InvalidChoiceReceipt,
+    PrivateDataGrant,
     InvalidTimeWindow,
 }
 
@@ -133,6 +136,7 @@ pub enum DenialReason {
     DestinationMismatch,
     OperationMismatch,
     ScopeMismatch,
+    ZoneMismatch,
     PurposeMismatch,
     PolicyVersionMismatch,
     NotYetValid,
@@ -353,6 +357,9 @@ fn validate_grant(grant: &ConsentGrant) -> Result<(), GrantValidationError> {
     if canonical_domain(&grant.destination).is_none() {
         return Err(GrantValidationError::InvalidDestination);
     }
+    if grant.zone == ContentZone::Private {
+        return Err(GrantValidationError::PrivateDataGrant);
+    }
     if !valid_atom(&grant.content_scope, MAX_SCOPE_BYTES) {
         return Err(GrantValidationError::InvalidContentScope);
     }
@@ -444,6 +451,9 @@ fn validate_locked(
     if grant.content_scope != binding.content_scope {
         return Err(DenialReason::ScopeMismatch);
     }
+    if grant.zone != binding.zone {
+        return Err(DenialReason::ZoneMismatch);
+    }
     if grant.purpose != binding.purpose {
         return Err(DenialReason::PurposeMismatch);
     }
@@ -472,6 +482,7 @@ mod tests {
             id: id.into(),
             destination: "Example.COM.".into(),
             operation: OutboundOperation::SendToRecipient,
+            zone: ContentZone::Local,
             content_scope: "document:case-17".into(),
             purpose: "deliver-user-requested-document".into(),
             policy_version: "prism-policy-v1".into(),
@@ -536,6 +547,7 @@ mod tests {
             (OutboundRequest { destination: "sub.example.com".into(), ..base.clone() }, DenialReason::DestinationMismatch),
             (OutboundRequest { operation: OutboundOperation::ExportToFile, ..base.clone() }, DenialReason::OperationMismatch),
             (OutboundRequest { content_scope: "document:other".into(), ..base.clone() }, DenialReason::ScopeMismatch),
+            (OutboundRequest { zone: ContentZone::Public, ..base.clone() }, DenialReason::ZoneMismatch),
             (OutboundRequest { purpose: "analytics".into(), ..base.clone() }, DenialReason::PurposeMismatch),
             (OutboundRequest { policy_version: "prism-policy-v2".into(), ..base.clone() }, DenialReason::PolicyVersionMismatch),
         ];
@@ -548,7 +560,7 @@ mod tests {
     #[test]
     fn hostname_case_and_root_dot_do_not_change_exact_destination() {
         let authority = sample_authority();
-        let mut request = sample_request(ContentZone::Public);
+        let mut request = sample_request(ContentZone::Local);
         request.destination = "EXAMPLE.COM.".into();
         assert!(authority.authorize(&request, Some(100)).is_ok());
 
@@ -656,6 +668,7 @@ mod tests {
     #[test]
     fn malformed_grants_are_rejected_without_registration() {
         let authority = GrantAuthority::new("prism-policy-v1").unwrap();
+        authority.issue(sample_grant("existing-grant")).unwrap();
 
         let mut invalid_host = sample_grant("bad-host");
         invalid_host.destination = "example.com/path".into();

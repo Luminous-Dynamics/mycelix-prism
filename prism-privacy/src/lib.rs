@@ -1,19 +1,24 @@
 // Copyright (C) 2024-2026 Tristan Stoltz / Luminous Dynamics
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Commercial licensing: see COMMERCIAL_LICENSE.md at repository root
-//! Three-zone privacy enforcement for Prism.
+//! Three-zone privacy classification helpers for Prism.
 //!
-//! The encoding gate is the ONLY path to the HDC encoder and DHT.
-//! No code path can write to DHT without passing through this gate.
+//! Privacy classification and outbound authorization are distinct. The zone
+//! enum and the encoding_gate helper do not prove every runtime DHT/network write
+//! is routed through this module. Every real outbound side effect must pass its
+//! own scoped authorization check at the commit/send boundary.
 //!
 //! Zones:
 //! - **Private**: Never encoded, never shared. Banks, email, corporate.
-//! - **Local**: HDC encoded for personal semantic memory. Never broadcast.
-//! - **Public**: Encoded and offered to DHT. Requires E3+/E4 OR user consent.
+//! - **Local**: Personal/local data; any export requires a separate matching grant.
+//! - **Public**: Content classified for public use; runtime egress still needs its
+//!   applicable policy checks and observed evidence.
 
 use prism_common::ContentZone;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+
+pub mod grants;
 
 /// Decision from the encoding gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,9 +31,11 @@ pub enum EncodingDecision {
     EncodeAndShare,
 }
 
-/// The encoding gate — the non-bypassable enforcement point for privacy.
+/// Map a privacy zone to an encoder decision.
 ///
-/// This is the ONLY path to HDC encoding and DHT writes.
+/// This helper is not, by itself, a proof that all encoder or DHT write paths
+/// call it. Runtime outbound side effects must be routed through an actual
+/// enforcement boundary that checks scoped authorization at commit time.
 pub fn encoding_gate(zone: ContentZone) -> EncodingDecision {
     match zone {
         ContentZone::Private => EncodingDecision::Deny,
@@ -44,7 +51,7 @@ pub fn encoding_gate(zone: ContentZone) -> EncodingDecision {
 /// non-ASCII input is rejected rather than allowed to widen sharing authority.
 /// Callers that parse URLs must pass the parser's canonical host, not an origin
 /// string containing a scheme, port, path, or credentials.
-fn canonical_domain(domain: &str) -> Option<String> {
+pub(crate) fn canonical_domain(domain: &str) -> Option<String> {
     if domain.is_empty() || !domain.is_ascii() || domain.trim() != domain {
         return None;
     }
@@ -91,13 +98,14 @@ fn canonical_domain_count(domains: &HashSet<String>) -> usize {
         .len()
 }
 
-/// Persistent store of user consent decisions (per-domain).
+/// Persistent hostname preferences, not outbound authority grants.
 ///
-/// When a domain is approved for Public sharing, it's stored here.
-/// Stored as JSON on disk for persistence across sessions.
+/// Preferences may help a user pre-fill a future decision. They do not bind a
+/// content scope, operation, purpose, expiry or destination origin and therefore
+/// must never authorize a data export on their own. Stored as JSON on disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsentStore {
-    /// Domains the user has approved for Public zone (DHT sharing).
+    /// Hostname preferences only; these do not authorize a particular data export.
     approved_domains: HashSet<String>,
     /// Domains the user has explicitly marked as Private.
     denied_domains: HashSet<String>,
@@ -111,7 +119,7 @@ impl ConsentStore {
         }
     }
 
-    /// Check if a domain has been approved for Public sharing.
+    /// Check the saved hostname preference. This is not outbound authorization.
     pub fn is_approved(&self, domain: &str) -> bool {
         let Some(canonical) = canonical_domain(domain) else {
             return false;
@@ -129,15 +137,16 @@ impl ConsentStore {
         contains_canonical_domain(&self.denied_domains, &canonical)
     }
 
-    /// Approve a domain for Public zone sharing.
+    /// Save a hostname preference for user convenience.
     ///
-    /// Invalid input is ignored. Use `try_approve_domain` when rejection must be
-    /// surfaced to the caller. Existing callers keep their original API contract.
+    /// This does not classify Local content as Public or authorize an outbound
+    /// operation. Invalid input is ignored; use `try_approve_domain` to observe
+    /// rejection. Existing callers keep their original API contract.
     pub fn approve_domain(&mut self, domain: String) {
         let _ = self.try_approve_domain(&domain);
     }
 
-    /// Approve one exact hostname for Public sharing.
+    /// Save a preference for one exact hostname. This does not authorize outbound data.
     ///
     /// Returns false and leaves state unchanged for an invalid hostname.
     /// Approval never extends implicitly to subdomains.
@@ -172,25 +181,19 @@ impl ConsentStore {
         true
     }
 
-    /// Resolve zone considering user consent.
+    /// Resolve classification without treating a hostname preference as authority.
     ///
-    /// If the reflex arc classified as Local, check if user has approved
-    /// this domain for Public sharing.
+    /// Explicit hostname denial still forces Private. Approval preferences never
+    /// upgrade Local data to Public; outbound actions must use GrantAuthority and
+    /// a matching operation/zone/scope/purpose-bound consent grant.
     pub fn resolve_zone(&self, base_zone: ContentZone, domain: &str) -> ContentZone {
-        // User denial always wins
         if self.is_denied(domain) {
             return ContentZone::Private;
         }
 
         match base_zone {
-            ContentZone::Private => ContentZone::Private, // Never override Private
-            ContentZone::Local => {
-                if self.is_approved(domain) {
-                    ContentZone::Public
-                } else {
-                    ContentZone::Local
-                }
-            }
+            ContentZone::Private => ContentZone::Private,
+            ContentZone::Local => ContentZone::Local,
             ContentZone::Public => ContentZone::Public,
         }
     }
@@ -243,12 +246,13 @@ mod tests {
     }
 
     #[test]
-    fn consent_approve_upgrades_local_to_public() {
+    fn hostname_preference_does_not_upgrade_local_to_public() {
         let mut store = ConsentStore::new();
         store.approve_domain("example.com".to_string());
+        assert!(store.is_approved("example.com"));
         assert_eq!(
             store.resolve_zone(ContentZone::Local, "example.com"),
-            ContentZone::Public
+            ContentZone::Local
         );
     }
 
@@ -329,7 +333,7 @@ mod tests {
         assert!(store.is_approved("EXAMPLE.COM."));
         assert_eq!(
             store.resolve_zone(ContentZone::Local, "EXAMPLE.COM"),
-            ContentZone::Public
+            ContentZone::Local
         );
 
         assert!(store.try_deny_domain("EVIL.COM."));
@@ -400,12 +404,17 @@ mod tests {
             ContentZone::Private
         );
 
-        // A later explicit approval resolves the conflict intentionally.
+        // A later explicit approval resolves the saved preference conflict,
+        // but it still cannot classify Local content as Public.
         assert!(store.try_approve_domain("example.com"));
         assert!(store.is_approved("EXAMPLE.COM."));
         assert!(!store.is_denied("example.com"));
         assert_eq!(store.approved_count(), 1);
         assert_eq!(store.denied_count(), 0);
+        assert_eq!(
+            store.resolve_zone(ContentZone::Local, "EXAMPLE.COM."),
+            ContentZone::Local
+        );
     }
 
     #[test]

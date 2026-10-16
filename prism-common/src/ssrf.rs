@@ -98,23 +98,16 @@ pub fn validate_proxy_url(raw: &str) -> Result<url::Url, &'static str> {
                 return Err("Access to private/reserved IP addresses is forbidden");
             }
 
-            // IPv4-mapped IPv6 (::ffff:x.x.x.x)
-            if seg[0] == 0
-                && seg[1] == 0
-                && seg[2] == 0
-                && seg[3] == 0
-                && seg[4] == 0
-                && seg[5] == 0xffff
+            // Reject IPv4-mapped (::ffff:x.x.x.x) and deprecated
+            // IPv4-compatible (::x.x.x.x) literals entirely. They are alternate
+            // representations of IPv4 endpoints and should not bypass the
+            // canonical IPv4 destination policy, even when the embedded IPv4
+            // address appears globally routable.
+            if seg[0..5].iter().all(|part| *part == 0)
+                && (seg[5] == 0xffff
+                    || (seg[5] == 0 && (seg[6] != 0 || seg[7] > 1)))
             {
-                let mapped = std::net::Ipv4Addr::new(
-                    (seg[6] >> 8) as u8,
-                    seg[6] as u8,
-                    (seg[7] >> 8) as u8,
-                    seg[7] as u8,
-                );
-                if is_private_ipv4(&mapped) {
-                    return Err("Access to private/reserved IP addresses is forbidden");
-                }
+                return Err("IPv4-mapped/compatible IPv6 destinations are forbidden");
             }
 
             // IPv6 link-local (fe80::/10)
@@ -223,6 +216,10 @@ mod tests {
         assert!(validate_proxy_url("http://[::ffff:169.254.169.254]").is_err());
         // ::ffff:10.0.0.1 — private range disguised as IPv6
         assert!(validate_proxy_url("http://[::ffff:10.0.0.1]").is_err());
+        // Reject IPv4-mapped forms even when the embedded address is public.
+        assert!(validate_proxy_url("http://[::ffff:8.8.8.8]").is_err());
+        // Deprecated IPv4-compatible form must not bypass IPv4 policy.
+        assert!(validate_proxy_url("http://[::8.8.8.8]").is_err());
     }
 
     #[test]

@@ -48,6 +48,24 @@ class BenchmarkScorecardTests(unittest.TestCase):
         scorecard["measurement_protocol"]["minimum_baseline_samples_for_regression_gates"] = 5
         self.assertTrue(any("at least 30" in e for e in validate_scorecard(SCHEMA, scorecard)))
 
+    def test_requires_100_paired_blocks_for_release_gate(self) -> None:
+        scorecard = copy.deepcopy(SCORECARD)
+        scorecard["measurement_protocol"]["minimum_paired_blocks_for_release_gates"] = 30
+        self.assertTrue(any("at least 100" in e for e in validate_scorecard(SCHEMA, scorecard)))
+
+    def test_requires_bootstrap_replicates_and_valid_alpha(self) -> None:
+        scorecard = copy.deepcopy(SCORECARD)
+        scorecard["measurement_protocol"]["bootstrap_replicates"] = 999
+        scorecard["measurement_protocol"]["familywise_alpha"] = float("nan")
+        errors = validate_scorecard(SCHEMA, scorecard)
+        self.assertTrue(any("at least 10000" in e for e in errors))
+        self.assertTrue(any("finite and strictly between 0 and 1" in e for e in errors))
+
+    def test_requires_multiple_comparison_policy(self) -> None:
+        scorecard = copy.deepcopy(SCORECARD)
+        scorecard["measurement_protocol"]["multiple_comparison_policy"] = ""
+        self.assertTrue(any("multiple_comparison_policy must be a non-empty reproducibility policy" in e for e in validate_scorecard(SCHEMA, scorecard)))
+
     def test_requires_paired_blocks_before_regression_gating(self) -> None:
         scorecard = copy.deepcopy(SCORECARD)
         scorecard["measurement_protocol"]["minimum_paired_blocks_for_regression_gates"] = 5

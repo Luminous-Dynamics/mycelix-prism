@@ -12,7 +12,10 @@
       "IQR",
       "MAD",
       "raw samples",
-      "first-half/second-half medians"
+      "first-half/second-half medians",
+      "paired relative-effect distribution",
+      "95% paired-effect confidence interval",
+      "raw and Holm-adjusted p-values"
     ],
     "cold_run_rule": "Each cold-start sample uses a fresh process. Warm-state benchmarks declare their warmup and reuse policy.",
     "environment_capture": [
@@ -29,13 +32,18 @@
       "command",
       "raw artifact SHA-256"
     ],
-    "regression_policy": "Do not activate numeric performance gates until at least 30 valid baseline samples and 30 valid matched blocks exist on the same reference environment. A provisional regression signal is >5% median or >10% p95 versus that baseline, and must exceed measured noise; confirm with an independent repeated campaign before blocking.",
+    "regression_policy": "Do not activate numeric regression screening until at least 30 valid baseline samples and 30 valid matched blocks exist on the same reference environment. A provisional signal is >5% median or >10% p95 versus that baseline, must exceed measured noise, and should be confirmed independently. A release-blocking performance decision requires at least 100 valid paired blocks per workload, the declared confidence/multiple-comparison procedure, and an independent confirmatory campaign.",
     "comparison_policy": "Matched hardware, engine revision, workload revision, viewport, power state and runner methodology are mandatory. Publish per-workload results and raw samples; never compare across benchmark versions as if equivalent.",
     "result_policy": "Performance claims require correct output first. WPT correctness, privacy, security, crash stability, latency, throughput, memory and energy are separate evidence classes.",
     "privacy_policy": "No page bodies, cookies, credentials or visited-URL histories in benchmark artifacts by default; fixtures are synthetic/local and opt-in evidence is explicit.",
     "minimum_paired_blocks_for_regression_gates": 30,
     "comparison_design": "Default to matched blocks on one reference host. Within each block run baseline and candidate in randomized AB/BA order with a published deterministic seed and no overlapping benchmark processes; define state resets and cache policy in the suite manifest. Keep cold-start and warm-state measurements separate. If pairing is infeasible, label the comparison unpaired and require independent repeated confirmation before gating.",
-    "drift_policy": "Retain monotonic sample order; report first-half and second-half medians, robust dispersion and every raw sample. If temporal drift is distinguishable from within-run dispersion or if power/thermal/background state changes, mark the campaign unstable and repeat. Do not average drift away or post-hoc discard outliers; any numeric drift cutoff must be suite-specific and pre-registered."
+    "drift_policy": "Retain monotonic sample order; report first-half and second-half medians, robust dispersion and every raw sample. If temporal drift is distinguishable from within-run dispersion or if power/thermal/background state changes, mark the campaign unstable and repeat. Do not average drift away or post-hoc discard outliers; any numeric drift cutoff must be suite-specific and pre-registered.",
+    "minimum_paired_blocks_for_release_gates": 100,
+    "bootstrap_replicates": 10000,
+    "familywise_alpha": 0.05,
+    "campaign_policy": "One batch contains the declared warmups and 10 measured paired blocks. Pool at least three independently started batches (at least 30 valid pairs) before producing a screening regression signal. Release-blocking performance decisions require at least 100 valid paired blocks per workload and a separate confirmatory campaign; fewer observations are descriptive/exploratory only.",
+    "multiple_comparison_policy": "Pre-register the primary metric and effect threshold for each suite. For all simultaneously release-blocking metrics, report effect size and a 95% paired bootstrap confidence interval from at least 10000 resamples with a recorded seed, and apply Holm-Bonferroni control at the declared familywise alpha. A release block requires the pre-registered practical regression threshold, adjusted statistical evidence and independent confirmation; nominal p-values or intervals alone are not sufficient."
   },
   "suites": [
     {

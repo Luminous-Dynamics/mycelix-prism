@@ -39,7 +39,12 @@
         "privacy_policy",
         "minimum_paired_blocks_for_regression_gates",
         "comparison_design",
-        "drift_policy"
+        "drift_policy",
+        "minimum_paired_blocks_for_release_gates",
+        "bootstrap_replicates",
+        "familywise_alpha",
+        "campaign_policy",
+        "multiple_comparison_policy"
       ],
       "properties": {
         "warmup_runs": {
@@ -93,6 +98,23 @@
           "minLength": 1
         },
         "drift_policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minimum_paired_blocks_for_release_gates": {
+          "type": "integer"
+        },
+        "bootstrap_replicates": {
+          "type": "integer"
+        },
+        "familywise_alpha": {
+          "type": "number"
+        },
+        "campaign_policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "multiple_comparison_policy": {
           "type": "string",
           "minLength": 1
         }

@@ -40,9 +40,18 @@ def validate_scorecard(schema: Any, scorecard: Any) -> list[str]:
         measured = protocol.get("measured_runs")
         minimum = protocol.get("minimum_baseline_samples_for_regression_gates")
         paired_blocks = protocol.get("minimum_paired_blocks_for_regression_gates")
+        release_blocks = protocol.get("minimum_paired_blocks_for_release_gates")
+        bootstrap_replicates = protocol.get("bootstrap_replicates")
+        alpha = protocol.get("familywise_alpha")
         if isinstance(paired_blocks, bool) or not isinstance(paired_blocks, int) or paired_blocks < 30:
-            errors.append("minimum paired blocks must be at least 30 before regression gating")
-        for policy_name in ("comparison_design", "drift_policy"):
+            errors.append("minimum paired blocks must be at least 30 before regression screening")
+        if isinstance(release_blocks, bool) or not isinstance(release_blocks, int) or release_blocks < 100:
+            errors.append("minimum paired blocks must be at least 100 before release-blocking performance decisions")
+        if isinstance(bootstrap_replicates, bool) or not isinstance(bootstrap_replicates, int) or bootstrap_replicates < 10000:
+            errors.append("bootstrap_replicates must be at least 10000 for release-blocking performance decisions")
+        if isinstance(alpha, bool) or not isinstance(alpha, (int, float)) or not math.isfinite(alpha) or not 0 < alpha < 1:
+            errors.append("familywise_alpha must be finite and strictly between 0 and 1")
+        for policy_name in ("comparison_design", "drift_policy", "campaign_policy", "multiple_comparison_policy"):
             policy_text = protocol.get(policy_name)
             if not isinstance(policy_text, str) or not policy_text.strip():
                 errors.append(f"{policy_name} must be a non-empty reproducibility policy")
@@ -56,9 +65,13 @@ def validate_scorecard(schema: Any, scorecard: Any) -> list[str]:
         if (
             not isinstance(report_stats, list)
             or any(not isinstance(item, str) for item in report_stats)
-            or not {"median", "p95", "IQR", "MAD", "raw samples", "first-half/second-half medians"}.issubset(set(report_stats))
+            or not {
+                "median", "p95", "IQR", "MAD", "raw samples",
+                "first-half/second-half medians", "paired relative-effect distribution",
+                "95% paired-effect confidence interval", "raw and Holm-adjusted p-values",
+            }.issubset(set(report_stats))
         ):
-            errors.append("report_statistics must retain median, p95, IQR, MAD, raw samples and first-half/second-half medians")
+            errors.append("report_statistics must retain median/p95, robust dispersion, raw and split-half samples, paired effect distribution, a 95% paired-effect interval, and raw/adjusted p-values")
 
     suites = scorecard.get("suites")
     if not isinstance(suites, list):

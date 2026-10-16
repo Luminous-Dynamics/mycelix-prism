@@ -129,12 +129,20 @@ impl ConsentStore {
     }
 
     /// Approve a domain for Public zone sharing.
+    ///
+    /// Invalid input is ignored. Use `try_approve_domain` when rejection must be
+    /// surfaced to the caller. Existing callers keep their original API contract.
+    pub fn approve_domain(&mut self, domain: String) {
+        let _ = self.try_approve_domain(&domain);
+    }
+
     /// Approve one exact hostname for Public sharing.
     ///
     /// Returns false and leaves state unchanged for an invalid hostname.
     /// Approval never extends implicitly to subdomains.
-    pub fn approve_domain(&mut self, domain: String) -> bool {
-        let Some(canonical) = canonical_domain(&domain) else {
+    #[must_use = "check whether the hostname was accepted by the privacy policy"]
+    pub fn try_approve_domain(&mut self, domain: &str) -> bool {
+        let Some(canonical) = canonical_domain(domain) else {
             return false;
         };
         remove_canonical_domain(&mut self.denied_domains, &canonical);
@@ -144,9 +152,17 @@ impl ConsentStore {
     }
 
     /// Deny a domain (force Private zone).
+    ///
+    /// Invalid input is ignored. Use `try_deny_domain` when rejection must be
+    /// surfaced to the caller. Existing callers keep their original API contract.
+    pub fn deny_domain(&mut self, domain: String) {
+        let _ = self.try_deny_domain(&domain);
+    }
+
     /// Deny one exact hostname. Invalid input is rejected without mutating policy.
-    pub fn deny_domain(&mut self, domain: String) -> bool {
-        let Some(canonical) = canonical_domain(&domain) else {
+    #[must_use = "check whether the hostname was accepted by the privacy policy"]
+    pub fn try_deny_domain(&mut self, domain: &str) -> bool {
+        let Some(canonical) = canonical_domain(domain) else {
             return false;
         };
         remove_canonical_domain(&mut self.approved_domains, &canonical);
@@ -302,7 +318,7 @@ mod tests {
     #[test]
     fn domain_approval_and_denial_are_case_and_root_dot_insensitive() {
         let mut store = ConsentStore::new();
-        assert!(store.approve_domain("Example.COM.".to_string()));
+        assert!(store.try_approve_domain("Example.COM."));
         assert!(store.is_approved("example.com"));
         assert!(store.is_approved("EXAMPLE.COM."));
         assert_eq!(
@@ -310,7 +326,7 @@ mod tests {
             ContentZone::Public
         );
 
-        assert!(store.deny_domain("EVIL.COM.".to_string()));
+        assert!(store.try_deny_domain("EVIL.COM."));
         assert!(store.is_denied("evil.com"));
         assert_eq!(
             store.resolve_zone(ContentZone::Public, "eViL.CoM"),
@@ -333,7 +349,7 @@ mod tests {
             "example.com..",
             ".",
         ] {
-            assert!(!store.approve_domain(domain.to_string()), "{domain:?}");
+            assert!(!store.try_approve_domain(domain), "{domain:?}");
             assert!(store.is_denied(domain), "{domain:?}");
             assert_eq!(
                 store.resolve_zone(ContentZone::Public, domain),
@@ -355,7 +371,7 @@ mod tests {
             ContentZone::Private
         );
 
-        assert!(store.deny_domain("example.com".to_string()));
+        assert!(store.try_deny_domain("example.com"));
         assert!(!store.is_approved("EXAMPLE.COM."));
         assert_eq!(store.approved_count(), 0);
         assert_eq!(store.denied_count(), 2);
@@ -364,7 +380,7 @@ mod tests {
     #[test]
     fn hostname_canonicalization_preserves_exact_host_consent_scope() {
         let mut store = ConsentStore::new();
-        assert!(store.approve_domain("example.com".to_string()));
+        assert!(store.try_approve_domain("example.com"));
         assert!(!store.is_approved("sub.example.com"));
         assert_eq!(
             store.resolve_zone(ContentZone::Local, "sub.example.com"),

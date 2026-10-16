@@ -15,6 +15,8 @@ use prism_common::ContentZone;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+pub mod grants;
+
 /// Decision from the encoding gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EncodingDecision {
@@ -44,7 +46,7 @@ pub fn encoding_gate(zone: ContentZone) -> EncodingDecision {
 /// non-ASCII input is rejected rather than allowed to widen sharing authority.
 /// Callers that parse URLs must pass the parser's canonical host, not an origin
 /// string containing a scheme, port, path, or credentials.
-fn canonical_domain(domain: &str) -> Option<String> {
+pub(crate) fn canonical_domain(domain: &str) -> Option<String> {
     if domain.is_empty() || !domain.is_ascii() || domain.trim() != domain {
         return None;
     }

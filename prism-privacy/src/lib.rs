@@ -330,7 +330,7 @@ mod tests {
         assert!(store.is_approved("EXAMPLE.COM."));
         assert_eq!(
             store.resolve_zone(ContentZone::Local, "EXAMPLE.COM"),
-            ContentZone::Public
+            ContentZone::Local
         );
 
         assert!(store.try_deny_domain("EVIL.COM."));

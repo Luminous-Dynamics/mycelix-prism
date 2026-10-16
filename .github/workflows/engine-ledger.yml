@@ -1,0 +1,72 @@
+name: Engine evidence ledger
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/engine-strategy/**"
+      - "scripts/validate_engine_test_capsule.py"
+      - "scripts/test_engine_test_capsule.py"
+      - "scripts/validate_engine_benchmark_scorecard.py"
+      - "scripts/test_engine_benchmark_scorecard.py"
+      - "scripts/validate_policy_noninterference_capsule.py"
+      - "scripts/test_policy_noninterference_capsule.py"
+      - "scripts/validate_engine_capability_ledger.py"
+      - "scripts/engine_ledger_schema.py"
+      - "scripts/test_engine_capability_ledger.py"
+      - ".github/workflows/engine-ledger.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/engine-strategy/**"
+      - "scripts/validate_engine_test_capsule.py"
+      - "scripts/test_engine_test_capsule.py"
+      - "scripts/validate_engine_benchmark_scorecard.py"
+      - "scripts/test_engine_benchmark_scorecard.py"
+      - "scripts/validate_policy_noninterference_capsule.py"
+      - "scripts/test_policy_noninterference_capsule.py"
+      - "scripts/validate_engine_capability_ledger.py"
+      - "scripts/engine_ledger_schema.py"
+      - "scripts/test_engine_capability_ledger.py"
+      - ".github/workflows/engine-ledger.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prism-engine-ledger-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-ledger:
+    name: Validate engine evidence ledger
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Run positive and negative invariant tests
+        run: python3 scripts/test_engine_capability_ledger.py
+
+      - name: Validate engine ledger schema subset
+        run: python3 scripts/validate_engine_capability_ledger.py
+
+      - name: Test and validate result-capsule contract
+        run: |
+          python3 scripts/test_engine_test_capsule.py
+          python3 scripts/validate_engine_test_capsule.py --check-schema
+
+      - name: Test and validate benchmark scorecard
+        run: |
+          python3 scripts/test_engine_benchmark_scorecard.py
+          python3 scripts/validate_engine_benchmark_scorecard.py
+
+      - name: Test and validate policy noninterference evidence capsule
+        run: |
+          python3 scripts/test_policy_noninterference_capsule.py
+          python3 scripts/validate_policy_noninterference_capsule.py --check-schema

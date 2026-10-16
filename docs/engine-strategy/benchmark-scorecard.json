@@ -1,0 +1,504 @@
+{
+  "schema_version": "1.0.0",
+  "reviewed_at": "2026-10-16",
+  "decision": "Adopt correctness-first, reproducible performance budgets and observable noninterference gates. Denial alone is not proof of privacy: zero side effects, consent-scoped cross-zone flow, and effective revocation must be measured. Numerical latency/memory budgets remain provisional hypotheses until the Ladybird vertical slice is measured on a pinned reference machine. No external benchmark score target is set before the required APIs and workloads are genuinely supported.",
+  "measurement_protocol": {
+    "warmup_runs": 2,
+    "measured_runs": 10,
+    "minimum_baseline_samples_for_regression_gates": 30,
+    "report_statistics": [
+      "median",
+      "p95",
+      "IQR",
+      "MAD",
+      "raw samples",
+      "first-half/second-half medians",
+      "paired relative-effect distribution",
+      "95% paired-effect confidence interval",
+      "raw and Holm-adjusted p-values"
+    ],
+    "cold_run_rule": "Each cold-start sample uses a fresh process. Warm-state benchmarks declare their warmup and reuse policy.",
+    "environment_capture": [
+      "Prism commit SHA",
+      "engine commit/release",
+      "fixture or benchmark manifest digest",
+      "OS/image",
+      "CPU/model/cores",
+      "RAM",
+      "GPU and driver/backend",
+      "display resolution and refresh rate",
+      "power/thermal state",
+      "toolchain/lockfile digest",
+      "command",
+      "raw artifact SHA-256"
+    ],
+    "regression_policy": "Do not activate numeric regression screening until at least 30 valid baseline samples and 30 valid matched blocks exist on the same reference environment. A provisional signal is >5% median or >10% p95 versus that baseline, must exceed measured noise, and should be confirmed independently. A release-blocking performance decision requires at least 100 valid paired blocks per workload, the declared confidence/multiple-comparison procedure, and an independent confirmatory campaign.",
+    "comparison_policy": "Matched hardware, engine revision, workload revision, viewport, power state and runner methodology are mandatory. Publish per-workload results and raw samples; never compare across benchmark versions as if equivalent.",
+    "result_policy": "Performance claims require correct output first. WPT correctness, privacy, security, crash stability, latency, throughput, memory and energy are separate evidence classes.",
+    "privacy_policy": "No page bodies, cookies, credentials or visited-URL histories in benchmark artifacts by default; fixtures are synthetic/local and opt-in evidence is explicit.",
+    "minimum_paired_blocks_for_regression_gates": 30,
+    "comparison_design": "Default to matched blocks on one reference host. Within each block run baseline and candidate in randomized AB/BA order with a published deterministic seed and no overlapping benchmark processes; define state resets and cache policy in the suite manifest. Keep cold-start and warm-state measurements separate. If pairing is infeasible, label the comparison unpaired and require independent repeated confirmation before gating.",
+    "drift_policy": "Retain monotonic sample order; report first-half and second-half medians, robust dispersion and every raw sample. If temporal drift is distinguishable from within-run dispersion or if power/thermal/background state changes, mark the campaign unstable and repeat. Do not average drift away or post-hoc discard outliers; any numeric drift cutoff must be suite-specific and pre-registered.",
+    "minimum_paired_blocks_for_release_gates": 100,
+    "bootstrap_replicates": 10000,
+    "familywise_alpha": 0.05,
+    "campaign_policy": "One batch contains the declared warmups and 10 measured paired blocks. Pool at least three independently started batches (at least 30 valid pairs) before producing a screening regression signal. Release-blocking performance decisions require at least 100 valid paired blocks per workload and a separate confirmatory campaign; fewer observations are descriptive/exploratory only.",
+    "multiple_comparison_policy": "Pre-register the primary metric and effect threshold for each suite. For all simultaneously release-blocking metrics, report effect size and a 95% paired bootstrap confidence interval from at least 10000 resamples with a recorded seed, and apply Holm-Bonferroni control at the declared familywise alpha. A release block requires the pre-registered practical regression threshold, adjusted statistical evidence and independent confirmation; nominal p-values or intervals alone are not sufficient."
+  },
+  "suites": [
+    {
+      "id": "local-fixture-correctness",
+      "class": "correctness",
+      "source": "Prism-owned deterministic fixture manifest with a pinned digest",
+      "readiness": "ci_now",
+      "priority": "P0",
+      "status": "protocol_only",
+      "metrics": [
+        {
+          "metric_id": "supported_fixture_pass_rate",
+          "direction": "must_equal",
+          "target_value": 100,
+          "unit": "percent",
+          "target_stage": "activation_gate",
+          "target_basis": "correctness_contract",
+          "pass_condition": "Every fixture declared supported by the current manifest passes.",
+          "gate_when_activated": true
+        },
+        {
+          "metric_id": "unexpected_failure_count",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "cases",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "No unexpected failure is accepted in the declared supported set.",
+          "gate_when_activated": true
+        },
+        {
+          "metric_id": "unclassified_case_count",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "cases",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "Every declared case has an explicit outcome; missing is not success.",
+          "gate_when_activated": true
+        }
+      ],
+      "method": "Run deterministic local fixtures without public-network dependency; preserve one result record per manifest case.",
+      "notes": "Harness contract only until the real Ladybird-backed fixture runner exists.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/7"
+      ]
+    },
+    {
+      "id": "wpt-supported-subset",
+      "class": "conformance",
+      "source": "Pinned Web Platform Tests revision and reviewed Prism-supported manifest",
+      "readiness": "blocked_until_wpt_manifest_pinned",
+      "priority": "P0",
+      "status": "protocol_only",
+      "metrics": [
+        {
+          "metric_id": "supported_wpt_pass_rate",
+          "direction": "must_equal",
+          "target_value": 100,
+          "unit": "percent",
+          "target_stage": "activation_gate",
+          "target_basis": "correctness_contract",
+          "pass_condition": "100% of the explicitly declared required/supported WPT cases pass.",
+          "gate_when_activated": true
+        },
+        {
+          "metric_id": "unexpected_wpt_failures",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "cases",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "No new unexpected failures within the declared supported set.",
+          "gate_when_activated": true
+        },
+        {
+          "metric_id": "unreported_wpt_cases",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "cases",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "Pass, fail, timeout, unsupported, skipped and not-run counts reconcile to the manifest.",
+          "gate_when_activated": true
+        }
+      ],
+      "method": "Pin WPT commit and manifest; retain raw machine-readable output; report outcomes separately per spec area.",
+      "notes": "Never present a subset score as overall browser compatibility. WPT is a correctness/conformance lane, not a performance score.",
+      "references": [
+        "https://web-platform-tests.org/",
+        "https://github.com/web-platform-tests/wpt",
+        "https://github.com/web-platform-tests/wpt/blob/master/docs/running-tests/from-local-system.md",
+        "https://github.com/web-platform-tests/wpt.fyi/blob/main/api/README.md"
+      ]
+    },
+    {
+      "id": "broker-negative-controls",
+      "class": "security",
+      "source": "Prism broker policy fixtures and adversarial malformed/unauthorized requests",
+      "readiness": "ci_now",
+      "priority": "P0",
+      "status": "protocol_only",
+      "metrics": [
+        {
+          "metric_id": "unauthorized_requests_denied",
+          "direction": "must_equal",
+          "target_value": 100,
+          "unit": "percent",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "Every unauthorized or malformed privileged request is denied or rejected safely.",
+          "gate_when_activated": true
+        },
+        {
+          "metric_id": "fail_open_negative_controls",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "cases",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "No negative control obtains privileged access.",
+          "gate_when_activated": true
+        }
+      ],
+      "method": "Use explicit allow/deny expectations, malformed payloads, origin/context mismatches and revoked capability cases. Measure latency separately.",
+      "notes": "Performance optimization must never weaken a fail-closed security result.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/37",
+        "https://github.com/WebAssembly/WASI/blob/main/docs/DesignPrinciples.md"
+      ]
+    },
+    {
+      "id": "policy-noninterference",
+      "class": "privacy",
+      "source": "Adversarial broker requests with before/after snapshots of broker-owned state, share queues, privileged-action records and observable egress",
+      "readiness": "ci_now",
+      "priority": "P0",
+      "status": "protocol_only",
+      "metrics": [
+        {
+          "metric_id": "unauthorized_side_effects",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "side effects",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "Denied, malformed, expired or unauthorized requests cause zero durable state changes, share-queue writes, privileged actions or outbound flows.",
+          "gate_when_activated": true
+        },
+        {
+          "metric_id": "unconsented_cross_zone_flows",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "flows",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "No PRIVATE or LOCAL data reaches a PUBLIC sink without explicit consent bound to the data scope, recipient, purpose and expiry.",
+          "gate_when_activated": true
+        },
+        {
+          "metric_id": "post_revocation_completions",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "operations",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "After revocation acknowledgement, no queued or in-flight operation relying on the revoked authority completes. Operations committed before the defined revocation boundary must be separately identified, not counted as post-revocation.",
+          "gate_when_activated": true
+        },
+        {
+          "metric_id": "policy_evaluation_fail_open_count",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "decisions",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "Unknown or malformed policy, policy timeout, schema/version mismatch or unavailable policy service yields deny/no-op, never implicit allow.",
+          "gate_when_activated": true
+        }
+      ],
+      "method": "For allowed, denied, malformed, expired, revoked and policy-failure requests, capture pre/post state digests, share-queue writes, privileged-action traces and observable network/IPC flows. Preserve raw event traces and capsule references. A side-effect channel that cannot be observed makes the result blocked/unclassified; missing telemetry is never interpreted as zero.",
+      "notes": "This is a future activation contract, not evidence that the current runtime enforces the property. A deny response alone is insufficient; a passing result must reconcile observable side-effect channels and state transitions.",
+      "references": [
+        "https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final",
+        "https://github.com/WebAssembly/WASI/blob/main/docs/DesignPrinciples.md",
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/36"
+      ]
+    },
+    {
+      "id": "local-only-egress",
+      "class": "privacy",
+      "source": "Offline/local fixture with network requests observable at the process boundary",
+      "readiness": "ci_now",
+      "priority": "P0",
+      "status": "protocol_only",
+      "metrics": [
+        {
+          "metric_id": "unexpected_outbound_requests",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "requests",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "No unexpected outbound connection/request is emitted during an explicitly offline/local-only scenario.",
+          "gate_when_activated": true
+        }
+      ],
+      "method": "Run with network blocked and an observable egress boundary; distinguish deliberate loopback fixture traffic from outbound egress.",
+      "notes": "A pass requires observable network enforcement, not just an absence of requests in application logs.",
+      "references": [
+        "https://fetch.spec.whatwg.org/",
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/7"
+      ]
+    },
+    {
+      "id": "cold-start-to-first-usable-frame",
+      "class": "performance",
+      "source": "Prism desktop host plus pinned local fixture",
+      "readiness": "blocked_until_ladybird_vertical_slice",
+      "priority": "P1",
+      "status": "protocol_only",
+      "metrics": [
+        {
+          "metric_id": "p95_cold_start_to_usable_frame",
+          "direction": "lower_is_better",
+          "target_value": 3000,
+          "unit": "milliseconds",
+          "target_stage": "provisional",
+          "target_basis": "absolute_budget",
+          "pass_condition": "P95 target ≤ 3,000 ms on the declared reference machine; calibrate after initial 30-sample baseline.",
+          "gate_when_activated": false
+        }
+      ],
+      "method": "Measure process launch to first correct, nonblank, usable frame. Each cold sample starts a fresh process; record p50/p95 and raw samples.",
+      "notes": "Provisional product target, not a measured result. Fix the reference machine and power/thermal conditions before locking the budget.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/36"
+      ]
+    },
+    {
+      "id": "small-static-fixture-first-render",
+      "class": "performance",
+      "source": "Pinned deterministic small local HTML/CSS fixture",
+      "readiness": "blocked_until_ladybird_vertical_slice",
+      "priority": "P1",
+      "status": "protocol_only",
+      "metrics": [
+        {
+          "metric_id": "p95_navigation_to_first_correct_render",
+          "direction": "lower_is_better",
+          "target_value": 500,
+          "unit": "milliseconds",
+          "target_stage": "provisional",
+          "target_basis": "absolute_budget",
+          "pass_condition": "P95 target ≤ 500 ms for a defined small local static fixture after the renderer slice exists.",
+          "gate_when_activated": false
+        }
+      ],
+      "method": "Start navigation from the same local fixture; end only after a correctness assertion and render-completion signal. Do not substitute a fixed sleep.",
+      "notes": "A deterministic local latency target, not a public-site or network-latency claim.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/7"
+      ]
+    },
+    {
+      "id": "visible-input-response",
+      "class": "performance",
+      "source": "Pinned deterministic supported interaction fixture",
+      "readiness": "blocked_until_interactive_runtime",
+      "priority": "P2",
+      "status": "protocol_only",
+      "metrics": [
+        {
+          "metric_id": "p95_input_to_visible_update",
+          "direction": "lower_is_better",
+          "target_value": 100,
+          "unit": "milliseconds",
+          "target_stage": "provisional",
+          "target_basis": "absolute_budget",
+          "pass_condition": "P95 target ≤ 100 ms for a declared, supported interaction on reference hardware.",
+          "gate_when_activated": false
+        }
+      ],
+      "method": "Measure from a trusted injected input event to a frame containing the expected visible state change; retain raw per-event durations.",
+      "notes": "Do not enable this target until the tested interaction path and rendering-completion signal are implemented.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/7"
+      ]
+    },
+    {
+      "id": "renderer-memory",
+      "class": "resource",
+      "source": "Process-tree RSS sampled over a fixed local-fixture workload",
+      "readiness": "blocked_until_ladybird_vertical_slice",
+      "priority": "P2",
+      "status": "protocol_only",
+      "metrics": [
+        {
+          "metric_id": "p95_process_tree_rss",
+          "direction": "lower_is_better",
+          "target_value": 500,
+          "unit": "MiB",
+          "target_stage": "provisional",
+          "target_basis": "absolute_budget",
+          "pass_condition": "P95 process-tree resident set ≤ 500 MiB on the reference workload and hardware.",
+          "gate_when_activated": false
+        }
+      ],
+      "method": "Record renderer plus helper process tree, peak RSS and time series; report cold and steady-state separately.",
+      "notes": "Provisional budget only; validate against process-isolation design and realistic page workload before locking.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/36",
+        "https://ladybird.org/newsletter/2026-09-30/"
+      ]
+    },
+    {
+      "id": "adapter-overhead",
+      "class": "performance",
+      "source": "Same Ladybird revision, fixture manifest, environment and measurement harness with/without Prism host adapter",
+      "readiness": "blocked_until_host_integration",
+      "priority": "P2",
+      "status": "protocol_only",
+      "metrics": [
+        {
+          "metric_id": "p95_host_adapter_latency_overhead",
+          "direction": "lower_is_better",
+          "target_value": 5,
+          "unit": "percent",
+          "target_stage": "provisional",
+          "target_basis": "relative_to_baseline",
+          "pass_condition": "Prism host adapter adds no more than 5% p95 latency against the matched standalone-Ladybird baseline, once comparable integration paths exist.",
+          "gate_when_activated": false
+        }
+      ],
+      "method": "Paired A/B runs in randomized order against the identical engine SHA, fixtures and reference environment. Publish both raw distributions.",
+      "notes": "Do not compare different engine revisions or machines and attribute the difference to adapter overhead.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/36",
+        "https://github.com/LadybirdBrowser/ladybird/tree/86a57aa4b0194823c6f2c8ee5b9a473c6e03e19f"
+      ]
+    },
+    {
+      "id": "fixture-soak-stability",
+      "class": "reliability",
+      "source": "Pinned fixture corpus, process supervisor and crash/timeout detection",
+      "readiness": "blocked_until_fixture_runner",
+      "priority": "P1",
+      "status": "protocol_only",
+      "metrics": [
+        {
+          "metric_id": "crashes_in_10000_cases",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "crashes",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "No renderer/host crash in a 10,000-case deterministic soak; each timeout is separately reported and triaged.",
+          "gate_when_activated": true
+        },
+        {
+          "metric_id": "unhandled_timeouts",
+          "direction": "must_equal",
+          "target_value": 0,
+          "unit": "cases",
+          "target_stage": "activation_gate",
+          "target_basis": "zero_tolerance",
+          "pass_condition": "No timeout is silently discarded or treated as pass.",
+          "gate_when_activated": true
+        }
+      ],
+      "method": "Run in isolated worker processes with per-case timeout, crash capture, fixture hash and deterministic replay record.",
+      "notes": "A zero-crash soak is not a memory-safety proof and does not replace fuzzing or security review.",
+      "references": [
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/2",
+        "https://github.com/Luminous-Dynamics/mycelix-prism/issues/7"
+      ]
+    },
+    {
+      "id": "speedometer-3-1",
+      "class": "industry-comparator",
+      "source": "Official BrowserBench Speedometer 3.1",
+      "readiness": "blocked_until_page_javascript_and_required_web_apis",
+      "priority": "P3",
+      "status": "not_applicable_yet",
+      "metrics": [
+        {
+          "metric_id": "published_aggregate_and_subtests",
+          "direction": "baseline_only",
+          "target_value": null,
+          "unit": "official score",
+          "target_stage": "baseline_only",
+          "target_basis": "none_until_support",
+          "pass_condition": "Once supported, publish version-pinned aggregate and per-workload results with raw JSON; set no comparative score target until the run is valid.",
+          "gate_when_activated": false
+        }
+      ],
+      "method": "Use official Speedometer 3.1 workload, clean profile, focused device and pinned harness revision; publish harness warnings and detailed subtest results.",
+      "notes": "This exercises end-to-end web-application responsiveness. Do not report a score if workloads produce missing durations or required APIs are unimplemented.",
+      "references": [
+        "https://browserbench.org/Speedometer3.1/",
+        "https://www.browserbench.org/Speedometer3.1/about.html",
+        "https://www.browserbench.org/Speedometer3.1/instructions.html"
+      ]
+    },
+    {
+      "id": "jetstream-2-2",
+      "class": "industry-comparator",
+      "source": "Official WebKit JetStream 2.2",
+      "readiness": "blocked_until_javascript_and_wasm_runtime",
+      "priority": "P3",
+      "status": "not_applicable_yet",
+      "metrics": [
+        {
+          "metric_id": "published_suite_score_and_subtests",
+          "direction": "baseline_only",
+          "target_value": null,
+          "unit": "official score",
+          "target_stage": "baseline_only",
+          "target_basis": "none_until_support",
+          "pass_condition": "Once JavaScript/WebAssembly workloads are genuinely supported, publish version-pinned score and subtest output; do not fabricate missing-workload scores.",
+          "gate_when_activated": false
+        }
+      ],
+      "method": "Pin JetStream 2.2, use a clean environment, preserve subtest data and do not compare scores from different JetStream versions.",
+      "notes": "Not applicable to the current Prism runtime until the required scripting/runtime capabilities exist.",
+      "references": [
+        "https://webkit.org/blog/15378/jetstream-2-2/",
+        "https://browserbench.org/JetStream2.2/index.html"
+      ]
+    },
+    {
+      "id": "motionmark-1-3",
+      "class": "industry-comparator",
+      "source": "Official WebKit MotionMark 1.3",
+      "readiness": "blocked_until_supported_graphics_and_animation_apis",
+      "priority": "P3",
+      "status": "not_applicable_yet",
+      "metrics": [
+        {
+          "metric_id": "published_suite_score_and_subtests",
+          "direction": "baseline_only",
+          "target_value": null,
+          "unit": "official score",
+          "target_stage": "baseline_only",
+          "target_basis": "none_until_support",
+          "pass_condition": "Once graphics/animation workloads are valid, publish version-pinned result and subtests; document display refresh rate and graphics backend.",
+          "gate_when_activated": false
+        }
+      ],
+      "method": "Pin MotionMark version and display refresh-rate protocol; record GPU backend, screen resolution and per-suite results.",
+      "notes": "MotionMark targets graphics/paining throughput rather than serving as a general browser correctness or security score.",
+      "references": [
+        "https://webkit.org/blog/14908/motionmark-1-3/",
+        "https://github.com/WebKit/MotionMark"
+      ]
+    }
+  ]
+}

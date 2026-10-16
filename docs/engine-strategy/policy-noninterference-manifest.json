@@ -1,0 +1,151 @@
+{
+  "schema_version": "1.0.0",
+  "suite_id": "policy-noninterference",
+  "reviewed_at": "2026-10-16",
+  "principle": "A policy denial is not evidence of noninterference unless all relevant side-effect channels are observable and reconciled. The manifest is an adversarial minimum, not exhaustive fuzz coverage.",
+  "required_observability": [
+    "state_digest",
+    "share_queue",
+    "privileged_actions",
+    "egress"
+  ],
+  "effect_counters": [
+    "state_writes",
+    "share_queue_writes",
+    "privileged_actions",
+    "outbound_flows",
+    "post_revocation_completions"
+  ],
+  "scenarios": [
+    {
+      "case_id": "deny-unauthorized-request",
+      "kind": "unauthorized_request",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "deny",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "zero",
+      "attack_vector": "No matching explicit grant exists for this outbound operation."
+    },
+    {
+      "case_id": "deny-origin-case-canonicalization",
+      "kind": "unauthorized_request",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "deny",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "zero",
+      "attack_vector": "An existing deny/allow decision uses different ASCII case or one trailing DNS root dot."
+    },
+    {
+      "case_id": "deny-malformed-host-label",
+      "kind": "malformed_request",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "deny",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "zero",
+      "attack_vector": "Hostname contains an empty label, invalid hyphen placement, URL syntax, or another invalid DNS form."
+    },
+    {
+      "case_id": "deny-malformed-grant",
+      "kind": "malformed_request",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "deny",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "zero",
+      "attack_vector": "Grant payload is malformed, incomplete, or has an unknown schema version."
+    },
+    {
+      "case_id": "deny-expired-authority",
+      "kind": "expired_authority",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "deny",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "zero",
+      "attack_vector": "A formerly valid grant has expired before the irreversible side effect."
+    },
+    {
+      "case_id": "deny-unconsented-cross-zone",
+      "kind": "unconsented_cross_zone",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "deny",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "zero",
+      "attack_vector": "Local data is offered to a public sink without consent bound to the operation."
+    },
+    {
+      "case_id": "deny-private-cross-zone",
+      "kind": "unconsented_cross_zone",
+      "source_zone": "PRIVATE",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "deny",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "zero",
+      "attack_vector": "Private data is presented for export even if a source claims a public classification."
+    },
+    {
+      "case_id": "deny-revoked-queued-work",
+      "kind": "post_revocation",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "deny",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "zero",
+      "attack_vector": "A queued operation was created before revocation but reaches the commit boundary after revocation acknowledgement."
+    },
+    {
+      "case_id": "deny-revoked-inflight-work",
+      "kind": "post_revocation",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "deny",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "zero",
+      "attack_vector": "An in-flight operation attempts the irreversible side effect after revocation acknowledgement."
+    },
+    {
+      "case_id": "deny-policy-service-unavailable",
+      "kind": "policy_evaluation_failure",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "no_op",
+      "policy_failure_mode": "unavailable",
+      "expected_side_effects": "zero",
+      "attack_vector": "Policy service is unavailable; no fail-open fallback is permitted."
+    },
+    {
+      "case_id": "deny-policy-timeout",
+      "kind": "policy_evaluation_failure",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "no_op",
+      "policy_failure_mode": "timeout",
+      "expected_side_effects": "zero",
+      "attack_vector": "Policy evaluation times out while the operation is pending."
+    },
+    {
+      "case_id": "deny-policy-schema-mismatch",
+      "kind": "policy_evaluation_failure",
+      "source_zone": "LOCAL",
+      "destination_zone": "PUBLIC",
+      "expected_decision": "no_op",
+      "policy_failure_mode": "schema_mismatch",
+      "expected_side_effects": "zero",
+      "attack_vector": "Broker and policy schema versions disagree."
+    },
+    {
+      "case_id": "allow-authorized-control",
+      "kind": "authorized_control",
+      "source_zone": "LOCAL",
+      "destination_zone": "LOCAL",
+      "expected_decision": "allow",
+      "policy_failure_mode": "not_applicable",
+      "expected_side_effects": "authorized_write",
+      "attack_vector": "A valid local-only operation proves the harness can observe a permitted state change."
+    }
+  ]
+}

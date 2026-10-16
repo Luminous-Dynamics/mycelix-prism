@@ -71,7 +71,7 @@ def validate_scorecard(schema: Any, scorecard: Any) -> list[str]:
                 "95% paired-effect confidence interval", "raw and Holm-adjusted p-values",
             }.issubset(set(report_stats))
         ):
-            errors.append("report_statistics must retain median/p95, robust dispersion, raw and split-half samples, paired effect distribution, a 95% paired-effect interval, and raw/adjusted p-values")
+            errors.append("report_statistics must retain median, p95, IQR, MAD and raw samples, plus first-half/second-half medians, paired relative-effect distribution, a 95% paired-effect confidence interval, and raw and Holm-adjusted p-values")
 
     suites = scorecard.get("suites")
     if not isinstance(suites, list):

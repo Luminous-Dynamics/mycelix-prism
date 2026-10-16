@@ -195,6 +195,27 @@ class PolicyNoninterferenceCapsuleTests(unittest.TestCase):
         capsule["cases"][0]["side_effects"] = None
         self.assertEqual(derive_outcome(capsule), "blocked")
 
+    def test_manifest_malformed_unhashable_fields_do_not_crash(self) -> None:
+        manifest = dict(MANIFEST)
+        manifest["required_observability"] = [{}]
+        self.assertTrue(any("required_observability" in e for e in validate_manifest(manifest)))
+
+    def test_manifest_scenario_malformed_enum_does_not_crash(self) -> None:
+        manifest = dict(MANIFEST)
+        manifest["scenarios"] = [dict(item) for item in MANIFEST["scenarios"]]
+        manifest["scenarios"][0]["expected_side_effects"] = {}
+        self.assertTrue(any("expected_side_effects" in e for e in validate_manifest(manifest)))
+
+    def test_derive_outcome_fails_closed_for_unhashable_kind(self) -> None:
+        capsule = make_capsule()
+        capsule["cases"][0]["kind"] = {"unexpected": "object"}
+        self.assertEqual(derive_outcome(capsule), "incomplete")
+
+    def test_derive_outcome_fails_closed_for_unhashable_expected_decision(self) -> None:
+        capsule = make_capsule()
+        capsule["cases"][0]["expected_decision"] = ["deny"]
+        self.assertEqual(derive_outcome(capsule), "incomplete")
+
     def test_policy_capsule_schema_is_in_supported_subset(self) -> None:
         from engine_ledger_schema import validate_schema_definition
         self.assertEqual(validate_schema_definition(SCHEMA), [])

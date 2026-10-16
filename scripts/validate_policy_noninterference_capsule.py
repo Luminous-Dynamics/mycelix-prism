@@ -48,6 +48,15 @@ def validate_manifest(manifest: Any) -> list[str]:
     errors: list[str] = []
     if not isinstance(manifest, dict):
         return ["manifest root must be an object"]
+    expected_root_keys = {
+        "schema_version", "suite_id", "reviewed_at", "principle",
+        "required_observability", "effect_counters", "scenarios",
+    }
+    if set(manifest) != expected_root_keys:
+        errors.append("manifest root keys do not match the versioned contract")
+    for key in ("reviewed_at", "principle"):
+        if not isinstance(manifest.get(key), str) or not manifest[key].strip():
+            errors.append(f"manifest {key} must be a non-empty string")
     if manifest.get("schema_version") != "1.0.0":
         errors.append("manifest schema_version must be 1.0.0")
     if manifest.get("suite_id") != "policy-noninterference":
@@ -62,6 +71,12 @@ def validate_manifest(manifest: Any) -> list[str]:
         if not isinstance(scenario, dict):
             errors.append(f"{prefix} must be an object")
             continue
+        expected_scenario_keys = {
+            "case_id", "kind", "source_zone", "destination_zone",
+            "expected_decision", "policy_failure_mode", "expected_side_effects",
+        }
+        if set(scenario) != expected_scenario_keys:
+            errors.append(f"{prefix} keys do not match the versioned scenario contract")
         case_id, kind = scenario.get("case_id"), scenario.get("kind")
         if not isinstance(case_id, str) or not case_id:
             errors.append(f"{prefix}.case_id must be a non-empty string")
@@ -75,19 +90,23 @@ def validate_manifest(manifest: Any) -> list[str]:
             errors.append(f"duplicate manifest scenario kind: {kind}")
         else:
             kinds.add(kind)
-        if scenario.get("expected_side_effects") not in {"zero", "authorized_write"}:
+        side_effect_mode = scenario.get("expected_side_effects")
+        if not isinstance(side_effect_mode, str) or side_effect_mode not in {"zero", "authorized_write"}:
             errors.append(f"{prefix}.expected_side_effects is not allowed")
-        if scenario.get("kind") == "authorized_control":
-            if scenario.get("expected_decision") != "allow" or scenario.get("expected_side_effects") != "authorized_write":
+        expected_decision = scenario.get("expected_decision")
+        if kind == "authorized_control":
+            if expected_decision != "allow" or side_effect_mode != "authorized_write":
                 errors.append(f"{prefix} authorized_control must expect allow and authorized_write")
-        elif scenario.get("expected_decision") not in {"deny", "no_op"} or scenario.get("expected_side_effects") != "zero":
+        elif not isinstance(expected_decision, str) or expected_decision not in {"deny", "no_op"} or side_effect_mode != "zero":
             errors.append(f"{prefix} denied scenario must expect deny/no_op and zero side effects")
-        if kind == "policy_evaluation_failure" and scenario.get("policy_failure_mode") not in POLICY_FAILURE_MODES:
+        failure_mode = scenario.get("policy_failure_mode")
+        if kind == "policy_evaluation_failure" and (not isinstance(failure_mode, str) or failure_mode not in POLICY_FAILURE_MODES):
             errors.append(f"{prefix} policy failure must declare a failure mode")
-        elif kind != "policy_evaluation_failure" and scenario.get("policy_failure_mode") != "not_applicable":
+        elif kind != "policy_evaluation_failure" and failure_mode != "not_applicable":
             errors.append(f"{prefix} non-failure scenario must use policy_failure_mode=not_applicable")
+        source_zone, destination_zone = scenario.get("source_zone"), scenario.get("destination_zone")
         if kind == "unconsented_cross_zone" and (
-            scenario.get("source_zone") not in {"PRIVATE", "LOCAL"} or scenario.get("destination_zone") != "PUBLIC"
+            not isinstance(source_zone, str) or source_zone not in {"PRIVATE", "LOCAL"} or destination_zone != "PUBLIC"
         ):
             errors.append(f"{prefix} must describe PRIVATE/LOCAL to PUBLIC")
         if kind == "post_revocation" and scenario.get("expected_decision") not in {"deny", "no_op"}:
@@ -95,10 +114,20 @@ def validate_manifest(manifest: Any) -> list[str]:
     if kinds != KINDS:
         errors.append("manifest must contain each required scenario kind exactly once")
     required_obs = manifest.get("required_observability")
-    if not isinstance(required_obs, list) or set(required_obs) != set(REQUIRED_OBSERVABILITY) or len(required_obs) != len(REQUIRED_OBSERVABILITY):
+    if (
+        not isinstance(required_obs, list)
+        or any(not isinstance(item, str) for item in required_obs)
+        or set(required_obs) != set(REQUIRED_OBSERVABILITY)
+        or len(required_obs) != len(REQUIRED_OBSERVABILITY)
+    ):
         errors.append("manifest required_observability must contain the complete required channel set")
     counters = manifest.get("effect_counters")
-    if not isinstance(counters, list) or set(counters) != set(EFFECT_COUNTERS) or len(counters) != len(EFFECT_COUNTERS):
+    if (
+        not isinstance(counters, list)
+        or any(not isinstance(item, str) for item in counters)
+        or set(counters) != set(EFFECT_COUNTERS)
+        or len(counters) != len(EFFECT_COUNTERS)
+    ):
         errors.append("manifest effect_counters must contain the complete required counter set")
     return errors
 
@@ -205,7 +234,8 @@ def validate_capsule(
         elif failure_mode != "not_applicable":
             errors.append(f"{prefix} non-failure case must use policy_failure_mode=not_applicable")
         if kind == "unconsented_cross_zone":
-            if case.get("source_zone") not in {"PRIVATE", "LOCAL"} or case.get("destination_zone") != "PUBLIC":
+            source_zone, destination_zone = case.get("source_zone"), case.get("destination_zone")
+            if not isinstance(source_zone, str) or source_zone not in {"PRIVATE", "LOCAL"} or destination_zone != "PUBLIC":
                 errors.append(f"{prefix} unconsented_cross_zone must describe PRIVATE/LOCAL to PUBLIC")
             if not isinstance(consent, dict):
                 errors.append(f"{prefix} consent must be an object")
@@ -264,6 +294,8 @@ def derive_outcome(capsule: Any) -> str:
                 return "failed"
             if effects["state_writes"] < 1 or case.get("pre_state_sha256") == case.get("post_state_sha256"):
                 return "failed"
+        if not isinstance(expected, str):
+            return "incomplete"
         if expected == "allow" and observed != "allow":
             return "failed"
         if expected in {"deny", "no_op"} and observed not in {"deny", "no_op"}:

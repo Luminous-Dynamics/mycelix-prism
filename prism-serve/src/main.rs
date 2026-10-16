@@ -35,13 +35,59 @@ const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10MB
 // HTTP CLIENT
 // ═══════════════════════════════════════════════════════════════
 
-fn build_client(user_agent: &str, timeout_secs: u64) -> reqwest::Client {
+/// Validate every redirect hop, not only the user-supplied starting URL.
+///
+/// This blocks obvious redirect-based SSRF attempts (for example a public host
+/// redirecting to loopback or cloud metadata). Hostname DNS rebinding remains a
+/// separate risk: `validate_proxy_url` does not pin resolved IPs at connection time.
+fn redirect_target_is_safe(url: &url::Url) -> bool {
+    validate_proxy_url(url.as_str()).is_ok()
+}
+
+fn same_origin(initial: &url::Url, target: &url::Url) -> bool {
+    initial.scheme() == target.scheme()
+        && initial.host_str() == target.host_str()
+        && initial.port_or_known_default() == target.port_or_known_default()
+}
+
+fn safe_redirect_policy(restrict_to_initial_origin: bool) -> reqwest::redirect::Policy {
+    // Validate the target on every hop and delegate hop/loop limits to reqwest.
+    // Sensitive provider API calls additionally stay on their original origin.
+    let limited = reqwest::redirect::Policy::limited(5);
+    reqwest::redirect::Policy::custom(move |attempt| {
+        if !redirect_target_is_safe(attempt.url()) {
+            return attempt.error("redirect target rejected by Prism SSRF policy");
+        }
+        if restrict_to_initial_origin {
+            if let Some(initial) = attempt.previous().first()
+                && !same_origin(initial, attempt.url())
+            {
+                return attempt.error("cross-origin redirect rejected for provider API request");
+            }
+        }
+        limited.redirect(attempt)
+    })
+}
+
+fn build_client_with_policy(
+    user_agent: &str,
+    timeout_secs: u64,
+    restrict_to_initial_origin: bool,
+) -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(user_agent)
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(safe_redirect_policy(restrict_to_initial_origin))
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .expect("HTTP client TLS init failed")
+}
+
+fn build_client(user_agent: &str, timeout_secs: u64) -> reqwest::Client {
+    build_client_with_policy(user_agent, timeout_secs, false)
+}
+
+fn build_api_client(user_agent: &str, timeout_secs: u64) -> reqwest::Client {
+    build_client_with_policy(user_agent, timeout_secs, true)
 }
 
 fn internal_error_response() -> axum::response::Response<axum::body::Body> {
@@ -108,7 +154,7 @@ async fn ddg_handler(Query(params): Query<DdgParams>) -> impl IntoResponse {
         "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
         params.q.replace(' ', "+")
     );
-    let client = build_client("Prism/0.3 (ddg-proxy)", 10);
+    let client = build_api_client("Prism/0.3 (ddg-proxy)", 10);
     match client.get(&url).send().await {
         Ok(resp) => {
             let body = resp.bytes().await.unwrap_or_default();
@@ -143,7 +189,7 @@ async fn brave_handler(
         "https://api.search.brave.com/res/v1/web/search?q={}",
         params.q.replace(' ', "+")
     );
-    let client = build_client("Prism/0.3 (brave-proxy)", 15);
+    let client = build_api_client("Prism/0.3 (brave-proxy)", 15);
     match client
         .get(&url)
         .header("X-Subscription-Token", api_key)
@@ -180,7 +226,7 @@ async fn perplexity_handler(
     if api_key.is_empty() {
         return (StatusCode::UNAUTHORIZED, "Missing X-Perplexity-Key header").into_response();
     }
-    let client = build_client("Prism/0.3 (perplexity-proxy)", 30);
+    let client = build_api_client("Prism/0.3 (perplexity-proxy)", 30);
     match client
         .post("https://api.perplexity.ai/chat/completions")
         .header("Authorization", format!("Bearer {}", api_key))
@@ -471,6 +517,99 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn provider_api_redirects_must_remain_same_origin() {
+        let initial = url::Url::parse("https://api.example.test/v1/search").unwrap();
+        let same = url::Url::parse("https://api.example.test/v2/search").unwrap();
+        let different_host = url::Url::parse("https://capture.example.test/collect").unwrap();
+        let different_scheme = url::Url::parse("http://api.example.test/v1/search").unwrap();
+        let different_port = url::Url::parse("https://api.example.test:8443/v1/search").unwrap();
+
+        assert!(same_origin(&initial, &same));
+        assert!(!same_origin(&initial, &different_host));
+        assert!(!same_origin(&initial, &different_scheme));
+        assert!(!same_origin(&initial, &different_port));
+    }
+
+    #[tokio::test]
+    async fn redirect_to_loopback_is_blocked_before_second_connection() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let first = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let blocked = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let first_addr = first.local_addr().unwrap();
+        let blocked_addr = blocked.local_addr().unwrap();
+
+        let responder = tokio::spawn(async move {
+            let (mut stream, _) = first.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await;
+            let response = format!(
+                "HTTP/1.1 302 Found\r\nLocation: http://{blocked_addr}/internal\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        // This test intentionally starts at loopback to exercise redirect
+        // policy in isolation; the public handler rejects this initial URL.
+        let client = reqwest::Client::builder()
+            .redirect(safe_redirect_policy(false))
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let result = client
+            .get(format!("http://{first_addr}/start"))
+            .send()
+            .await;
+        assert!(result.is_err(), "redirect to loopback should fail");
+
+        responder.await.unwrap();
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                blocked.accept()
+            )
+            .await
+            .is_err(),
+            "the blocked redirect target must never receive a connection"
+        );
+    }
+
+    #[test]
+    fn redirect_target_validation_rejects_internal_destinations() {
+        for raw in [
+            "http://localhost:8080",
+            "http://127.0.0.1:5432",
+            "http://10.0.0.7",
+            "http://192.168.1.1",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://metadata.google.internal",
+            "file:///etc/passwd",
+            "ftp://example.com",
+        ] {
+            let parsed = url::Url::parse(raw).unwrap();
+            assert!(
+                !redirect_target_is_safe(&parsed),
+                "unsafe redirect target accepted: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn redirect_target_validation_accepts_external_http_targets() {
+        for raw in [
+            "https://example.com/path",
+            "https://api.duckduckgo.com/?q=test",
+            "http://en.wikipedia.org/wiki/Rust",
+        ] {
+            let parsed = url::Url::parse(raw).unwrap();
+            assert!(
+                redirect_target_is_safe(&parsed),
+                "valid external redirect target rejected: {raw}"
+            );
+        }
+    }
+
     use super::*;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};

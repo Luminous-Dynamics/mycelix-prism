@@ -18,12 +18,27 @@
 
 /// Check if an IPv4 address is private/reserved and therefore unsafe to proxy to.
 pub fn is_private_ipv4(ip: &std::net::Ipv4Addr) -> bool {
+    let [a, b, c, _] = ip.octets();
+
     ip.is_loopback()
         || ip.is_private()
         || ip.is_link_local()
         || ip.is_broadcast()
         || ip.is_unspecified()
-        || (ip.octets()[0] == 169 && ip.octets()[1] == 254)
+        // "This network" and shared carrier-grade NAT address space.
+        || a == 0
+        || (a == 100 && (64..=127).contains(&b))
+        // Conservative deny of IETF protocol assignments and documentation
+        // blocks. This deliberately rejects some exceptions inside 192.0.0.0/24.
+        || (a == 192 && b == 0 && (c == 0 || c == 2))
+        // Deprecated 6to4 relay anycast.
+        || (a == 192 && b == 88 && c == 99)
+        // Benchmarking and documentation ranges.
+        || (a == 198 && (b == 18 || b == 19))
+        || (a == 198 && b == 51 && c == 100)
+        || (a == 203 && b == 0 && c == 113)
+        // Multicast and reserved/future-use ranges are not public unicast targets.
+        || a >= 224
 }
 
 /// Validate that a URL is safe to proxy — reject private/reserved addresses
@@ -53,11 +68,29 @@ pub fn validate_proxy_url(raw: &str) -> Result<url::Url, &'static str> {
             }
         }
         Some(url::Host::Ipv6(ip)) => {
-            if ip.is_loopback() || ip.is_unspecified() {
+            if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
                 return Err("Access to private/reserved IP addresses is forbidden");
             }
 
             let seg = ip.segments();
+
+            // Documentation (2001:db8::/32 and 3fff::/20), benchmarking
+            // (2001:2::/48), and deprecated 6to4 (2002::/16) are not valid
+            // public unicast proxy destinations.
+            if (seg[0] == 0x2001 && (seg[1] == 0x0db8 || (seg[1] == 0x0002 && seg[2] == 0)))
+                || (seg[0] == 0x3fff && (seg[1] & 0xf000) == 0)
+                || seg[0] == 0x2002
+            {
+                return Err("Access to private/reserved IP addresses is forbidden");
+            }
+
+            // Block well-known and local-use NAT64 prefixes. These can encode
+            // IPv4 destinations that would otherwise bypass IPv4 literal checks.
+            if (seg[0] == 0x0064 && seg[1] == 0xff9b && seg[2..].iter().all(|part| *part == 0))
+                || (seg[0] == 0x0064 && seg[1] == 0xff9b && seg[2] == 0x0001)
+            {
+                return Err("Access to private/reserved IP addresses is forbidden");
+            }
 
             // IPv4-mapped IPv6 (::ffff:x.x.x.x)
             if seg[0] == 0
@@ -124,6 +157,47 @@ mod tests {
         assert!(validate_proxy_url("file:///etc/passwd").is_err());
         assert!(validate_proxy_url("ftp://example.com").is_err());
         assert!(validate_proxy_url("gopher://evil.com").is_err());
+    }
+
+    #[test]
+    fn rejects_ipv4_special_use_and_non_global_ranges() {
+        for raw in [
+            "http://0.1.2.3",
+            "http://100.64.0.1",
+            "http://100.127.255.254",
+            "http://192.0.0.8",
+            "http://192.0.2.10",
+            "http://192.88.99.1",
+            "http://198.18.0.1",
+            "http://198.19.255.254",
+            "http://198.51.100.7",
+            "http://203.0.113.4",
+            "http://224.0.0.1",
+            "http://240.0.0.1",
+        ] {
+            assert!(
+                validate_proxy_url(raw).is_err(),
+                "special-use address accepted: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_ipv6_special_use_and_non_global_ranges() {
+        for raw in [
+            "http://[ff02::1]",
+            "http://[2001:db8::1]",
+            "http://[2001:2::1]",
+            "http://[3fff::1]",
+            "http://[2002::1]",
+            "http://[64:ff9b::a00:1]",
+            "http://[64:ff9b:1::a00:1]",
+        ] {
+            assert!(
+                validate_proxy_url(raw).is_err(),
+                "special-use address accepted: {raw}"
+            );
+        }
     }
 
     #[test]

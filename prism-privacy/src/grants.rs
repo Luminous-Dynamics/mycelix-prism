@@ -117,6 +117,7 @@ pub enum GrantError {
     DuplicateChoiceReceipt,
     MissingGrant,
     PolicyVersionMismatch,
+    PolicyEpochExhausted,
     AuthorityUnavailable,
     EpochExhausted,
 }
@@ -159,6 +160,8 @@ struct GrantRecord {
     epoch: u64,
     revoked: bool,
     consumed: bool,
+    /// Authority policy generation when this grant was issued.
+    policy_epoch: u64,
 }
 
 #[derive(Default)]
@@ -167,6 +170,8 @@ struct AuthorityState {
     last_observed_unix_ms: Option<u64>,
     /// Authoritative active policy version; never taken from the request.
     current_policy_version: String,
+    /// Monotonic policy generation prevents version-string rollback reactivation.
+    current_policy_epoch: u64,
 }
 
 /// Thread-safe, fail-closed grant authority.
@@ -183,6 +188,7 @@ impl GrantAuthority {
         Ok(Self {
             state: Mutex::new(AuthorityState {
                 current_policy_version: current_policy_version.to_owned(),
+                current_policy_epoch: 1,
                 ..AuthorityState::default()
             }),
         })
@@ -197,7 +203,15 @@ impl GrantAuthority {
             ));
         }
         let mut state = self.lock_state().map_err(|_| GrantError::AuthorityUnavailable)?;
+        if state.current_policy_version == version {
+            return Ok(());
+        }
+        let next_epoch = state
+            .current_policy_epoch
+            .checked_add(1)
+            .ok_or(GrantError::PolicyEpochExhausted)?;
         state.current_policy_version = version.to_owned();
+        state.current_policy_epoch = next_epoch;
         Ok(())
     }
 
@@ -232,6 +246,7 @@ impl GrantAuthority {
                 epoch: 1,
                 revoked: false,
                 consumed: false,
+                policy_epoch: state.current_policy_epoch,
             },
         );
         Ok(())
@@ -414,7 +429,9 @@ fn validate_locked(
     }
 
     let grant = &record.grant;
-    if grant.policy_version != state.current_policy_version {
+    if record.policy_epoch != state.current_policy_epoch
+        || grant.policy_version != state.current_policy_version
+    {
         return Err(DenialReason::PolicyVersionMismatch);
     }
     if grant.destination != binding.destination {
@@ -612,6 +629,26 @@ mod tests {
         assert_eq!(
             authority.issue(sample_grant("stale-policy-grant")),
             Err(GrantError::PolicyVersionMismatch)
+        );
+    }
+
+    #[test]
+    fn policy_version_rollback_does_not_reactivate_old_grants() {
+        let authority = sample_authority();
+        let request = sample_request(ContentZone::Local);
+        let permit = authority.authorize(&request, Some(100)).unwrap();
+
+        authority.set_current_policy_version("prism-policy-v2").unwrap();
+        authority.set_current_policy_version("prism-policy-v1").unwrap();
+
+        assert_eq!(
+            authority.authorize(&request, Some(101)),
+            Err(DenialReason::PolicyVersionMismatch),
+            "returning to an old version label must not revive the old grant"
+        );
+        assert_eq!(
+            authority.commit_with(&permit, &request, Some(102), || ()),
+            Err(DenialReason::PolicyVersionMismatch)
         );
     }
 

@@ -30,6 +30,7 @@ const MAX_ID_BYTES: usize = 128;
 const MAX_SCOPE_BYTES: usize = 512;
 const MAX_PURPOSE_BYTES: usize = 256;
 const MAX_POLICY_VERSION_BYTES: usize = 128;
+const MAX_CHOICE_RECEIPT_BYTES: usize = 256;
 
 /// A specific outbound action that a user can authorize.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -53,6 +54,8 @@ pub struct ConsentGrant {
     pub content_scope: String,
     pub purpose: String,
     pub policy_version: String,
+    /// Opaque reference to integrity-protected evidence of the user's explicit choice.
+    pub user_choice_receipt: String,
     /// Unix epoch milliseconds. Validity interval is [issued_at, expires_at).
     pub issued_at_unix_ms: u64,
     pub expires_at_unix_ms: u64,
@@ -103,6 +106,7 @@ pub enum GrantValidationError {
     InvalidContentScope,
     InvalidPurpose,
     InvalidPolicyVersion,
+    InvalidChoiceReceipt,
     InvalidTimeWindow,
 }
 
@@ -300,6 +304,9 @@ fn validate_grant(grant: &ConsentGrant) -> Result<(), GrantValidationError> {
     if !valid_atom(&grant.policy_version, MAX_POLICY_VERSION_BYTES) {
         return Err(GrantValidationError::InvalidPolicyVersion);
     }
+    if !valid_atom(&grant.user_choice_receipt, MAX_CHOICE_RECEIPT_BYTES) {
+        return Err(GrantValidationError::InvalidChoiceReceipt);
+    }
     if grant.expires_at_unix_ms <= grant.issued_at_unix_ms {
         return Err(GrantValidationError::InvalidTimeWindow);
     }
@@ -402,6 +409,7 @@ mod tests {
             content_scope: "document:case-17".into(),
             purpose: "deliver-user-requested-document".into(),
             policy_version: "prism-policy-v1".into(),
+            user_choice_receipt: "choice-receipt-17".into(),
             issued_at_unix_ms: 100,
             expires_at_unix_ms: 200,
         }
@@ -545,6 +553,15 @@ mod tests {
             authority.issue(invalid_scope),
             Err(GrantError::InvalidGrant(
                 GrantValidationError::InvalidContentScope
+            ))
+        );
+
+        let mut invalid_receipt = sample_grant("bad-receipt");
+        invalid_receipt.user_choice_receipt.clear();
+        assert_eq!(
+            authority.issue(invalid_receipt),
+            Err(GrantError::InvalidGrant(
+                GrantValidationError::InvalidChoiceReceipt
             ))
         );
 

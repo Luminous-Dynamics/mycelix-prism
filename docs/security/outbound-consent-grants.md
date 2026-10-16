@@ -14,6 +14,7 @@ A grant binds one explicit choice to all of the following:
 - Stable content scope or sensitivity label.
 - Declared purpose.
 - Policy version.
+- Opaque reference to integrity-protected evidence of the user's explicit choice.
 - Validity interval, with expiry exclusive.
 - Unique, non-reusable grant ID.
 
@@ -34,7 +35,7 @@ This is deliberately narrower than claiming distributed or end-to-end revocation
 
 The caller injects time so tests are deterministic. Production integrations must read time from a trusted clock provider and pass no time when the read fails. Backward timestamps fail closed; the API cannot prove that a caller supplied an honest clock, detect every forward jump, or preserve monotonicity across restarts. Before production, use a persisted time/epoch strategy with explicit recovery behavior and test expiry against suspend/resume, wall-clock corrections, and restart.
 
-Grant deserialization must not grant authority by itself: every loaded record must be revalidated against the current policy version and integrity-protected revocation state. Grant IDs are never reused; issuing a replacement grant must use a fresh identifier.
+Grant deserialization must not grant authority by itself: every loaded record must be revalidated against the current policy version and integrity-protected revocation state. The choice-receipt field is only a reference; the UI/broker integration must mint it only after an explicit user gesture and verify its integrity. Grant IDs are never reused; issuing a replacement grant must use a fresh identifier.
 
 ## Qualification gates
 

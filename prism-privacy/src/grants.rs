@@ -115,6 +115,7 @@ pub enum GrantError {
     InvalidGrant(GrantValidationError),
     DuplicateGrantId,
     MissingGrant,
+    PolicyVersionMismatch,
     AuthorityUnavailable,
     EpochExhausted,
 }
@@ -161,6 +162,8 @@ struct GrantRecord {
 struct AuthorityState {
     grants: HashMap<String, GrantRecord>,
     last_observed_unix_ms: Option<u64>,
+    /// Authoritative active policy version; never taken from the request.
+    current_policy_version: String,
 }
 
 /// Thread-safe, fail-closed grant authority.
@@ -168,17 +171,31 @@ pub struct GrantAuthority {
     state: Mutex<AuthorityState>,
 }
 
-impl Default for GrantAuthority {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl GrantAuthority {
-    pub fn new() -> Self {
-        Self {
-            state: Mutex::new(AuthorityState::default()),
+    /// Construct with the policy version currently enforced by this authority.
+    pub fn new(current_policy_version: &str) -> Result<Self, GrantValidationError> {
+        if !valid_atom(current_policy_version, MAX_POLICY_VERSION_BYTES) {
+            return Err(GrantValidationError::InvalidPolicyVersion);
         }
+        Ok(Self {
+            state: Mutex::new(AuthorityState {
+                current_policy_version: current_policy_version.to_owned(),
+                ..AuthorityState::default()
+            }),
+        })
+    }
+
+    /// Rotate the authoritative policy version. Grants issued under older
+    /// versions become unusable immediately; callers must obtain fresh consent.
+    pub fn set_current_policy_version(&self, version: &str) -> Result<(), GrantError> {
+        if !valid_atom(version, MAX_POLICY_VERSION_BYTES) {
+            return Err(GrantError::InvalidGrant(
+                GrantValidationError::InvalidPolicyVersion,
+            ));
+        }
+        let mut state = self.lock_state().map_err(|_| GrantError::AuthorityUnavailable)?;
+        state.current_policy_version = version.to_owned();
+        Ok(())
     }
 
     /// Validate and register a grant. IDs are never reused, including after
@@ -191,6 +208,9 @@ impl GrantAuthority {
             ))?;
 
         let mut state = self.lock_state().map_err(|_| GrantError::AuthorityUnavailable)?;
+        if grant.policy_version != state.current_policy_version {
+            return Err(GrantError::PolicyVersionMismatch);
+        }
         if state.grants.contains_key(&grant.id) {
             return Err(GrantError::DuplicateGrantId);
         }
@@ -369,6 +389,9 @@ fn validate_locked(
     }
 
     let grant = &record.grant;
+    if grant.policy_version != state.current_policy_version {
+        return Err(DenialReason::PolicyVersionMismatch);
+    }
     if grant.destination != binding.destination {
         return Err(DenialReason::DestinationMismatch);
     }
@@ -428,7 +451,7 @@ mod tests {
     }
 
     fn sample_authority() -> GrantAuthority {
-        let authority = GrantAuthority::new();
+        let authority = GrantAuthority::new("prism-policy-v1").unwrap();
         authority.issue(sample_grant("grant-1")).unwrap();
         authority
     }
@@ -535,8 +558,36 @@ mod tests {
     }
 
     #[test]
+    fn policy_rotation_invalidates_old_grants_and_permits() {
+        let authority = sample_authority();
+        let request = sample_request(ContentZone::Local);
+        let permit = authority.authorize(&request, Some(100)).unwrap();
+
+        authority.set_current_policy_version("prism-policy-v2").unwrap();
+        assert_eq!(
+            authority.commit_with(&permit, &request, Some(101), || ()),
+            Err(DenialReason::PolicyVersionMismatch)
+        );
+
+        let updated_request = OutboundRequest {
+            policy_version: "prism-policy-v2".into(),
+            ..request
+        };
+        assert_eq!(
+            authority.authorize(&updated_request, Some(102)),
+            Err(DenialReason::PolicyVersionMismatch),
+            "a caller cannot make an old grant current by changing its request version"
+        );
+
+        assert_eq!(
+            authority.issue(sample_grant("stale-policy-grant")),
+            Err(GrantError::PolicyVersionMismatch)
+        );
+    }
+
+    #[test]
     fn malformed_grants_are_rejected_without_registration() {
-        let authority = GrantAuthority::new();
+        let authority = GrantAuthority::new("prism-policy-v1").unwrap();
 
         let mut invalid_host = sample_grant("bad-host");
         invalid_host.destination = "example.com/path".into();

@@ -181,15 +181,11 @@ impl ConsentStore {
         true
     }
 
-    /// Resolve zone considering user consent.
-    ///
-    /// If the reflex arc classified as Local, check if user has approved
-    /// this domain for Public sharing.
     /// Resolve classification without treating a hostname preference as authority.
     ///
     /// Explicit hostname denial still forces Private. Approval preferences never
     /// upgrade Local data to Public; outbound actions must use GrantAuthority and
-    /// a matching operation/scope/purpose-bound consent grant.
+    /// a matching operation/zone/scope/purpose-bound consent grant.
     pub fn resolve_zone(&self, base_zone: ContentZone, domain: &str) -> ContentZone {
         if self.is_denied(domain) {
             return ContentZone::Private;

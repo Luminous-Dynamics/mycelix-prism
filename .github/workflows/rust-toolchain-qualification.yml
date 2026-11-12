@@ -1,0 +1,121 @@
+name: Prism Rust 1.99.1 toolchain qualification
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "flake.nix"
+      - "flake.lock"
+      - "crates/**"
+      - "prism-*/**"
+      - ".github/workflows/rust-toolchain-qualification.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prism-rust-toolchain-qualification-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Matched Rust 1.99.0 vs 1.99.1 and MSRV
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Nix
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Refresh only the Rust overlay input to a 1.99.1-capable snapshot
+        id: overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUST_OVERLAY_REV="d1e30fd696e1151603aa8adaa8f6b8c604fe3eb0"
+          nix flake lock --override-input rust-overlay "github:oxalica/rust-overlay/$RUST_OVERLAY_REV"
+          ACTUAL_REV="$(nix flake metadata --json | jq -r '.locks.nodes["rust-overlay"].locked.rev')"
+          [[ "$ACTUAL_REV" == "$RUST_OVERLAY_REV" ]]
+          mkdir -p "$RUNNER_TEMP/prism-toolchain-evidence"
+          cp flake.lock "$RUNNER_TEMP/prism-toolchain-evidence/flake.lock"
+          {
+            echo "rust_overlay_rev=$ACTUAL_REV"
+            echo "flake_lock_sha256=$(sha256sum flake.lock | awk '{print $1}')"
+            echo "source_commit=$GITHUB_SHA"
+            echo "runner=ubuntu-24.04"
+            echo "kernel=$(uname -srmo)"
+          } | tee "$RUNNER_TEMP/prism-toolchain-evidence/metadata.txt"
+
+      - name: Baseline Rust 1.99.0 — exact compiler and Cargo identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop .#toolchain-1-99-0 --command bash -c '
+            set -euo pipefail
+            rustc -Vv | tee "$RUNNER_TEMP/prism-toolchain-evidence/rustc-1.99.0.txt"
+            cargo -Vv | tee "$RUNNER_TEMP/prism-toolchain-evidence/cargo-1.99.0.txt"
+            grep -F "rustc 1.99.0 " "$RUNNER_TEMP/prism-toolchain-evidence/rustc-1.99.0.txt"
+            grep -F "cargo 1.99.0 " "$RUNNER_TEMP/prism-toolchain-evidence/cargo-1.99.0.txt"
+          '
+
+      - name: Baseline Rust 1.99.0 — format, check and test
+        run: |
+          nix develop .#toolchain-1-99-0 --command bash -c '
+            set -euo pipefail
+            cargo fmt --check --all
+            cargo check --workspace --locked
+            cargo nextest run --workspace --locked
+          '
+
+      - name: Candidate Rust 1.99.1 — exact compiler and Cargo identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop .#default --command bash -c '
+            set -euo pipefail
+            rustc -Vv | tee "$RUNNER_TEMP/prism-toolchain-evidence/rustc-1.99.1.txt"
+            cargo -Vv | tee "$RUNNER_TEMP/prism-toolchain-evidence/cargo-1.99.1.txt"
+            grep -F "rustc 1.99.1 " "$RUNNER_TEMP/prism-toolchain-evidence/rustc-1.99.1.txt"
+            grep -F "cargo 1.99.1 " "$RUNNER_TEMP/prism-toolchain-evidence/cargo-1.99.1.txt"
+          '
+
+      - name: Candidate Rust 1.99.1 — format, check and test
+        run: |
+          nix develop .#default --command bash -c '
+            set -euo pipefail
+            cargo fmt --check --all
+            cargo check --workspace --locked
+            cargo nextest run --workspace --locked
+          '
+
+      - name: Candidate Rust 1.99.1 — Clippy
+        run: nix develop .#default --command cargo clippy --workspace --all-targets --locked
+
+      - name: MSRV compatibility remains Rust 1.96.1
+        run: |
+          nix develop .#msrv --command bash -c '
+            set -euo pipefail
+            rustc -Vv
+            cargo -Vv
+            cargo check --workspace --locked
+          '
+
+      - name: Preserve evidence and generated overlay lock
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: prism-rust-toolchain-qualification
+          path: ${{ runner.temp }}/prism-toolchain-evidence/
+          if-no-files-found: warn
+          retention-days: 30

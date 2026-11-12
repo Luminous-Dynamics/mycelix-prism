@@ -73,10 +73,13 @@
           };
         in
         {
-          # Current stable for normal development and release qualification.
-          default = mkPrismShell "1.99.0";
+          # Current project default: patch release 1.99.1.
+          default = mkPrismShell "1.99.1";
 
-          # Compatibility lane if Prism commits to Rust 1.96.1 as its MSRV.
+          # Explicit matched baseline for the toolchain qualification campaign.
+          toolchain-1-99-0 = mkPrismShell "1.99.0";
+
+          # Compatibility lane; keep the declared MSRV independently qualified.
           msrv = mkPrismShell "1.96.1";
         });
     };

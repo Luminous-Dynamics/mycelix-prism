@@ -42,6 +42,8 @@ cargo check --workspace --locked
 cargo nextest run --workspace --locked
 ```
 
+**Lockfile caveat (2026-11-26):** the audited default branch contains `flake.lock` but no root `Cargo.lock`. The CI's `--locked` Cargo commands therefore currently fail before compiling because Cargo cannot create a missing lockfile in locked mode. Generate and commit a reviewed `Cargo.lock` as a separate dependency-resolution change before treating these commands or the CI lock discipline as reproducible.
+
 The Nix flake also defines an `msrv` development shell using Rust 1.96.1. The CI workflow should be checked alongside the flake before relying on that compatibility lane; the workflow currently refers to a `compat` shell name that is not the shell name exported by the flake.
 
 ## Design and governance documents

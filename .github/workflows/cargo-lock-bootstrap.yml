@@ -124,3 +124,6 @@ jobs:
 
       - name: Validate workspace tests under MSRV
         run: nix develop .#msrv --command cargo nextest run --workspace --locked
+
+      - name: Validate opt-in non-commercial seed profile under MSRV
+        run: nix develop .#msrv --command cargo nextest run -p prism-ingest --features noncommercial-seed-data --locked

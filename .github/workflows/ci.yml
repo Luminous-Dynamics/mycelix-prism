@@ -95,6 +95,9 @@ jobs:
       - name: cargo nextest run --workspace --locked
         run: nix develop --command cargo nextest run --workspace --locked
 
+      - name: Test the explicit non-commercial knowledge profile
+        run: nix develop --command cargo nextest run -p prism-ingest --features noncommercial-seed-data --locked
+
   msrv:
     name: MSRV check (Rust 1.96.1 compat shell)
     runs-on: ubuntu-latest

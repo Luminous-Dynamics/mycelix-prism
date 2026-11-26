@@ -12,6 +12,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout pinned Mycelix knowledge seed source
+        uses: actions/checkout@v4
+        with:
+          repository: Luminous-Dynamics/mycelix
+          ref: d597dcd99ccbf1cc3c341c3442ef6a53efd0dbff
+          path: mycelix-upstream
+          sparse-checkout: mycelix-workspace/mycelix-knowledge/seed-data
+          sparse-checkout-cone-mode: true
+          persist-credentials: false
+
+      - name: Stage canonical compile-time seed assets
+        run: bash scripts/ci/stage-mycelix-knowledge.sh
 
       - name: Install Nix
         uses: cachix/install-nix-action@v27
@@ -44,6 +56,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout pinned Mycelix knowledge seed source
+        uses: actions/checkout@v4
+        with:
+          repository: Luminous-Dynamics/mycelix
+          ref: d597dcd99ccbf1cc3c341c3442ef6a53efd0dbff
+          path: mycelix-upstream
+          sparse-checkout: mycelix-workspace/mycelix-knowledge/seed-data
+          sparse-checkout-cone-mode: true
+          persist-credentials: false
+
+      - name: Stage canonical compile-time seed assets
+        run: bash scripts/ci/stage-mycelix-knowledge.sh
 
       - name: Install Nix
         uses: cachix/install-nix-action@v27
@@ -76,6 +100,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout pinned Mycelix knowledge seed source
+        uses: actions/checkout@v4
+        with:
+          repository: Luminous-Dynamics/mycelix
+          ref: d597dcd99ccbf1cc3c341c3442ef6a53efd0dbff
+          path: mycelix-upstream
+          sparse-checkout: mycelix-workspace/mycelix-knowledge/seed-data
+          sparse-checkout-cone-mode: true
+          persist-credentials: false
+
+      - name: Stage canonical compile-time seed assets
+        run: bash scripts/ci/stage-mycelix-knowledge.sh
 
       - name: Install Nix
         uses: cachix/install-nix-action@v27

@@ -44,12 +44,14 @@ struct Classification {
 /// noncommercial-seed-data feature is explicitly enabled.
 pub fn load_mycelix_claims() -> Vec<RawClaim> {
     let mut claims = Vec::new();
-    let mut sources = vec![ENERGY_JSON, GEO_JSON, NOAA_JSON];
 
     #[cfg(feature = "noncommercial-seed-data")]
-    sources.extend([WHO_JSON, FAO_JSON]);
+    let json_sources = [ENERGY_JSON, GEO_JSON, NOAA_JSON, WHO_JSON, FAO_JSON];
 
-    for json_str in sources {
+    #[cfg(not(feature = "noncommercial-seed-data"))]
+    let json_sources = [ENERGY_JSON, GEO_JSON, NOAA_JSON];
+
+    for json_str in json_sources {
         let data: Vec<MycelixClaim> = match serde_json::from_str(json_str) {
             Ok(d) => d,
             Err(e) => {

@@ -1,0 +1,84 @@
+name: Prism Cargo Lockfile Bootstrap
+
+on:
+  push:
+    branches: [fix/prism-reviewed-cargo-lock-2026-11-26]
+    paths:
+      - "Cargo.toml"
+      - "flake.nix"
+      - "flake.lock"
+      - ".github/workflows/cargo-lock-bootstrap.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prism-cargo-lock-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  generate-and-validate:
+    name: Generate and validate Cargo.lock (Rust 1.96.1)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout bootstrap branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/prism-reviewed-cargo-lock-2026-11-26
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Install pinned Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Verify the lockfile is not already present
+        run: |
+          if [[ -f Cargo.lock ]]; then
+            echo "Cargo.lock already exists; refusing to replace it during bootstrap."
+            exit 1
+          fi
+          test -f flake.lock
+          test -f flake.nix
+
+      - name: Generate Cargo.lock with the declared MSRV toolchain
+        run: nix develop .#msrv --command cargo generate-lockfile
+
+      - name: Resolve the complete workspace in locked mode
+        run: |
+          set -euo pipefail
+          nix develop .#msrv --command cargo metadata --locked --format-version 1 \
+            > "$RUNNER_TEMP/prism-cargo-metadata.json"
+          jq -e '.packages | length > 0' "$RUNNER_TEMP/prism-cargo-metadata.json" >/dev/null
+          jq '{package_count: (.packages | length), workspace_members: (.workspace_members | length), workspace_root}' \
+            "$RUNNER_TEMP/prism-cargo-metadata.json"
+
+      - name: Preserve generated lockfile and metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: prism-cargo-lockfile-rust-1.96.1
+          path: |
+            Cargo.lock
+            ${{ runner.temp }}/prism-cargo-metadata.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Commit the generated lockfile to the review branch
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "chore(deps): add reviewed Cargo.lock from MSRV resolver"
+          git push origin HEAD:fix/prism-reviewed-cargo-lock-2026-11-26
+
+      - name: Validate workspace compilation under MSRV
+        run: nix develop .#msrv --command cargo check --workspace --locked
+
+      - name: Validate workspace tests under MSRV
+        run: nix develop .#msrv --command cargo nextest run --workspace --locked

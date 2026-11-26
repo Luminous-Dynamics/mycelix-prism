@@ -41,6 +41,11 @@ for name in "${required_files[@]}"; do
     echo "error: required canonical claim dataset is missing or empty: $source_file" >&2
     exit 2
   fi
+  if ! jq -e 'type == "array" and length > 0 and all(.[]; (.content | type == "string") and (.content | length > 0))' \
+    "$source_file" >/dev/null; then
+    echo "error: canonical claim dataset is not a non-empty array of claim objects: $source_file" >&2
+    exit 2
+  fi
 done
 
 if [[ -e "$sibling_root" || -L "$sibling_root" ]]; then

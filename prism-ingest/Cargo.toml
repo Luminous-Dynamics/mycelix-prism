@@ -22,7 +22,10 @@ name = "build_corpus"
 required-features = ["fetch"]
 
 [features]
+default = []
 fetch = ["dep:reqwest"]
+# Opt-in only: adds WHO/FAO CC-BY-NC-SA datasets to the embedded knowledge corpus.
+noncommercial-seed-data = []
 
 [dependencies.reqwest]
 version = "0.12"

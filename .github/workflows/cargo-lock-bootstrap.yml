@@ -8,6 +8,7 @@ on:
       - "Cargo.lock"
       - "flake.nix"
       - "flake.lock"
+      - "scripts/ci/stage-mycelix-knowledge.sh"
       - ".github/workflows/cargo-lock-bootstrap.yml"
   workflow_dispatch:
 
@@ -30,6 +31,19 @@ jobs:
           ref: fix/prism-reviewed-cargo-lock-2026-11-26
           persist-credentials: true
           fetch-depth: 0
+
+      - name: Checkout pinned Mycelix knowledge seed source
+        uses: actions/checkout@v4
+        with:
+          repository: Luminous-Dynamics/mycelix
+          ref: d597dcd99ccbf1cc3c341c3442ef6a53efd0dbff
+          path: mycelix-upstream
+          sparse-checkout: mycelix-workspace/mycelix-knowledge/seed-data
+          sparse-checkout-cone-mode: true
+          persist-credentials: false
+
+      - name: Stage canonical compile-time seed assets
+        run: bash scripts/ci/stage-mycelix-knowledge.sh
 
       - name: Install pinned Nix
         uses: cachix/install-nix-action@v27
@@ -88,6 +102,7 @@ jobs:
             ${{ runner.temp }}/prism-cargo-metadata.raw
             ${{ runner.temp }}/prism-cargo-metadata.json
             ${{ runner.temp }}/prism-nix-metadata.stderr
+            ${{ runner.temp }}/prism-knowledge-seed-digests.txt
           if-no-files-found: error
           retention-days: 90
 

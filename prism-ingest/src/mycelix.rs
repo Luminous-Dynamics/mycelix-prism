@@ -12,9 +12,12 @@ const ENERGY_JSON: &str =
     include_str!("../../../mycelix-knowledge/seed-data/claims/energy-facts.json");
 const GEO_JSON: &str =
     include_str!("../../../mycelix-knowledge/seed-data/claims/geonames-major.json");
-const WHO_JSON: &str = include_str!("../../../mycelix-knowledge/seed-data/claims/who-health.json");
+#[cfg(feature = "noncommercial-seed-data")]
+const WHO_JSON: &str =
+    include_str!("../../../mycelix-knowledge/seed-data/claims/who-health.json");
 const NOAA_JSON: &str =
     include_str!("../../../mycelix-knowledge/seed-data/claims/noaa-climate.json");
+#[cfg(feature = "noncommercial-seed-data")]
 const FAO_JSON: &str =
     include_str!("../../../mycelix-knowledge/seed-data/claims/fao-agriculture.json");
 
@@ -34,11 +37,21 @@ struct Classification {
     materiality: Option<f64>,
 }
 
-/// Load and parse all mycelix-knowledge seed claims.
+/// Load and parse the selected Mycelix-knowledge seed profile.
+///
+/// The default profile contains public-domain and CC-BY data only.
+/// WHO and FAO CC-BY-NC-SA datasets are included only when the
+/// noncommercial-seed-data feature is explicitly enabled.
 pub fn load_mycelix_claims() -> Vec<RawClaim> {
     let mut claims = Vec::new();
 
-    for json_str in [ENERGY_JSON, GEO_JSON, WHO_JSON, NOAA_JSON, FAO_JSON] {
+    #[cfg(feature = "noncommercial-seed-data")]
+    let json_sources = [ENERGY_JSON, GEO_JSON, NOAA_JSON, WHO_JSON, FAO_JSON];
+
+    #[cfg(not(feature = "noncommercial-seed-data"))]
+    let json_sources = [ENERGY_JSON, GEO_JSON, NOAA_JSON];
+
+    for json_str in json_sources {
         let data: Vec<MycelixClaim> = match serde_json::from_str(json_str) {
             Ok(d) => d,
             Err(e) => {
@@ -144,6 +157,29 @@ pub fn load_mycelix_claims() -> Vec<RawClaim> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seed_profile_obeys_dataset_license_boundary() {
+        let claims = load_mycelix_claims();
+        let has_who = claims
+            .iter()
+            .any(|claim| claim.content.contains("Global life expectancy at birth increased"));
+        let has_fao = claims
+            .iter()
+            .any(|claim| claim.content.contains("Global cereal production was approximately"));
+
+        #[cfg(feature = "noncommercial-seed-data")]
+        {
+            assert!(has_who, "non-commercial profile must include the WHO seed");
+            assert!(has_fao, "non-commercial profile must include the FAO seed");
+        }
+
+        #[cfg(not(feature = "noncommercial-seed-data"))]
+        {
+            assert!(!has_who, "default profile must not embed the WHO seed");
+            assert!(!has_fao, "default profile must not embed the FAO seed");
+        }
+    }
 
     #[test]
     fn loads_mycelix_claims() {

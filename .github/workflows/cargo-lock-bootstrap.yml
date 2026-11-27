@@ -1,0 +1,129 @@
+name: Prism Cargo Lockfile Bootstrap
+
+on:
+  push:
+    branches: [fix/prism-reviewed-cargo-lock-2026-11-26]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "flake.nix"
+      - "flake.lock"
+      - "scripts/ci/stage-mycelix-knowledge.sh"
+      - ".github/workflows/cargo-lock-bootstrap.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prism-cargo-lock-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  generate-and-validate:
+    name: Generate and validate Cargo.lock (Rust 1.96.1)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout bootstrap branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/prism-reviewed-cargo-lock-2026-11-26
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Checkout pinned Mycelix knowledge seed source
+        uses: actions/checkout@v4
+        with:
+          repository: Luminous-Dynamics/mycelix
+          ref: d597dcd99ccbf1cc3c341c3442ef6a53efd0dbff
+          path: mycelix-upstream
+          sparse-checkout: mycelix-workspace/mycelix-knowledge/seed-data
+          sparse-checkout-cone-mode: true
+          persist-credentials: false
+
+      - name: Stage canonical compile-time seed assets
+        run: bash scripts/ci/stage-mycelix-knowledge.sh
+
+      - name: Install pinned Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Verify repository inputs
+        run: |
+          test -f Cargo.toml
+          test -f flake.nix
+          test -f flake.lock
+
+      - name: Generate Cargo.lock only when absent
+        run: |
+          set -euo pipefail
+          if [[ -f Cargo.lock ]]; then
+            echo "Reusing existing Cargo.lock; no dependency resolution refresh will be performed."
+          else
+            nix develop .#msrv --command cargo generate-lockfile
+          fi
+          test -s Cargo.lock
+
+      - name: Resolve the complete workspace in locked mode
+        run: |
+          set -euo pipefail
+          raw="$RUNNER_TEMP/prism-cargo-metadata.raw"
+          metadata="$RUNNER_TEMP/prism-cargo-metadata.json"
+          nix_log="$RUNNER_TEMP/prism-nix-metadata.stderr"
+
+          # Nix shell hooks may write informational text to stdout. Preserve
+          # the raw stream, then select Cargo's single compact JSON document
+          # explicitly instead of treating all shell output as JSON.
+          nix develop .#msrv --command cargo metadata --locked --format-version 1 \
+            > "$raw" 2> "$nix_log"
+
+          awk 'index($0, "\"packages\"") > 0 && substr($0, 1, 1) == "{" { print; found = 1; exit }
+               END { if (!found) exit 1 }' "$raw" > "$metadata" || {
+            echo "Cargo metadata JSON was not found in the command output." >&2
+            cat "$raw" >&2
+            cat "$nix_log" >&2
+            exit 1
+          }
+
+          jq -e '.packages | length > 0' "$metadata" >/dev/null
+          jq '{package_count: (.packages | length), workspace_members: (.workspace_members | length), workspace_root}' \
+            "$metadata"
+
+      - name: Preserve generated lockfile and resolver evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: prism-cargo-lockfile-rust-1.96.1
+          path: |
+            Cargo.lock
+            ${{ runner.temp }}/prism-cargo-metadata.raw
+            ${{ runner.temp }}/prism-cargo-metadata.json
+            ${{ runner.temp }}/prism-nix-metadata.stderr
+            ${{ runner.temp }}/prism-knowledge-seed-digests.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Commit the generated lockfile to the review branch
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          if git diff --cached --quiet; then
+            echo "Cargo.lock is already committed; nothing to push."
+          else
+            git commit -m "chore(deps): add reviewed Cargo.lock from MSRV resolver"
+            git push origin HEAD:fix/prism-reviewed-cargo-lock-2026-11-26
+          fi
+
+      - name: Validate workspace compilation under MSRV
+        run: nix develop .#msrv --command cargo check --workspace --locked
+
+      - name: Validate workspace tests under MSRV
+        run: nix develop .#msrv --command cargo nextest run --workspace --locked
+
+      - name: Validate opt-in non-commercial seed profile under MSRV
+        run: nix develop .#msrv --command cargo nextest run -p prism-ingest --features noncommercial-seed-data --locked

@@ -12,6 +12,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout pinned Mycelix knowledge seed source
+        uses: actions/checkout@v4
+        with:
+          repository: Luminous-Dynamics/mycelix
+          ref: d597dcd99ccbf1cc3c341c3442ef6a53efd0dbff
+          path: mycelix-upstream
+          sparse-checkout: mycelix-workspace/mycelix-knowledge/seed-data
+          sparse-checkout-cone-mode: true
+          persist-credentials: false
+
+      - name: Stage canonical compile-time seed assets
+        run: bash scripts/ci/stage-mycelix-knowledge.sh
 
       - name: Install Nix
         uses: cachix/install-nix-action@v27
@@ -44,6 +56,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout pinned Mycelix knowledge seed source
+        uses: actions/checkout@v4
+        with:
+          repository: Luminous-Dynamics/mycelix
+          ref: d597dcd99ccbf1cc3c341c3442ef6a53efd0dbff
+          path: mycelix-upstream
+          sparse-checkout: mycelix-workspace/mycelix-knowledge/seed-data
+          sparse-checkout-cone-mode: true
+          persist-credentials: false
+
+      - name: Stage canonical compile-time seed assets
+        run: bash scripts/ci/stage-mycelix-knowledge.sh
 
       - name: Install Nix
         uses: cachix/install-nix-action@v27
@@ -71,11 +95,26 @@ jobs:
       - name: cargo nextest run --workspace --locked
         run: nix develop --command cargo nextest run --workspace --locked
 
+      - name: Test the explicit non-commercial knowledge profile
+        run: nix develop --command cargo nextest run -p prism-ingest --features noncommercial-seed-data --locked
+
   msrv:
     name: MSRV check (Rust 1.96.1 compat shell)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout pinned Mycelix knowledge seed source
+        uses: actions/checkout@v4
+        with:
+          repository: Luminous-Dynamics/mycelix
+          ref: d597dcd99ccbf1cc3c341c3442ef6a53efd0dbff
+          path: mycelix-upstream
+          sparse-checkout: mycelix-workspace/mycelix-knowledge/seed-data
+          sparse-checkout-cone-mode: true
+          persist-credentials: false
+
+      - name: Stage canonical compile-time seed assets
+        run: bash scripts/ci/stage-mycelix-knowledge.sh
 
       - name: Install Nix
         uses: cachix/install-nix-action@v27
@@ -92,4 +131,4 @@ jobs:
           restore-keys: nix-msrv-${{ runner.os }}-
 
       - name: cargo check --workspace (compat shell)
-        run: nix develop .#compat --command cargo check --workspace --locked
+        run: nix develop .#msrv --command cargo check --workspace --locked

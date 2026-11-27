@@ -105,6 +105,14 @@ Useful benchmark tracks include:
 
 A competitive target should start with a public, reproducible baseline and a held-out set—not a claimed percentage win over Chrome, Brave, or Google. Prism should first demonstrate that it produces better auditable local knowledge with fewer privacy/provenance failures at a clearly measured resource budget.
 
+## Knowledge seed data and licensing
+
+The compile-time knowledge seed assets are staged from the canonical [Mycelix repository snapshot](https://github.com/Luminous-Dynamics/mycelix/tree/d597dcd99ccbf1cc3c341c3442ef6a53efd0dbff/mycelix-workspace/mycelix-knowledge/seed-data/claims) at commit `d597dcd99ccbf1cc3c341c3442ef6a53efd0dbff`. CI uses a pinned sparse checkout and records SHA-256 digests; it does not fabricate or duplicate the source datasets.
+
+The default `prism-ingest` profile embeds only public-domain and CC-BY datasets. WHO and FAO datasets identified upstream as CC-BY-NC-SA 3.0 IGO are excluded by default and available only through the explicit `noncommercial-seed-data` feature. Enabling that feature requires a separate review of the source terms and intended use.
+
+See [Knowledge Seed Data: Source and License Boundary](docs/KNOWLEDGE_SEED_DATA_LICENSES.md) for attribution, exact source snapshot, feature behavior, and reproducible CI staging. GeoNames attribution requirements still apply to redistributions that include GeoNames-derived data.
+
 ## Licensing
 
 The Rust workspace uses AGPL-3.0-or-later unless an individual package states otherwise. Commercial licensing information is maintained in COMMERCIAL_LICENSE.md. Embedded and staged datasets retain their own upstream licenses; repository licensing does not replace upstream dataset terms.
